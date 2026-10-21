@@ -1,4 +1,4 @@
-"""Summarize the observation records (type 9) in a flight record: what each ship system actually did.
+"""Summarize the observation records (type 10) in a flight record: what each ship system actually did.
 
 Usage: .venv/Scripts/python.exe -I tools/observe_report.py <server_*.bin> [--all]
 
@@ -47,7 +47,7 @@ def main():
     path = sys.argv[1]
     show_all = "--all" in sys.argv
     a, freq, t0 = load(path)
-    obs = a[a["type"] == 9]
+    obs = a[a["type"] == 10]
     print(f"{path}: {len(obs)} observation samples")
     if not len(obs):
         return

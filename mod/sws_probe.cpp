@@ -34,7 +34,7 @@
 #include <intrin.h>
 
 // ---------------------------------------------------------------- records
-enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8, R_OUTPUT = 9 };
+enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8, R_OUTPUT = 10 };   // 9 is R_RULE (the movement rules)
 
 #pragma pack(push, 1)
 struct Rec {
@@ -1275,7 +1275,7 @@ static void value_engine_scan() {
 // Each client starship component keeps its live "output data" (what the HUD reads) inline, at a fixed offset, built by
 // its constructor: movement FUN_14169cf00 (+0xCB0), health FUN_141680fb0 (+0x430), weapon FUN_14172a5e0 (+0x1E0), power
 // FUN_1415fa310 (+0x1B8); each output object starts with its class's vtable. Hooking the constructors registers every
-// component as it is made; a sampler thread copies the outputs into the flight record 10 times a second (record type 9:
+// component as it is made; a sampler thread copies the outputs into the flight record 10 times a second (record type 10:
 // state = component, f[0] = kind, f[1..26] = 26 raw 32-bit words from the kind's base). A component whose output no
 // longer carries the vtable (destroyed) is dropped. Kinds: 1 movement (out+24), 2 health (out+24), 3 power (out+24),
 // 4 laser regen (*(out+32)+24), 5 laser charge (*(out+40)+24), 6 ammo (*(out+48)+24), 7 weapon (out+96).
