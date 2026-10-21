@@ -3,7 +3,9 @@
 Reads mod/build/defaults.ini (written by the DLL at every launch: the stock value of every changeable field of every
 config the game loaded) and writes mod/build/profiles/Stress_<Ship>_<System>.ini, one per system, with every positive
 stock value of that ship's own configs multiplied by the factor. Fly one match per profile with observation on; the
-recording (tools/observe_report.py) shows which values the game followed and where it stopped.
+recording (tools/observe_report.py) shows which values the game followed and where it stopped. Values move in their
+strong direction: amounts are multiplied by the factor; intervals (time between shots, cooldowns, recharge delays) are
+divided by it.
 
   movement  starshipmovementconfig_* except turning, starshippowermanagement_* (power is mostly levels, left out
             below, so the conversion rates that remain ride with movement)
@@ -43,6 +45,9 @@ SKIP = [
     ("fraction, threshold or angle: the limit comes from what it means (0..1, 0..180)",
      re.compile(r"(ratio|threshold|angle)(attribute)?$|percent|normalized")),
 ]
+# Intervals: the strong direction is shorter, so these are divided by the factor rather than multiplied (tripling
+# the time between laser shots made the X-wing fire a third as fast: weak and unplayable, and no limit in sight).
+INVERT = re.compile(r"timebetween|cooldown|rechargedelay")
 COMPOUND = "multiplier on another field of the config (X and Xfactor / Xmultiplier): raising both would compound"
 
 
@@ -84,8 +89,9 @@ def own_config(name, ship):
     return ship in parts and not (VARIANT_PARTS & set(parts))
 
 
-def fmt(stock, factor):
-    v = stock * factor
+def fmt(stock, factor, key=""):
+    name = re.sub(r"\[\d+\]", "", key).rsplit(".", 1)[-1]
+    v = stock / factor if INVERT.search(name) else stock * factor
     return str(int(round(v))) if float(stock).is_integer() else f"{v:.6g}"
 
 
@@ -117,7 +123,7 @@ def main():
                 if why:
                     skipped.setdefault(why, []).append(f"{c}.{k}")
                     continue
-                lines.append(f"{c}.{k}={fmt(stock, args.factor)}")
+                lines.append(f"{c}.{k}={fmt(stock, args.factor, k)}")
                 n += 1
         out = os.path.join(BUILD, "profiles", f"Stress_{ship}_{system}.ini")
         open(out, "w", encoding="utf-8", newline="\r\n").write("\n".join(lines) + "\n")
