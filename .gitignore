@@ -27,7 +27,9 @@ mod/build/
 *.dll
 *.exe
 # packaged test builds (zips); publish builds as GitHub releases instead
-release/
+/release/
+# release builds made by mod/make_release.bat
+/dist/
 
 # --- Logs and live configs (IP addresses, Tailscale addresses, Windows user names) ---
 probe_logs/
@@ -40,6 +42,8 @@ server_*.bin
 server.ini
 rules.ini
 launch.ini
+# the release template is the one tracked config
+!mod/release/server.ini
 
 # --- Generated from the game data by tools/ (regenerate rather than commit) ---
 unlock_ids.txt

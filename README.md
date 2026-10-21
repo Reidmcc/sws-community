@@ -7,6 +7,11 @@ traffic travels, plus a few switches the community wanted.
 Status: **early and experimental.** On 2026-10-20 two players finished a Fleet Battles match on a self-hosted server
 over Tailscale. Co-op vs AI also runs. Expect rough edges.
 
+## Download
+
+Get the latest zip from [Releases](https://github.com/Reidmcc/sws-community/releases), unzip it anywhere outside the
+game folder, and follow the `README.txt` inside. Players need only that folder; building from source is for developers.
+
 ## What it does
 
 - **Self-hosting, Kyber's way.** The game ships its server half inside the client. The mod makes the host's own match
@@ -103,6 +108,9 @@ All-unlocked reads `unlock_ids.txt` beside the DLL. It's generated from the game
 ## Building
 
 Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
+
+- `make_release.bat <version>` builds and assembles a player release in `dist/` (the folder and its zip), from the
+  templates in `mod/release/`. It needs `build/unlock_ids.txt`, generated from the game's data.
 
 - `build_server.bat` builds `sws_server.dll`, `sws_launch.exe`, the server test DLL and the stand-in test target.
 - `build.bat` / `build_rules.bat` build the earlier probe and rules-only variants.
