@@ -1038,12 +1038,7 @@ static gstick_t o_gstick;
 // defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
 #include "config_fields.h"
 
-struct BotMap { const char* player; const char* bot; };
-static const BotMap kBotMap[] = {   // X-wing first; from the StarshipConfigCollection_*_pvb_bot assets
-    {"starshipmovementconfig_xwing", "starshipmovementconfig_xwingai_bot"},
-    {"starshipshielddata_xwing", "starshipshielddata_xwing_bot_pvb"},
-    {"starshiphealthdamagedata_xwing", "starshiphealthdamagedata_xwing_bot_pvb"},
-};
+#include "bot_map.h"   // player config -> vs-AI bot configs, generated from the pvb_bot collections
 struct ValueTarget { char asset[96]; char key[96]; double value; char botOf[96]; bool logged; bool warned; };
 static ValueTarget* g_targets; static int g_targetCount = -1;
 
