@@ -29,6 +29,7 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <malloc.h>
+#include <math.h>
 #include <share.h>
 #include <intrin.h>
 
@@ -1036,16 +1037,22 @@ static gstick_t o_gstick;
 //   kind 2 Float32-Array element (pointer, count at -4), key "field[i]".
 // vs-AI bots (Pseudo, #3): a player asset's override also goes to its bot counterpart: the same value where the two
 // defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
-#include "config_fields.h"
+#include "config_types.h"   // the type table the engine walks (tools/gen_config_types.py)
+#include "bot_map.h"        // player config -> vs-AI bot configs, generated from the pvb_bot collections
+// Object-graph walk (2026-10-21): each root config is walked through the type table, and every number gets a dotted key:
+// asset.field, asset.field[i], asset.field.x (Vec3), asset.sub.field (a followed sub-object, its actual class resolved from
+// its ClassInfo id), asset.field[i].member (arrays of value types). Attribute leaves (IncomAttributeFloat/Int/Vec3, Value at
+// +32) are kept in step with the ROOT config's registration lists: float +0x40 and int +0x48 entries {u32 id, value at +4};
+// Vec3 +0x50 entries 32 bytes {Vec3 at 0, u32 id at +16} (layouts from the decoded type info).
 
-#include "bot_map.h"   // player config -> vs-AI bot configs, generated from the pvb_bot collections
-struct ValueTarget { char asset[96]; char key[96]; double value; char botOf[96]; bool logged; bool warned; };
+struct ValueTarget { char asset[96]; char key[160]; double value; char botOf[96]; bool logged; bool warned; bool hit; };
 static ValueTarget* g_targets; static int g_targetCount = -1;
 
-// defaults: "asset.key" -> value as loaded, open addressing
-struct DefaultSlot { uint32_t hash; char key[176]; double value; };
-static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 16; static int g_defaultCount;
+struct DefaultSlot { uint32_t hash; char key[256]; double value; };
+static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 17; static int g_defaultCount;
 static char (*g_seenAssets)[96]; static int g_seenCount; static bool g_defaultsDirty;
+static const int kVeTypeCount = (int)(sizeof kVeTypes / sizeof kVeTypes[0]);
+static const int kVeRootCount = (int)(sizeof kVeRoots / sizeof kVeRoots[0]);
 
 static DefaultSlot* default_slot(const char* key, bool create) {
     uint32_t h = fnv1a(2166136261u, key); if (!h) h = 1;
@@ -1064,7 +1071,7 @@ static void build_targets() {
     g_targetCount = 0;
     for (int i = 0; g_targets && i < g_overrideCount; i++) {
         const char* k = g_overrides[i].key; const char* dot = strchr(k, '.');
-        if (!dot || dot == k || !dot[1]) { status("values: '%s' is not asset.field; ignored", k); continue; }
+        if (!dot || dot == k || !dot[1] || dot - k >= 96 || strlen(dot + 1) >= 160) { status("values: '%s' is not asset.field; ignored", k); continue; }
         ValueTarget& t = g_targets[g_targetCount++];
         strncpy_s(t.asset, k, dot - k); strcpy_s(t.key, dot + 1); t.value = g_overrides[i].value;
         for (const BotMap& b : kBotMap) if (!strcmp(t.asset, b.player)) {
@@ -1075,81 +1082,129 @@ static void build_targets() {
     status("values: %d override(s) -> %d target(s) including vs-AI bot counterparts", g_overrideCount, g_targetCount);
 }
 
-// the float a key names on this instance, or null
-static float* field_ptr(uint64_t inst, const ConfigField& f, int index, uint32_t* attrId) {
-    if (attrId) *attrId = 0;
-    if (f.kind == 0) return index < 0 ? (float*)(inst + f.offset) : nullptr;
-    if (f.kind == 1) {
-        if (index >= 0) return nullptr;
-        uint64_t attr = rd<uint64_t>(inst, f.offset); if (!attr) return nullptr;
-        uint64_t idObj = rd<uint64_t>(attr, 24);
-        if (attrId && idObj) *attrId = rd<uint32_t>(idObj, 32);
-        return (float*)(attr + 32);
-    }
-    uint64_t arr = rd<uint64_t>(inst, f.offset);
-    if (!arr || index < 0 || index >= (int)rd<uint32_t>(arr - 4, 0)) return nullptr;
-    return (float*)arr + index;
-}
-static float* register_entry(uint64_t inst, uint32_t attrId) {
-    uint64_t list = rd<uint64_t>(inst, 0x40); if (!list || !attrId) return nullptr;
-    uint32_t n = rd<uint32_t>(list - 4, 0);
-    for (uint32_t i = 0; i < n && i < 4096; i++) if (rd<uint32_t>(list, i * 8) == attrId) return (float*)(list + i * 8 + 4);
-    return nullptr;
-}
-static bool write_float(float* p, float v) { __try { *p = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+// a number the walk reached: its full key, address, type, and the attribute it belongs to (if any)
+struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; };
+typedef void (*ve_fn)(void* ctx, const VeLeaf& l);
 
-static void record_defaults(uint64_t inst, int cls, const char* asset) {
-    if (asset_seen(asset) || g_seenCount >= 4096) return;
-    strcpy_s(g_seenAssets[g_seenCount++], asset);
-    char key[176];
-    for (const ConfigField& f : kConfigFields) {
-        if (f.cls != cls) continue;
-        int n = 1;
-        if (f.kind == 2) { uint64_t arr = rd<uint64_t>(inst, f.offset); n = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (n > 64) n = 0; }
-        for (int i = 0; i < n; i++) {
-            float* fp = field_ptr(inst, f, f.kind == 2 ? i : -1, nullptr); if (!fp) continue;
-            if (f.kind == 2) sprintf_s(key, "%s.%s[%d]", asset, f.name, i); else sprintf_s(key, "%s.%s", asset, f.name);
-            DefaultSlot* d = default_slot(key, true); if (d) d->value = rd<float>((uint64_t)fp, 0);
-        }
+// the actual class of a followed sub-object: the most specific type of its family whose id range holds its ClassInfo id
+static int ve_resolve(uint64_t obj, int declared) {
+    int fam = kVeTypes[declared].followRoot;
+    if (fam < 0) return declared;
+    uint64_t ci = rd<uint64_t>(obj, 8); if (!ci) return -1;
+    uint16_t id = rd<uint16_t>(ci, 0x48);
+    int best = -1, span = 1 << 30;
+    for (int t = 0; t < kVeTypeCount; t++) {
+        if (kVeTypes[t].followRoot != fam || !kVeTypes[t].classInfo) continue;
+        uint16_t lo = rd<uint16_t>(kVeTypes[t].classInfo, 0x48), hi = rd<uint16_t>(kVeTypes[t].classInfo, 0x4a);
+        if (hi < lo || (uint16_t)(id - lo) > (uint16_t)(hi - lo)) continue;
+        if (hi - lo < span) { span = hi - lo; best = t; }
     }
-    g_defaultsDirty = true;
+    return best;
 }
-static void apply_targets(uint64_t inst, int cls, const char* asset) {
-    char key[176];
+static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve_fn fn, void* ctx) {
+    if (!obj || depth > 5) return;
+    const VeType& T = kVeTypes[type];
+    static const char* xyz[3] = { "x", "y", "z" };
+    for (int i = 0; i < T.fieldCount; i++) {
+        const VeField& f = kVeFields[T.firstField + i];
+        size_t n = strlen(key);
+        if (n + strlen(f.name) + 12 >= cap) continue;
+        sprintf_s(key + n, cap - n, ".%s", f.name);
+        uint64_t a = obj + f.offset;
+        switch (f.kind) {
+        case 0: case 1: { VeLeaf l{ key, a, f.kind == 1, 0, 0, 0 }; fn(ctx, l); break; }
+        case 2: for (int c = 0; c < 3; c++) { size_t m = strlen(key); sprintf_s(key + m, cap - m, ".%s", xyz[c]);
+                    VeLeaf l{ key, a + 4 * c, false, 0, 0, 0 }; fn(ctx, l); key[m] = 0; } break;
+        case 3: case 4: case 5: {
+            uint64_t at = rd<uint64_t>(a, 0); if (!at) break;
+            uint64_t idObj = rd<uint64_t>(at, 24); uint32_t id = idObj ? rd<uint32_t>(idObj, 32) : 0;
+            if (f.kind == 3) { VeLeaf l{ key, at + 32, false, id, 1, 0 }; fn(ctx, l); }
+            else if (f.kind == 4) { VeLeaf l{ key, at + 32, true, id, 2, 0 }; fn(ctx, l); }
+            else for (int c = 0; c < 3; c++) { size_t m = strlen(key); sprintf_s(key + m, cap - m, ".%s", xyz[c]);
+                     VeLeaf l{ key, at + 32 + 4 * c, false, id, 3, c }; fn(ctx, l); key[m] = 0; }
+            break; }
+        case 6: { uint64_t sub = rd<uint64_t>(a, 0); int t2 = sub ? ve_resolve(sub, f.type) : -1;
+                  if (t2 >= 0) ve_walk(sub, t2, key, cap, depth + 1, fn, ctx); break; }
+        case 7: ve_walk(a, f.type, key, cap, depth + 1, fn, ctx); break;
+        case 8: case 9: {
+            uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 64) cnt = 0;
+            uint32_t stride = f.kind == 8 ? 4 : kVeTypes[f.type].size;
+            for (int j = 0; j < cnt; j++) {
+                size_t m = strlen(key); sprintf_s(key + m, cap - m, "[%d]", j);
+                if (f.kind == 8) { VeLeaf l{ key, arr + 4ull * j, false, 0, 0, 0 }; fn(ctx, l); }
+                else ve_walk(arr + (uint64_t)stride * j, f.type, key, cap, depth + 1, fn, ctx);
+                key[m] = 0;
+            }
+            break; }
+        }
+        key[n] = 0;
+    }
+}
+static double leaf_value(const VeLeaf& l) { return l.isInt ? (double)rd<int32_t>(l.addr, 0) : (double)rd<float>(l.addr, 0); }
+static bool leaf_write(uint64_t addr, bool isInt, double v) {
+    __try { if (isInt) *(int32_t*)addr = (int32_t)llround(v); else *(float*)addr = (float)v; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// the root config's registration-list slot for an attribute (and Vec3 component)
+static uint64_t register_slot(uint64_t root, int list, uint32_t id, int comp) {
+    if (!id || !list) return 0;
+    uint64_t arr = rd<uint64_t>(root, list == 1 ? 0x40 : list == 2 ? 0x48 : 0x50); if (!arr) return 0;
+    uint32_t n = rd<uint32_t>(arr - 4, 0), stride = list == 3 ? 32 : 8, idOff = list == 3 ? 16 : 0;
+    for (uint32_t i = 0; i < n && i < 4096; i++)
+        if (rd<uint32_t>(arr, i * stride + idOff) == id) return arr + (uint64_t)i * stride + (list == 3 ? 4ull * comp : 4);
+    return 0;
+}
+
+struct VeCtx { uint64_t root; const char* asset; };
+static void record_leaf(void* c, const VeLeaf& l) {
+    DefaultSlot* d = default_slot(l.key, true); if (d) d->value = leaf_value(l);
+}
+static void apply_leaf(void* c, const VeLeaf& l) {
+    VeCtx* x = (VeCtx*)c; char key[256];
+    size_t al = strlen(x->asset);
     for (int t = 0; t < g_targetCount; t++) {
         ValueTarget& v = g_targets[t];
-        if (strcmp(v.asset, asset)) continue;
-        // key: field or field[i]
-        char fname[96]; int index = -1; strcpy_s(fname, v.key);
-        if (char* br = strchr(fname, '[')) { index = atoi(br + 1); *br = 0; }
-        const ConfigField* f = nullptr;
-        for (const ConfigField& c : kConfigFields) if (c.cls == cls && !strcmp(c.name, fname)) { f = &c; break; }
-        if (!f || (f->kind == 2) != (index >= 0)) {
-            if (!v.warned) { v.warned = true; status("values: %s.%s: not a supported field of %s%s", asset, v.key, kConfigClasses[cls].name,
-                                                      f && f->kind == 2 ? " (an array: use field[i])" : ""); }
-            continue;
-        }
+        if (strcmp(v.asset, x->asset) || strcmp(l.key + al + 1, v.key)) continue;
+        v.hit = true;
         double target = v.value;
         if (v.botOf[0]) {   // follow the player's change: same value, or the bot's own default scaled by the same ratio
             sprintf_s(key, "%s.%s", v.botOf, v.key); DefaultSlot* pd = default_slot(key, false);
-            sprintf_s(key, "%s.%s", asset, v.key); DefaultSlot* bd = default_slot(key, false);
-            if (!pd || !bd) continue;   // the player's config hasn't been seen yet; try next scan
+            DefaultSlot* bd = default_slot(l.key, false);
+            if (!pd || !bd) continue;   // the player's config hasn't been seen yet; next scan
             if ((float)pd->value == (float)bd->value) target = v.value;
             else if (pd->value != 0) target = bd->value * v.value / pd->value;
             else continue;
         }
-        uint32_t attrId = 0;
-        float* fp = field_ptr(inst, *f, index, &attrId); if (!fp) continue;
-        float now = rd<float>((uint64_t)fp, 0), want = (float)target;
-        float* reg = f->kind == 1 ? register_entry(inst, attrId) : nullptr;
-        bool regStale = reg && rd<float>((uint64_t)reg, 0) != want;
-        if (now == want && !regStale) continue;
-        bool ok = write_float(fp, want) && (!reg || write_float(reg, want));
+        double now = leaf_value(l);
+        uint64_t reg = register_slot(x->root, l.list, l.attrId, l.comp);
+        double regNow = reg ? (l.isInt ? (double)rd<int32_t>(reg, 0) : (double)rd<float>(reg, 0)) : 0;
+        bool same = l.isInt ? llround(now) == llround(target) : (float)now == (float)target;
+        bool regSame = !reg || (l.isInt ? llround(regNow) == llround(target) : (float)regNow == (float)target);
+        if (same && regSame) continue;
+        bool ok = leaf_write(l.addr, l.isInt, target) && (!reg || leaf_write(reg, l.isInt, target));
         if (!v.logged) {
             v.logged = true;
-            status("values: %s.%s %.9g -> %.9g%s%s%s", asset, v.key, now, want, v.botOf[0] ? " (vs-AI bot, following the player)" : "",
-                   f->kind == 1 ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry found)") : "", ok ? "" : " WRITE FAILED");
+            status("values: %s %.9g -> %.9g%s%s%s", l.key, now, l.isInt ? (double)llround(target) : (double)(float)target,
+                   v.botOf[0] ? " (vs-AI bot, following the player)" : "",
+                   l.list ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry)") : "", ok ? "" : " WRITE FAILED");
         }
+    }
+}
+static void process_config(uint64_t inst, int type, const char* asset) {
+    char key[256]; VeCtx c{ inst, asset };
+    if (!asset_seen(asset) && g_seenCount < 4096) {
+        strcpy_s(g_seenAssets[g_seenCount++], asset);
+        strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, record_leaf, &c);
+        g_defaultsDirty = true;
+    }
+    bool any = false;
+    for (int t = 0; t < g_targetCount; t++) if (!strcmp(g_targets[t].asset, asset)) any = true;
+    if (!any) return;
+    strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, apply_leaf, &c);
+    for (int t = 0; t < g_targetCount; t++) {
+        ValueTarget& v = g_targets[t];
+        if (!strcmp(v.asset, asset) && !v.hit && !v.warned && !v.botOf[0]) {
+            v.warned = true; status("values: %s.%s: no such value in this config (see defaults.ini for the names)", asset, v.key); }
     }
 }
 static void write_defaults_file() {
@@ -1176,8 +1231,9 @@ static void value_engine_scan() {
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
     if (!enter || !leave) return;
-    uint16_t lo[8], hi[8]; const int nc = (int)(sizeof kConfigClasses / sizeof kConfigClasses[0]);
-    for (int k = 0; k < nc; k++) { lo[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x48); hi[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x4a); }
+    uint16_t lo[16], hi[16];
+    for (int k = 0; k < kVeRootCount && k < 16; k++) {
+        lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
         uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
@@ -1194,15 +1250,14 @@ static void value_engine_scan() {
                 uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
                 uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
                 uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
-                for (int k = 0; k < nc; k++) {
+                for (int k = 0; k < kVeRootCount && k < 16; k++) {
                     if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
-                    const char* nm = (const char*)rd<uint64_t>(inst, 0x18);
-                    char asset[96]; const char* base = safe_str((uint64_t)nm); const char* sl = strrchr(base, '/');
-                    int j = 0; for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
+                    const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
+                    char asset[96]; int j = 0;
+                    for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
                     asset[j] = 0; if (!j) break;
                     matched++;
-                    record_defaults(inst, k, asset);
-                    apply_targets(inst, k, asset);
+                    process_config(inst, kVeRoots[k], asset);
                     break;
                 }
             }

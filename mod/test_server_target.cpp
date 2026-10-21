@@ -49,7 +49,12 @@ static float* fake_reglist(int n, const uint32_t* ids, const float* vals) {   //
 }
 static float* fake_array(int n, float first, float step) { uint8_t* b = fake_alloc(16 + n * 4); *(uint32_t*)(b + 12) = n;
     float* a = (float*)(b + 16); for (int i = 0; i < n; i++) a[i] = first + step * i; return a; }
-struct FakeMove { uint8_t* inst; FakeAttr* ab; FakeAttr* drift; float* reg; float* speeds; };
+struct FakeAttrV3 { uint8_t pad[24]; uint64_t idObj; float x, y, z, w; };
+static FakeAttrV3* fake_attr3(uint32_t ident, float x, float y, float z) {
+    FakeAttrV3* a = (FakeAttrV3*)fake_alloc(sizeof(FakeAttrV3)); a->idObj = (uint64_t)fake_idobj(ident); a->x = x; a->y = y; a->z = z; return a; }
+struct FakeAttrI { uint8_t pad[24]; uint64_t idObj; int32_t value; int32_t pad2; };
+static FakeAttrI* fake_attri(uint32_t ident, int32_t v) { FakeAttrI* a = (FakeAttrI*)fake_alloc(sizeof(FakeAttrI)); a->idObj = (uint64_t)fake_idobj(ident); a->value = v; return a; }
+struct FakeMove { uint8_t* inst; FakeAttr* ab; FakeAttr* drift; float* reg; float* speeds; FakeAttrV3* turn; float* v3; };
 static FakeMove fake_movement(uint8_t* cls, const char* name, float driftTime) {
     FakeMove m{}; m.inst = fake_alloc(0x400);
     *(uint64_t*)(m.inst + 8) = (uint64_t)cls; *(const char**)(m.inst + 0x18) = name;
@@ -59,6 +64,11 @@ static FakeMove fake_movement(uint8_t* cls, const char* name, float driftTime) {
     m.reg = fake_reglist(3, ids, vals); *(uint64_t*)(m.inst + 0x40) = (uint64_t)m.reg;
     m.speeds = fake_array(9, 120.0f, 3.125f); *(uint64_t*)(m.inst + 0x168) = (uint64_t)m.speeds;
     *(float*)(m.inst + 0x2ec) = 10000.0f;
+    FakeAttrV3* turn = fake_attr3(0x5555AAAA, 10.0f, 5.0f, 90.0f); *(uint64_t*)(m.inst + 0x230) = (uint64_t)turn;
+    uint8_t* v3 = fake_alloc(16 + 32); *(uint32_t*)(v3 + 12) = 1;   // one 32-byte entry: Vec3 at 0, id at +16
+    *(float*)(v3 + 16) = 10.0f; *(float*)(v3 + 20) = 5.0f; *(float*)(v3 + 24) = 90.0f; *(uint32_t*)(v3 + 16 + 16) = 0x5555AAAA;
+    *(uint64_t*)(m.inst + 0x50) = (uint64_t)(v3 + 16);
+    m.turn = turn; m.v3 = (float*)(v3 + 16);
     return m;
 }
 
@@ -171,10 +181,27 @@ int main() {
     FakeAttr* maxShield = fake_attr(0x5EED0001, 800.0f); *(uint64_t*)(shield + 0x68) = (uint64_t)maxShield;
     { uint32_t ids[1] = { 0x5EED0001 }; float vals[1] = { 800.0f }; *(uint64_t*)(shield + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* other = fake_alloc(0x100); *(uint64_t*)(other + 8) = (uint64_t)otherCls;   // a type the engine must skip
+    if (map(0x1449f0000, 0x10000) != (void*)0x1449f0000 || map(0x144a00000, 0x10000) != (void*)0x144a00000 ||
+        map(0x144a30000, 0x10000) != (void*)0x144a30000) { printf("FAIL  could not map the weapon type regions\n"); return 1; }
+    *(uint16_t*)(0x1449fc370 + 0x48) = 500; *(uint16_t*)(0x1449fc370 + 0x4a) = 500;   // StarshipWeaponConfig
+    *(uint16_t*)(0x144a029c0 + 0x48) = 600; *(uint16_t*)(0x144a029c0 + 0x4a) = 699;   // StarshipWeaponFiringData family
+    *(uint16_t*)(0x144a38400 + 0x48) = 610; *(uint16_t*)(0x144a38400 + 0x4a) = 610;   // LaserRegenWeaponFiringData
+    uint8_t* weapon = fake_alloc(0x100); *(uint64_t*)(weapon + 8) = (uint64_t)fake_class(500);
+    *(const char**)(weapon + 0x18) = "Game/Gameplay/Starships/XWing/Config/StarshipWeaponConfig_Las_Reb_XWing";
+    uint8_t* firing = fake_alloc(0x100); *(uint64_t*)(firing + 8) = (uint64_t)fake_class(610);
+    FakeAttr* rof = fake_attr(0x77770001, 0.1333f); *(uint64_t*)(firing + 0x48) = (uint64_t)rof;
+    FakeAttrI* burst = fake_attri(0x66660001, 3); *(uint64_t*)(firing + 0x38) = (uint64_t)burst;
+    uint8_t* pips = fake_alloc(16 + 9 * 24); *(uint32_t*)(pips + 12) = 9;   // LaserRegenPipData {curve*, cost @8, regen @12, delay @16}
+    for (int i = 0; i < 9; i++) { *(float*)(pips + 16 + i * 24 + 8) = 4.0f - 0.25f * i; *(float*)(pips + 16 + i * 24 + 12) = 2.0f * i; }
+    *(uint64_t*)(firing + 0xc8) = (uint64_t)(pips + 16);
+    *(uint64_t*)(weapon + 0x60) = (uint64_t)firing;
+    { uint32_t ids[1] = { 0x77770001 }; float vals[1] = { 0.1333f }; *(uint64_t*)(weapon + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
+    uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
+    *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
     uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other;
-    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield;
+    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon;
     uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 3;
-    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 2;
+    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 3;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
     *(uint8_t***)(domain + 0x138) = parts; *(uint8_t***)(domain + 0x140) = parts + 2;
@@ -219,11 +246,24 @@ int main() {
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");
+    printf("      (turn rate %g %g %g, list %g %g %g; fire interval %g list %g; burst %d list %d; pip cost [2] %g [3] %g [4] %g)\n",
+           player.turn->x, player.turn->y, player.turn->z, player.v3[0], player.v3[1], player.v3[2], rof->value,
+           *(float*)(*(uint64_t*)(weapon + 0x40) + 4), burst->value, *(int32_t*)(ilist + 20),
+           *(float*)(pips + 16 + 2 * 24 + 8), *(float*)(pips + 16 + 3 * 24 + 8), *(float*)(pips + 16 + 4 * 24 + 8));
+    check(player.turn->y == 7.0f && player.turn->x == 10.0f && player.turn->z == 90.0f && player.v3[1] == 7.0f && player.v3[0] == 10.0f,
+          "value engine: one component of a Vec3 attribute and its list entry written");
+    check(rof->value == 0.1f && *(float*)(*(uint64_t*)(weapon + 0x40) + 4) == 0.1f,
+          "value engine: a sub-object's attribute (laser fire interval) and the root config's list entry written");
+    check(burst->value == 5 && *(int32_t*)(ilist + 20) == 5, "value engine: an integer attribute and its int list entry written");
+    check(*(float*)(pips + 16 + 3 * 24 + 8) == 1.5f && *(float*)(pips + 16 + 2 * 24 + 8) == 3.5f && *(float*)(pips + 16 + 4 * 24 + 8) == 3.0f,
+          "value engine: one member of one element of a value-type array written (subclass resolved)");
     {
         char buf[16384] = {}; FILE* f = nullptr; size_t n = 0;
         if (_wfopen_s(&f, defaultsPath, L"rb") == 0 && f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); }
         check(n && strstr(buf, "[starshipmovementconfig_xwing]") && strstr(buf, "afterburnermaxspeed=240") &&
-              strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800"),
+              strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800") &&
+              strstr(buf, "afterburneraxisturnrate.y=5") && strstr(buf, "weaponfiring.laserregenpips[3].costpershot=3.25") &&
+              strstr(buf, "weaponfiring.burstfirenumshotsattribute=3"),
               "value engine: defaults.ini records the values as loaded");
     }
 
@@ -293,9 +333,13 @@ int main() {
         // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
-        const char* canon[] = { "pinball=0;multidrift=1;", "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
+        const char* canon[] = { "pinball=0;multidrift=1;", "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
+                                "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
                                 "starshipmovementconfig_xwing.drifttransitiontime=5;", "starshipmovementconfig_xwing.maxspeeds[8]=150;",
-                                "starshipshielddata_xwing.maxshieldhealth=900;" };
+                                "starshipshielddata_xwing.maxshieldhealth=900;",
+                                "starshipweaponconfig_las_reb_xwing.weaponfiring.burstfirenumshotsattribute=5;",
+                                "starshipweaponconfig_las_reb_xwing.weaponfiring.laserregenpips[3].costpershot=1.5;",
+                                "starshipweaponconfig_las_reb_xwing.weaponfiring.timebetweenautomaticshotsattribute=0.1;" };
         uint32_t h = 2166136261u;
         for (const char* c : canon) for (const char* q = c; *q; q++) { h ^= (uint8_t)*q; h *= 16777619u; }
         printf("      (expected fingerprint %08x -> protocol %08x)\n", h, 0x00a0b0c0u ^ h);

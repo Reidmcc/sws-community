@@ -99,7 +99,7 @@ no_multidrift=1
 ```
 
 **Values** are written into the game's loaded data at runtime: movement, shields, hull and laser projectiles
-(the fields in `mod/config_fields.h`; arrays as `field[i]`). Asset and field names match the game's, lowercase:
+(every number in a ship's movement, shield, hull, projectile, weapon and power configs, reached through `mod/config_types.h`; keys like `field`, `field[i]`, `field.x`, `weaponfiring.laserregenpips[3].costpershot`). Asset and field names match the game's, lowercase:
 `starshipmovementconfig_xwing.afterburnermaxspeed=260`. Each launch writes `defaults.ini` beside the DLL with the
 values as the game loaded them, for every config it saw: the list of what can be changed, and the way back. A
 player ship's change also applies to its vs-AI bot version (copied, or scaled where the bot is tuned differently);
