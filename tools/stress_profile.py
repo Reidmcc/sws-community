@@ -5,8 +5,11 @@ config the game loaded) and writes mod/build/profiles/Stress_<Ship>_<System>.ini
 stock value of that ship's own configs multiplied by the factor. Fly one match per profile with observation on; the
 recording (tools/observe_report.py) shows which values the game followed and where it stopped.
 
-  movement  starshipmovementconfig_*, starshippowermanagement_* (power is mostly levels, left out below, so the
-            conversion rates that remain ride with movement)
+  movement  starshipmovementconfig_* except turning, starshippowermanagement_* (power is mostly levels, left out
+            below, so the conversion rates that remain ride with movement)
+  turning   starshipmovementconfig_* turn rates, torques, steering and rotation limits only. Flown apart from movement
+            because the turn-rate curves take speed as a fraction of max speed: raising max speeds in the same flight
+            moves where the ship sits on the curve, which confounds the turn rates.
   defense   starshipshielddata_*, starshiphealthdamagedata_*
   weapons   starshipweaponconfig_*, bulletconfig_*, missileconfig*, explosionconfig*
 
@@ -15,7 +18,7 @@ part (those are the AI and single-player variants). Negative stock values (-1 me
 and so are four kinds of field whose limits don't come from the engine, or which would spoil the flight (SKIP below):
 input tuning, power levels, fractions / thresholds / angles, and multipliers on another field (X and Xfactor).
 
-Usage: .venv/Scripts/python.exe -I tools/stress_profile.py <ship> [--factor 3] [--systems movement,defense,weapons]
+Usage: .venv/Scripts/python.exe -I tools/stress_profile.py <ship> [--factor 3] [--systems movement,turning,defense,weapons]
 """
 import argparse
 import os
@@ -25,10 +28,12 @@ PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(PROJECT, "mod", "build")
 SYSTEMS = {
     "movement": ("starshipmovementconfig_", "starshippowermanagement_"),
+    "turning": ("starshipmovementconfig_",),
     "defense": ("starshipshielddata_", "starshiphealthdamagedata_"),
     "weapons": ("starshipweaponconfig_", "bulletconfig_", "missileconfig", "explosionconfig"),
 }
 VARIANT_PARTS = {"ai", "bot", "pvb", "sp"}
+TURNING = re.compile(r"turn|axis|torque|steer|rotation|roll|yaw|pitch|angular")   # on the key's first part
 # (reason, pattern on the field's own name: the key's last dotted part, array indices removed; input configs by prefix)
 SKIP = [
     ("input tuning: would change how the controls feel, not the ship",
@@ -102,6 +107,9 @@ def main():
             for k, stock in sorted(sections[c].items()):
                 if stock <= 0:
                     continue
+                if c.startswith("starshipmovementconfig_") and system in ("movement", "turning"):
+                    if bool(TURNING.search(k.split(".")[0])) != (system == "turning"):
+                        continue
                 why = skip_reason(k, sections[c])
                 if why:
                     skipped.setdefault(why, []).append(f"{c}.{k}")
