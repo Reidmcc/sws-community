@@ -34,7 +34,7 @@
 #include <intrin.h>
 
 // ---------------------------------------------------------------- records
-enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8 };
+enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8, R_OUTPUT = 9 };
 
 #pragma pack(push, 1)
 struct Rec {
@@ -403,6 +403,7 @@ static bool g_joinLocalServer = true;   // [server] join_local_server: 0 = a joi
 static bool g_joinRemote = false;       // [server] join_remote: 1 = a joiner's match connection is a remote client, not a local host
 static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue requests (diagnostic)
 static char g_matchMode[16];
+static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -441,6 +442,7 @@ static void read_server_ini() {
       g_joinRemote = GetPrivateProfileIntW(L"server", L"join_remote", 0, ini) != 0;
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
+      g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
@@ -1193,6 +1195,7 @@ static void process_config(uint64_t inst, int type, const char* asset) {
     char key[256]; VeCtx c{ inst, asset };
     if (!asset_seen(asset) && g_seenCount < 4096) {
         strcpy_s(g_seenAssets[g_seenCount++], asset);
+        status("values: config %llx %s", inst, asset);
         strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, record_leaf, &c);
         g_defaultsDirty = true;
     }
@@ -1267,6 +1270,65 @@ static void value_engine_scan() {
     if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
     write_defaults_file();
 }
+
+// ---- Observation (issue #11: what the game actually does with each value) ---------------------------------------------
+// Each client starship component keeps its live "output data" (what the HUD reads) inline, at a fixed offset, built by
+// its constructor: movement FUN_14169cf00 (+0xCB0), health FUN_141680fb0 (+0x430), weapon FUN_14172a5e0 (+0x1E0), power
+// FUN_1415fa310 (+0x1B8); each output object starts with its class's vtable. Hooking the constructors registers every
+// component as it is made; a sampler thread copies the outputs into the flight record 10 times a second (record type 9:
+// state = component, f[0] = kind, f[1..26] = 26 raw 32-bit words from the kind's base). A component whose output no
+// longer carries the vtable (destroyed) is dropped. Kinds: 1 movement (out+24), 2 health (out+24), 3 power (out+24),
+// 4 laser regen (*(out+32)+24), 5 laser charge (*(out+40)+24), 6 ammo (*(out+48)+24), 7 weapon (out+96).
+struct ObsComp { volatile LONG64 comp; int kind; };   // kind 1 movement, 2 health, 3 power, 4 weapon component
+static ObsComp g_obs[512];
+static const uint32_t kObsOff[5] = { 0, 0xCB0, 0x430, 0x1B8, 0x1E0 };
+static const uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
+static volatile LONG g_obsCount[5];
+static void obs_register(uint64_t comp, int kind) {
+    for (int i = 0; i < 512; i++)
+        if (InterlockedCompareExchange64(&g_obs[i].comp, (LONG64)comp, 0) == 0) { g_obs[i].kind = kind; break; }
+    LONG n = InterlockedIncrement(&g_obsCount[kind]);
+    static const char* names[5] = { "", "movement", "health", "power", "weapon" };
+    if (n <= 3 || n % 50 == 0) status("observe: %s component %llx (#%ld)", names[kind], comp, n);
+}
+static void obs_record(uint64_t comp, int kind, uint64_t base) {
+    if (!base) return;
+    Rec* r = claim(); stamp(r, R_OUTPUT, comp); r->f[0] = (float)kind;
+    for (int i = 0; i < 26; i++) { uint32_t w = rd<uint32_t>(base, i * 4); memcpy(&r->f[1 + i], &w, 4); }
+    commit();
+}
+static DWORD WINAPI observe_thread(LPVOID) {
+    for (;;) {
+        Sleep(100);
+        for (int i = 0; i < 512; i++) {
+            uint64_t comp = (uint64_t)g_obs[i].comp; if (!comp) continue;
+            int kind = g_obs[i].kind; uint64_t out = comp + kObsOff[kind];
+            if (rd<uint64_t>(out, 0) != kObsVt[kind]) { InterlockedExchange64(&g_obs[i].comp, 0); continue; }
+            if (kind == 1) obs_record(comp, 1, out + 24);
+            else if (kind == 2) obs_record(comp, 2, out + 24);
+            else if (kind == 3) obs_record(comp, 3, out + 24);
+            else {
+                uint64_t regen = rd<uint64_t>(out, 32), charge = rd<uint64_t>(out, 40), ammo = rd<uint64_t>(out, 48);
+                if (regen) obs_record(comp, 4, regen + 24);
+                if (charge) obs_record(comp, 5, charge + 24);
+                if (ammo) obs_record(comp, 6, ammo + 24);
+                obs_record(comp, 7, out + 96);
+            }
+        }
+    }
+    return 0;
+}
+typedef uint64_t(__fastcall* ctor3_t)(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4);
+static ctor3_t o_cmovctor, o_chealthctor, o_cweaponctor, o_cpowerctor;
+static uint64_t __fastcall h_cmovctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cmovctor(self, a2, a3, a4); if (g_observe) obs_register(self, 1); return r; }
+static uint64_t __fastcall h_chealthctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_chealthctor(self, a2, a3, a4); if (g_observe) obs_register(self, 2); return r; }
+static uint64_t __fastcall h_cpowerctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cpowerctor(self, a2, a3, a4); if (g_observe) obs_register(self, 3); return r; }
+static uint64_t __fastcall h_cweaponctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cweaponctor(self, a2, a3, a4); if (g_observe) obs_register(self, 4); return r; }
+
 
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
@@ -1920,6 +1982,18 @@ static Site g_sites[] = {
     {"bundle-queue 0x14021b2b0", 0x14021b2b0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0x50,0xff,0xff,0xff},
      (void*)h_bqueue, (void**)&o_bqueue},
+    {"client-movement-ctor 0x14169cf00", 0x14169cf00, 15,
+     {0x48,0x8b,0xc4,0x48,0x89,0x48,0x08,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x70},
+     (void*)h_cmovctor, (void**)&o_cmovctor},
+    {"client-health-ctor 0x141680fb0", 0x141680fb0, 19,
+     {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xa0,0x00,0x00,0x00},
+     (void*)h_chealthctor, (void**)&o_chealthctor},
+    {"client-weapon-ctor 0x14172a5e0", 0x14172a5e0, 14,
+     {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55,0x56,0x57},
+     (void*)h_cweaponctor, (void**)&o_cweaponctor},
+    {"client-power-ctor 0x1415fa310", 0x1415fa310, 21,
+     {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x48,0x83,0xec,0x30,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff},
+     (void*)h_cpowerctor, (void**)&o_cpowerctor},
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
@@ -2143,6 +2217,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         if (g_sockLog) { install_socket_passthrough(); HANDLE t = CreateThread(nullptr, 0, sock_summary, nullptr, 0, nullptr); if (t) CloseHandle(t); }
 #endif
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
+        if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif
