@@ -75,7 +75,7 @@ int main() {
     // call once unhooked as a sanity check of the stand-ins
     caller(nullptr); g_calls = 0;
 
-    HMODULE probe = LoadLibraryW(L"E:/sws_community/probe/build/sws_probe_test.dll");
+    HMODULE probe = LoadLibraryW(L"sws_probe_test.dll"   /* beside this exe, in build/ */);
     if (!probe) { printf("LoadLibrary failed %lu\n", GetLastError()); return 1; }
     // wait for the hooks (first byte becomes FF)
     for (int i = 0; i < 200 && *(uint8_t*)0x1416ad2a0 != 0xFF; i++) Sleep(25);

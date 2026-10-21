@@ -1,5 +1,5 @@
 # Test 3b: dedicated server that spawns the custom-match waiting room (2026-10-19)
-Same launcher as 3a (`probe\build\sws_launch.exe`, type YES). `server.ini` is in 3b mode: dedicated, Local backend,
+Same launcher as 3a (`mod\build\sws_launch.exe`, type YES). `server.ini` is in 3b mode: dedicated, Local backend,
 and `[spawn]` set to the game's own custom-match setup (waiting room + Yavin), observed in your solo custom match.
 About 3 seconds after the game simulation starts, the DLL spawns the server itself. There's still no window. Let it run
 about a minute, then end `starwarssquadrons.exe` in Task Manager. The log says whether a server object appeared and what it did.
@@ -13,12 +13,12 @@ own code runs, and then:
 - logs what the engine does next: which simulation clock it picks, and any server spawn with its flags and level.
 
 1. Make sure the game is **not** running and Steam is.
-2. Double-click `E:\sws_community\probe\build\sws_launch.exe` and type **YES**.
+2. Double-click `mod\build\sws_launch.exe` and type **YES**.
 3. Watch what happens and tell me: does a window appear, does it reach a menu, does it hang, crash, or close itself?
    If nothing visible happens for a minute, end `starwarssquadrons.exe` in Task Manager.
 
 Nothing is expected to be playable yet. This run is to see which way the engine goes with the flag set.
-Settings are in `probe\build\server.ini` (`dedicated`, `force_local_backend`).
+Settings are in `mod\build\server.ini` (`dedicated`, `force_local_backend`).
 
 # Flying with the "as intended" rules (sws_rules.dll), 2026-10-19
 This one **changes behaviour**. It hooks the same five places as the probe and logs the same way, plus:
@@ -31,10 +31,10 @@ This one **changes behaviour**. It hooks the same five places as the probe and l
   server. v1's remembered decision made the client disagree with the server and get corrected, which showed as speed
   jumps after boosts.
 
-Switch either off in `E:\sws_community\probe\build\rules.ini` (0 = off). It's read when the DLL loads.
+Switch either off in `mod\build\rules.ini` (0 = off). It's read when the DLL loads.
 
 1. Start the game directly, the same as before.
-2. Double-click `E:\sws_community\probe\build\inject_rules.bat` and type YES.
+2. Double-click `mod\build\inject_rules.bat` and type YES.
    (Only one of probe/rules can be loaded per game run. To switch, restart the game.)
 3. Fly however you like. Worth checking:
    - **normal flying feels unchanged:** full-throttle boost, drift, boost-drift chains, re-boosting above cruise
@@ -59,7 +59,7 @@ It doesn't change how the game behaves, and nothing is written to the game folde
 3. Go to Practice and pick the X-wing if you can (the reference values are the X-wing's).
 
 ## Load the probe
-Run `E:\sws_community\probe\build\inject.exe` (double-click works). A direct launch still loads
+Run `mod\build\inject.exe` (double-click works). A direct launch still loads
 EAC's in-game DLL with the EAC services stopped. The injector explains this and asks you to type
 **YES** (your decision of 2026-10-19). It still refuses outright if any EAC service or process is running.
 It should then print "Probe loaded into pid …". If the game crashes at that moment, Denuvo probably objected to the code

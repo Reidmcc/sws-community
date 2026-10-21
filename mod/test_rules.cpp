@@ -64,7 +64,7 @@ int main() {
     *(uint64_t*)(CFG + 0x168) = (uint64_t)&MAXS[1];
     *(float*)(S + 0x1F8) = 1.0f; *(float*)(S + 0x7C8) = 0.8f;
 
-    HMODULE dll = LoadLibraryW(L"E:/sws_community/probe/build/sws_rules_test.dll");
+    HMODULE dll = LoadLibraryW(L"sws_rules_test.dll"   /* beside this exe, in build/ */);
     if (!dll) { printf("LoadLibrary failed %lu\n", GetLastError()); return 1; }
     for (int i = 0; i < 200 && *(uint8_t*)0x1416a87c0 != 0xFF; i++) Sleep(25);
     check(*(uint8_t*)0x1416a7cf0 == 0xFF && *(uint8_t*)0x1416a87c0 == 0xFF && *(uint8_t*)0x1416aa3a0 == 0xFF, "hooks installed");

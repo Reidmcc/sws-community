@@ -91,7 +91,7 @@ All-unlocked reads `unlock_ids.txt` beside the DLL. It's generated from the game
 
 ## Building
 
-Windows, with Visual Studio 2022 Build Tools (C++). From `probe/`:
+Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
 
 - `build_server.bat` builds `sws_server.dll`, `sws_launch.exe`, the server test DLL and the stand-in test target.
 - `build.bat` / `build_rules.bat` build the earlier probe and rules-only variants.
@@ -109,8 +109,7 @@ sws_launch.exe --target <full path to test_server_target.exe> --dll sws_server_t
 
 ## Repository layout
 
-- `probe/`: the mod's source, the launcher, the test targets and the build scripts. The name is historical: the project
-  began as a read-only probe.
+- `mod/`: the mod's source, the launcher, the test targets and the build scripts.
 - `tools/`: analysis tools (PE map, disassembler over the exception table, RIP-relative cross-references, displacement
   scans, log readers).
 - `ghidra_scripts/`: headless decompile and caller-walk scripts.

@@ -18,7 +18,7 @@ ext/
 refs/
 
 # --- Build output ---
-probe/build/
+mod/build/
 *.obj
 *.pdb
 *.ilk
