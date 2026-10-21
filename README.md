@@ -79,13 +79,24 @@ Then, with Steam running and the game closed, everyone runs `sws_launch.exe` and
 starts a **solo custom match vs AI**: on the host that becomes the real match (per `match_mode`); on a joiner it
 connects to the host instead. Joiners should start once the host's match lobby is up.
 
-**Rules** (`rules.ini`, must match across players; `1` = the exploit is removed):
+**Profiles** hold the movement rules and, once the value engine lands (#3), changed game values. Name one in
+`server.ini` with `profile=<name>`; the mod reads `profiles\<name>.ini` beside the DLL (see
+`mod/examples/profiles/Example.ini`):
 
 ```ini
 [rules]
+; 1 = the exploit is removed
 no_zero_throttle_pinball=0
 no_multidrift=1
+
+[values]
+; <asset>.<field>=<number>
 ```
+
+Everyone in a match must use the same profile. A fingerprint of it (the rules plus every value, normalized) is part of
+the network version, so players on different profiles are refused at connect; the log's `profile:` line shows it.
+`profile=Default` is built in: no rules, no changes, and the game's own network version. With no `profile=` line, the
+older `rules.ini` is read instead (missing rules count as on).
 
 All-unlocked reads `unlock_ids.txt` beside the DLL. It's generated from the game's data and ships with release builds.
 

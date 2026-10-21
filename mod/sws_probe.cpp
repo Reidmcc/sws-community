@@ -27,6 +27,8 @@
 #include <string.h>
 #include <stdarg.h>
 #include <wchar.h>
+#include <wctype.h>
+#include <malloc.h>
 #include <share.h>
 #include <intrin.h>
 
@@ -154,6 +156,85 @@ static float flagbits(uint64_t s) {
 // server. (v1 kept a latch outside the game state and the client diverged; see rules_hold.)
 enum : uint32_t { R_RULE = 9 };
 static bool g_rulePinball, g_ruleMultidrift;
+
+// Profiles (issue #2). server.ini [server] profile=<name> selects profiles\<name>.ini beside the DLL:
+//   [rules]   no_zero_throttle_pinball, no_multidrift (missing = off)
+//   [values]  <asset>.<field>=<number> overrides (applied by the runtime value engine, issue #3)
+// "Default" is built in: no rules, no overrides, never read from disk. With no profile set, rules.ini is read as before
+// (missing = on), so older setups keep working. The fingerprint is FNV-1a over a canonical text of the rules and the
+// sorted, normalized overrides; it is mixed into the network protocol version (h_tinit), so players on different profiles
+// are refused at connect. Default rules with no overrides give fingerprint 0: the stock protocol.
+static void status(const char* fmt, ...);
+struct ValueOverride { char key[128]; double value; };
+static ValueOverride* g_overrides; static int g_overrideCount;
+static char g_profileName[64] = "(rules.ini)";
+static uint32_t g_profileFp;
+static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
+static uint32_t profile_fingerprint() {
+    if (!g_rulePinball && !g_ruleMultidrift && !g_overrideCount) return 0;
+    int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
+    for (int i = 0; i < g_overrideCount; i++) order[i] = i;
+    for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
+        for (int j = i; j > 0 && strcmp(g_overrides[order[j - 1]].key, g_overrides[order[j]].key) > 0; j--) {
+            int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t; }
+    char b[192]; uint32_t h = 2166136261u;
+    sprintf_s(b, "pinball=%d;multidrift=%d;", (int)g_rulePinball, (int)g_ruleMultidrift); h = fnv1a(h, b);
+    for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
+    return h ? h : 1;
+}
+static bool profile_name_ok(const wchar_t* n) {
+    if (!n[0] || wcsstr(n, L"..")) return false;
+    for (const wchar_t* c = n; *c; c++)
+        if (!(iswalnum(*c) || *c == L' ' || *c == L'_' || *c == L'-' || *c == L'.')) return false;
+    return true;
+}
+static void load_profile(const wchar_t* dir) {
+    wchar_t sini[MAX_PATH]; swprintf_s(sini, L"%ls\\server.ini", dir);
+    wchar_t name[64] = L""; GetPrivateProfileStringW(L"server", L"profile", L"", name, 64, sini);
+    if (!name[0]) {
+        wchar_t rini[MAX_PATH]; swprintf_s(rini, L"%ls\\rules.ini", dir);
+        g_rulePinball = GetPrivateProfileIntW(L"rules", L"no_zero_throttle_pinball", 1, rini) != 0;
+        g_ruleMultidrift = GetPrivateProfileIntW(L"rules", L"no_multidrift", 1, rini) != 0;
+    } else if (!_wcsicmp(name, L"Default") || !profile_name_ok(name)) {
+        if (_wcsicmp(name, L"Default")) status("profile: name '%ls' is not allowed (letters, digits, space, _ - .); using Default", name);
+        strcpy_s(g_profileName, "Default");
+        g_rulePinball = g_ruleMultidrift = false;
+    } else {
+        WideCharToMultiByte(CP_UTF8, 0, name, -1, g_profileName, sizeof g_profileName, nullptr, nullptr);
+        wchar_t pf[MAX_PATH]; swprintf_s(pf, L"%ls\\profiles\\%ls.ini", dir, name);
+        if (GetFileAttributesW(pf) == INVALID_FILE_ATTRIBUTES) {
+            status("profile: %ls not found; using Default", pf);
+            strcpy_s(g_profileName, "Default");
+            g_rulePinball = g_ruleMultidrift = false;
+        } else {
+            g_rulePinball = GetPrivateProfileIntW(L"rules", L"no_zero_throttle_pinball", 0, pf) != 0;
+            g_ruleMultidrift = GetPrivateProfileIntW(L"rules", L"no_multidrift", 0, pf) != 0;
+            const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
+            DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
+            g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
+            for (wchar_t* e = sec; g_overrides && n && *e && g_overrideCount < 1024; e += wcslen(e) + 1) {
+                wchar_t* eq = wcschr(e, L'=');
+                if (!eq || e[0] == L';' || e[0] == L'#') continue;
+                ValueOverride& o = g_overrides[g_overrideCount];
+                int k = 0;
+                for (wchar_t* c = e; c < eq && k < 127; c++) if (!iswspace(*c)) o.key[k++] = (char)towlower(*c);
+                o.key[k] = 0;
+                wchar_t* end = nullptr; o.value = wcstod(eq + 1, &end);
+                while (end && iswspace(*end)) end++;
+                if (!k || !end || end == eq + 1 || *end) { status("profile: ignoring '%ls' (expected asset.field=number)", e); continue; }
+                bool dup = false;
+                for (int i = 0; i < g_overrideCount; i++) if (!strcmp(g_overrides[i].key, o.key)) { g_overrides[i].value = o.value; dup = true; }
+                if (!dup) g_overrideCount++;
+            }
+            free(sec);
+        }
+    }
+    g_profileFp = profile_fingerprint();
+    status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d, %d value override(s), fingerprint %08x%s",
+           g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, g_overrideCount, g_profileFp,
+           g_profileFp ? "" : " (stock protocol)");
+    for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (applied by the value engine, issue #3)", g_overrides[i].key, g_overrides[i].value);
+}
 static const float kCruiseMargin = 1.0f;
 
 struct ShipRules { volatile uint64_t key; uint8_t prevAb, allowInstant, boostedSinceDrift, blockLogged; };
@@ -1274,14 +1355,13 @@ static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
 
 // Ruleset matching (2026-10-20): every connection transport is set up by FUN_140d7bb70(transport, socket, titleVersion,
 // protocolVersion) (+0x748 / +0x74c); the server refuses a client whose protocol differs (WrongProtocolVersion, checked in
-// FUN_140d798a0). The ruleset id (bit 0 = no_zero_throttle_pinball, bit 1 = no_multidrift) is mixed into the protocol
-// version on both sides, so players with different rules cannot join each other. Classic (id 0) keeps the stock value.
+// FUN_140d798a0). The profile fingerprint (rules + value overrides, issue #2) is mixed into the protocol version on both
+// sides, so players on different profiles cannot join each other. Default (fingerprint 0) keeps the stock value.
 typedef uint8_t(__fastcall* tinit_t)(uint64_t transport, uint64_t socket, uint32_t title, uint32_t protocol);
 static tinit_t o_tinit;
 static uint8_t __fastcall h_tinit(uint64_t transport, uint64_t socket, uint32_t title, uint32_t protocol) {
-    uint32_t id = (g_rulePinball ? 1u : 0u) | (g_ruleMultidrift ? 2u : 0u);
-    uint32_t p = id ? (protocol ^ (0x53570000u | (id << 8) | id)) : protocol;
-    status("ruleset: transport %llx title %08x protocol %08x -> %08x (ruleset id %u)", transport, title, protocol, p, id);
+    uint32_t p = protocol ^ g_profileFp;
+    status("ruleset: transport %llx title %08x protocol %08x -> %08x (profile '%s', fingerprint %08x)", transport, title, protocol, p, g_profileName, g_profileFp);
     return o_tinit(transport, socket, title, p);
 }
 
@@ -1725,13 +1805,12 @@ static void setup() {
     status("%s loaded; build %s %s; qpc freq %lld; log %s", prefix, __DATE__, __TIME__, fq.QuadPart, path);
 #ifdef RULES
     {
-        // rules.ini beside this DLL; a missing file or key means the rule is ON
-        wchar_t ini[MAX_PATH]; HMODULE self = nullptr;
+        // the profile (issue #2), or rules.ini when server.ini names none
+        wchar_t dir[MAX_PATH]; HMODULE self = nullptr;
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&worker, &self);
-        GetModuleFileNameW(self, ini, MAX_PATH);
-        wchar_t* sl = wcsrchr(ini, L'\\'); if (sl) wcscpy_s(sl + 1, MAX_PATH - (sl + 1 - ini), L"rules.ini");
-        g_rulePinball = GetPrivateProfileIntW(L"rules", L"no_zero_throttle_pinball", 1, ini) != 0;
-        g_ruleMultidrift = GetPrivateProfileIntW(L"rules", L"no_multidrift", 1, ini) != 0;
+        GetModuleFileNameW(self, dir, MAX_PATH);
+        wchar_t* sl = wcsrchr(dir, L'\\'); if (sl) *sl = 0;
+        load_profile(dir);
         status("rules: no_zero_throttle_pinball=%d no_multidrift=%d (cruise margin %.1f)", g_rulePinball, g_ruleMultidrift, kCruiseMargin);
     }
 #endif

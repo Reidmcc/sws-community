@@ -215,6 +215,15 @@ int main() {
         uint32_t got = ((tinit_fn)0x140d7bb70)(0, 0, 0x1111, 0x00a0b0c0);
         printf("      (transport setup returned protocol %08x for stock 00a0b0c0)\n", got);
         check(*(uint8_t*)0x140d7bb70 == 0xFF, "transport setup hooked for ruleset matching");
+        // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):
+        // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
+        // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
+        const char* canon[] = { "pinball=0;multidrift=1;", "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
+                                "starshipshielddata_xwing.maxshieldhealth=900;" };
+        uint32_t h = 2166136261u;
+        for (const char* c : canon) for (const char* q = c; *q; q++) { h ^= (uint8_t)*q; h *= 16777619u; }
+        printf("      (expected fingerprint %08x -> protocol %08x)\n", h, 0x00a0b0c0u ^ h);
+        check(got == (0x00a0b0c0u ^ h), "profile fingerprint (rules + normalized overrides) mixed into the protocol");
     }
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     Sleep(3000);  // lets the DLL's stack sampler (first round at 0.5 s) run in tests
