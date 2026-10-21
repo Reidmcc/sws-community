@@ -116,10 +116,6 @@ sws_launch.exe --target <full path to test_server_target.exe> --dll sws_server_t
 - `notes/`: the research record. Start with `test1-static-map.md` (the running log), `socket-interface.md` (the
   transport) and `exploits-code-map.md` (the movement rules).
 
-Not included: the game-data reader, which is a port of [Frosty Toolsuite](https://github.com/CadeEvs/FrostyToolsuite)'s
-readers, and Frosty is licensed CC BY-NC-ND 4.0 (no derivatives). It stays private until that's resolved. Nothing the mod
-itself needs depends on it.
-
 ## Credits and license
 
 Started by Pseudo ([Reidmcc](https://github.com/Reidmcc)) for the Squadrons community, and built with Kira

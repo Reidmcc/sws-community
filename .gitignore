@@ -61,11 +61,5 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
-# --- Ported from Frosty Toolsuite (CC BY-NC-ND 4.0: no derivatives) and the scripts built on it.
-# Kept out of the public repo until the Frosty authors agree or the reader is rewritten from format notes.
-tools/frostbite/
-tools/swsdata.py
-tools/customization_catalog.py
-tools/unlock_ids.py
-tools/fbsdk.py
-tools/dump_sdk_types.py
+# --- Local-only research tools and their notes ---
+local/
