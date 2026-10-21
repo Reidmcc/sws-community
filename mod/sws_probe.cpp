@@ -1031,10 +1031,9 @@ static gstick_t o_gstick;
 // each typed by its ClassInfo's runtime id (+0x48) within the wanted class's id range (+0x48 .. +0x4a). Starship
 // configs are Assets, so each names itself (char* at +0x18). For every config of a supported class it records the
 // values as loaded (defaults.ini beside the DLL, once per asset per session), then writes the profile's overrides
-// wherever the current value differs, so a reloaded copy is patched again. Fields come from config_fields.h:
-//   kind 0 Float32 in place; kind 1 IncomAttributeFloat (Value at +32, and the FloatIncomAttributesToRegister entry
-//   {u32 attribute id, f32 value} at config+0x40 whose id matches the attribute's IncomAttributeId.Identifier);
-//   kind 2 Float32-Array element (pointer, count at -4), key "field[i]".
+// wherever the current value differs, so a reloaded copy is patched again. What a config contains comes from the type
+// table in config_types.h (see the object-graph walk below); an attribute's IncomAttributeId.Identifier links it to
+// its entry in the root config's registration lists.
 // vs-AI bots (Pseudo, #3): a player asset's override also goes to its bot counterpart: the same value where the two
 // defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
 #include "config_types.h"   // the type table the engine walks (tools/gen_config_types.py)
