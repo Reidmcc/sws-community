@@ -188,7 +188,9 @@ static bool profile_name_ok(const wchar_t* n) {
         if (!(iswalnum(*c) || *c == L' ' || *c == L'_' || *c == L'-' || *c == L'.')) return false;
     return true;
 }
+static wchar_t g_dllDir[MAX_PATH];
 static void load_profile(const wchar_t* dir) {
+    wcscpy_s(g_dllDir, dir);
     wchar_t sini[MAX_PATH]; swprintf_s(sini, L"%ls\\server.ini", dir);
     wchar_t name[64] = L""; GetPrivateProfileStringW(L"server", L"profile", L"", name, 64, sini);
     if (!name[0]) {
@@ -399,7 +401,8 @@ static char g_joinAddr[96];   // [server] join = host address (join mode); empty
 static bool g_joinLocalServer = true;   // [server] join_local_server: 0 = a joiner does not spawn its own match server
 static bool g_joinRemote = false;       // [server] join_remote: 1 = a joiner's match connection is a remote client, not a local host
 static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue requests (diagnostic)
-static char g_matchMode[16];            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
+static char g_matchMode[16];
+static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
 static uint64_t* g_unlockIds; static int g_unlockCount;
@@ -436,6 +439,7 @@ static void read_server_ini() {
       g_joinLocalServer = GetPrivateProfileIntW(L"server", L"join_local_server", 1, ini) != 0;
       g_joinRemote = GetPrivateProfileIntW(L"server", L"join_remote", 0, ini) != 0;
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
+      g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
@@ -1018,8 +1022,202 @@ static void do_spawn(uint64_t gs) {
 // GameSimulation update, slot 35 of the game's GameSimulation vtable (0x1401bfe60)
 typedef void(__fastcall* gstick_t)(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4);
 static gstick_t o_gstick;
+
+// ---- Runtime value engine (issue #3) ----------------------------------------------------------------------------
+// Changes data-driven values in memory. Every 2 s, on the main thread (the GameSimulation tick), it walks the loaded
+// data the way the engine's own find-by-type does (FUN_140272760): resource compartment table 0x1442d18c8 -> entry
+// +0x68 = database domain (lock at +0x70) -> partitions [+0x138, +0x140) -> instances (+0x20, count u16 at +0x28),
+// each typed by its ClassInfo's runtime id (+0x48) within the wanted class's id range (+0x48 .. +0x4a). Starship
+// configs are Assets, so each names itself (char* at +0x18). For every config of a supported class it records the
+// values as loaded (defaults.ini beside the DLL, once per asset per session), then writes the profile's overrides
+// wherever the current value differs, so a reloaded copy is patched again. Fields come from config_fields.h:
+//   kind 0 Float32 in place; kind 1 IncomAttributeFloat (Value at +32, and the FloatIncomAttributesToRegister entry
+//   {u32 attribute id, f32 value} at config+0x40 whose id matches the attribute's IncomAttributeId.Identifier);
+//   kind 2 Float32-Array element (pointer, count at -4), key "field[i]".
+// vs-AI bots (Pseudo, #3): a player asset's override also goes to its bot counterpart: the same value where the two
+// defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
+#include "config_fields.h"
+
+#include "bot_map.h"   // player config -> vs-AI bot configs, generated from the pvb_bot collections
+struct ValueTarget { char asset[96]; char key[96]; double value; char botOf[96]; bool logged; bool warned; };
+static ValueTarget* g_targets; static int g_targetCount = -1;
+
+// defaults: "asset.key" -> value as loaded, open addressing
+struct DefaultSlot { uint32_t hash; char key[176]; double value; };
+static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 16; static int g_defaultCount;
+static char (*g_seenAssets)[96]; static int g_seenCount; static bool g_defaultsDirty;
+
+static DefaultSlot* default_slot(const char* key, bool create) {
+    uint32_t h = fnv1a(2166136261u, key); if (!h) h = 1;
+    for (int i = 0; i < kDefaultSlots; i++) {
+        DefaultSlot& d = g_defaults[(h + i) & (kDefaultSlots - 1)];
+        if (!d.hash) { if (!create || g_defaultCount >= kDefaultSlots * 3 / 4) return nullptr;
+                       d.hash = h; strcpy_s(d.key, key); g_defaultCount++; return &d; }
+        if (d.hash == h && !strcmp(d.key, key)) return &d;
+    }
+    return nullptr;
+}
+static bool asset_seen(const char* a) { for (int i = 0; i < g_seenCount; i++) if (!strcmp(g_seenAssets[i], a)) return true; return false; }
+
+static void build_targets() {
+    g_targets = (ValueTarget*)calloc((size_t)g_overrideCount * 2 + 1, sizeof(ValueTarget));
+    g_targetCount = 0;
+    for (int i = 0; g_targets && i < g_overrideCount; i++) {
+        const char* k = g_overrides[i].key; const char* dot = strchr(k, '.');
+        if (!dot || dot == k || !dot[1]) { status("values: '%s' is not asset.field; ignored", k); continue; }
+        ValueTarget& t = g_targets[g_targetCount++];
+        strncpy_s(t.asset, k, dot - k); strcpy_s(t.key, dot + 1); t.value = g_overrides[i].value;
+        for (const BotMap& b : kBotMap) if (!strcmp(t.asset, b.player)) {
+            ValueTarget& u = g_targets[g_targetCount++];
+            strcpy_s(u.asset, b.bot); strcpy_s(u.key, t.key); u.value = t.value; strcpy_s(u.botOf, b.player);
+        }
+    }
+    status("values: %d override(s) -> %d target(s) including vs-AI bot counterparts", g_overrideCount, g_targetCount);
+}
+
+// the float a key names on this instance, or null
+static float* field_ptr(uint64_t inst, const ConfigField& f, int index, uint32_t* attrId) {
+    if (attrId) *attrId = 0;
+    if (f.kind == 0) return index < 0 ? (float*)(inst + f.offset) : nullptr;
+    if (f.kind == 1) {
+        if (index >= 0) return nullptr;
+        uint64_t attr = rd<uint64_t>(inst, f.offset); if (!attr) return nullptr;
+        uint64_t idObj = rd<uint64_t>(attr, 24);
+        if (attrId && idObj) *attrId = rd<uint32_t>(idObj, 32);
+        return (float*)(attr + 32);
+    }
+    uint64_t arr = rd<uint64_t>(inst, f.offset);
+    if (!arr || index < 0 || index >= (int)rd<uint32_t>(arr - 4, 0)) return nullptr;
+    return (float*)arr + index;
+}
+static float* register_entry(uint64_t inst, uint32_t attrId) {
+    uint64_t list = rd<uint64_t>(inst, 0x40); if (!list || !attrId) return nullptr;
+    uint32_t n = rd<uint32_t>(list - 4, 0);
+    for (uint32_t i = 0; i < n && i < 4096; i++) if (rd<uint32_t>(list, i * 8) == attrId) return (float*)(list + i * 8 + 4);
+    return nullptr;
+}
+static bool write_float(float* p, float v) { __try { *p = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+
+static void record_defaults(uint64_t inst, int cls, const char* asset) {
+    if (asset_seen(asset) || g_seenCount >= 4096) return;
+    strcpy_s(g_seenAssets[g_seenCount++], asset);
+    char key[176];
+    for (const ConfigField& f : kConfigFields) {
+        if (f.cls != cls) continue;
+        int n = 1;
+        if (f.kind == 2) { uint64_t arr = rd<uint64_t>(inst, f.offset); n = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (n > 64) n = 0; }
+        for (int i = 0; i < n; i++) {
+            float* fp = field_ptr(inst, f, f.kind == 2 ? i : -1, nullptr); if (!fp) continue;
+            if (f.kind == 2) sprintf_s(key, "%s.%s[%d]", asset, f.name, i); else sprintf_s(key, "%s.%s", asset, f.name);
+            DefaultSlot* d = default_slot(key, true); if (d) d->value = rd<float>((uint64_t)fp, 0);
+        }
+    }
+    g_defaultsDirty = true;
+}
+static void apply_targets(uint64_t inst, int cls, const char* asset) {
+    char key[176];
+    for (int t = 0; t < g_targetCount; t++) {
+        ValueTarget& v = g_targets[t];
+        if (strcmp(v.asset, asset)) continue;
+        // key: field or field[i]
+        char fname[96]; int index = -1; strcpy_s(fname, v.key);
+        if (char* br = strchr(fname, '[')) { index = atoi(br + 1); *br = 0; }
+        const ConfigField* f = nullptr;
+        for (const ConfigField& c : kConfigFields) if (c.cls == cls && !strcmp(c.name, fname)) { f = &c; break; }
+        if (!f || (f->kind == 2) != (index >= 0)) {
+            if (!v.warned) { v.warned = true; status("values: %s.%s: not a supported field of %s%s", asset, v.key, kConfigClasses[cls].name,
+                                                      f && f->kind == 2 ? " (an array: use field[i])" : ""); }
+            continue;
+        }
+        double target = v.value;
+        if (v.botOf[0]) {   // follow the player's change: same value, or the bot's own default scaled by the same ratio
+            sprintf_s(key, "%s.%s", v.botOf, v.key); DefaultSlot* pd = default_slot(key, false);
+            sprintf_s(key, "%s.%s", asset, v.key); DefaultSlot* bd = default_slot(key, false);
+            if (!pd || !bd) continue;   // the player's config hasn't been seen yet; try next scan
+            if ((float)pd->value == (float)bd->value) target = v.value;
+            else if (pd->value != 0) target = bd->value * v.value / pd->value;
+            else continue;
+        }
+        uint32_t attrId = 0;
+        float* fp = field_ptr(inst, *f, index, &attrId); if (!fp) continue;
+        float now = rd<float>((uint64_t)fp, 0), want = (float)target;
+        float* reg = f->kind == 1 ? register_entry(inst, attrId) : nullptr;
+        bool regStale = reg && rd<float>((uint64_t)reg, 0) != want;
+        if (now == want && !regStale) continue;
+        bool ok = write_float(fp, want) && (!reg || write_float(reg, want));
+        if (!v.logged) {
+            v.logged = true;
+            status("values: %s.%s %.9g -> %.9g%s%s%s", asset, v.key, now, want, v.botOf[0] ? " (vs-AI bot, following the player)" : "",
+                   f->kind == 1 ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry found)") : "", ok ? "" : " WRITE FAILED");
+        }
+    }
+}
+static void write_defaults_file() {
+    if (!g_defaultsDirty || !g_dllDir[0]) return;
+    g_defaultsDirty = false;
+    wchar_t path[MAX_PATH]; swprintf_s(path, L"%ls\\defaults.ini", g_dllDir);
+    FILE* f = nullptr; if (_wfopen_s(&f, path, L"w") || !f) return;
+    fprintf(f, "; Values as the game loaded them (written by the value engine, issue #3). Sections are assets, keys are fields.\n");
+    for (int a = 0; a < g_seenCount; a++) {
+        fprintf(f, "\n[%s]\n", g_seenAssets[a]);
+        size_t al = strlen(g_seenAssets[a]);
+        for (int i = 0; i < kDefaultSlots; i++) {
+            const DefaultSlot& d = g_defaults[i];
+            if (d.hash && !strncmp(d.key, g_seenAssets[a], al) && d.key[al] == '.') fprintf(f, "%s=%.9g\n", d.key + al + 1, d.value);
+        }
+    }
+    fclose(f);
+}
+static void value_engine_scan() {
+    if (!g_valuesOn) return;
+    if (g_targetCount < 0) build_targets();
+    if (!g_defaults) { g_defaults = (DefaultSlot*)calloc(kDefaultSlots, sizeof(DefaultSlot)); g_seenAssets = (char(*)[96])calloc(4096, 96); }
+    if (!g_defaults || !g_seenAssets || !committed(0x1442d18c8)) return;
+    typedef void (__fastcall* cs_t)(uint64_t cs);
+    cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
+    if (!enter || !leave) return;
+    uint16_t lo[8], hi[8]; const int nc = (int)(sizeof kConfigClasses / sizeof kConfigClasses[0]);
+    for (int k = 0; k < nc; k++) { lo[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x48); hi[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x4a); }
+    ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
+    for (int c = 0; c < 0xbbe; c++) {
+        uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
+        uint64_t dom = rd<uint64_t>(entry, 0x68); if (!dom) continue;
+        bool dup = false; for (int i = 0; i < nd; i++) if (domains[i] == dom) dup = true;
+        if (dup || nd >= 64) continue;
+        domains[nd++] = dom;
+        enter(dom + 0x70);
+        uint64_t pb = rd<uint64_t>(dom, 0x138), pe = rd<uint64_t>(dom, 0x140);
+        for (uint64_t pp = pb; pp && pp < pe; pp += 8) {
+            uint64_t part = rd<uint64_t>(pp, 0); if (!part) continue;
+            uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+            for (uint16_t i = 0; insts && i < n; i++) {
+                uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
+                uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
+                uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
+                for (int k = 0; k < nc; k++) {
+                    if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
+                    const char* nm = (const char*)rd<uint64_t>(inst, 0x18);
+                    char asset[96]; const char* base = safe_str((uint64_t)nm); const char* sl = strrchr(base, '/');
+                    int j = 0; for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
+                    asset[j] = 0; if (!j) break;
+                    matched++;
+                    record_defaults(inst, k, asset);
+                    apply_targets(inst, k, asset);
+                    break;
+                }
+            }
+        }
+        leave(dom + 0x70);
+    }
+    static int reports; ULONGLONG ms = GetTickCount64() - t0;
+    if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
+    write_defaults_file();
+}
+
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
+    { static ULONGLONG lastScan; ULONGLONG nowScan = GetTickCount64();
+      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); } }
     // phases: 0 waiting for the delay; 1 startup data loading; 2 game config loading; 3 spawned (or given up)
     static ULONGLONG first, phaseStart, lastNote; static int phase; static bool announced, pumping;
     static uint32_t handle; static const char* bundle;

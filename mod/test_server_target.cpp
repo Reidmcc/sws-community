@@ -34,6 +34,34 @@ static void check(bool ok, const char* what) { printf("%s  %s\n", ok ? "PASS" : 
 static void* map(uint64_t at, size_t n) { return VirtualAlloc((void*)at, n, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE); }
 static void put(uint64_t at, const uint8_t* b, size_t n) { memcpy((void*)at, b, n); }
 
+// Runtime value engine (issue #3): a fake slice of the engine's loaded data at the real addresses the DLL walks:
+// compartment table 0x1442d18c8 -> entry (+0x68 domain) -> domain (lock +0x70, partitions +0x138/+0x140) -> partition
+// (+0x20 instances, +0x28 count) -> config instances (+0x08 class, +0x18 name). Class ids live at ClassInfo +0x48/+0x4a.
+struct FakeAttr { uint8_t pad[24]; uint64_t idObj; float value; float pad2; };
+static uint8_t* fake_alloc(size_t n) { return (uint8_t*)VirtualAlloc(nullptr, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
+static uint8_t* fake_class(uint16_t id) { uint8_t* c = fake_alloc(0x100); *(uint16_t*)(c + 0x48) = id; return c; }
+static uint8_t* fake_idobj(uint32_t ident) { uint8_t* o = fake_alloc(0x40); *(uint32_t*)(o + 32) = ident; return o; }
+static FakeAttr* fake_attr(uint32_t ident, float v) { FakeAttr* a = (FakeAttr*)fake_alloc(sizeof(FakeAttr)); a->idObj = (uint64_t)fake_idobj(ident); a->value = v; return a; }
+static float* fake_reglist(int n, const uint32_t* ids, const float* vals) {   // {u32 id, f32 value} entries, count at -4
+    uint8_t* b = fake_alloc(16 + n * 8); *(uint32_t*)(b + 12) = n;
+    for (int i = 0; i < n; i++) { *(uint32_t*)(b + 16 + i * 8) = ids[i]; *(float*)(b + 16 + i * 8 + 4) = vals[i]; }
+    return (float*)(b + 16);
+}
+static float* fake_array(int n, float first, float step) { uint8_t* b = fake_alloc(16 + n * 4); *(uint32_t*)(b + 12) = n;
+    float* a = (float*)(b + 16); for (int i = 0; i < n; i++) a[i] = first + step * i; return a; }
+struct FakeMove { uint8_t* inst; FakeAttr* ab; FakeAttr* drift; float* reg; float* speeds; };
+static FakeMove fake_movement(uint8_t* cls, const char* name, float driftTime) {
+    FakeMove m{}; m.inst = fake_alloc(0x400);
+    *(uint64_t*)(m.inst + 8) = (uint64_t)cls; *(const char**)(m.inst + 0x18) = name;
+    m.ab = fake_attr(0xABCD1234, 240.0f); m.drift = fake_attr(0x0D41F700, driftTime);
+    *(uint64_t*)(m.inst + 0x228) = (uint64_t)m.ab; *(uint64_t*)(m.inst + 0x290) = (uint64_t)m.drift;
+    uint32_t ids[3] = { 0x11111111, 0xABCD1234, 0x0D41F700 }; float vals[3] = { 1.0f, 240.0f, driftTime };
+    m.reg = fake_reglist(3, ids, vals); *(uint64_t*)(m.inst + 0x40) = (uint64_t)m.reg;
+    m.speeds = fake_array(9, 120.0f, 3.125f); *(uint64_t*)(m.inst + 0x168) = (uint64_t)m.speeds;
+    *(float*)(m.inst + 0x2ec) = 10000.0f;
+    return m;
+}
+
 int main() {
     if (map(0x1401a0000, 0x20000) != (void*)0x1401a0000 || map(0x1416a0000, 0x10000) != (void*)0x1416a0000 ||
         map(0x1418f0000, 0x10000) != (void*)0x1418f0000) { printf("FAIL  could not map test regions\n"); return 1; }
@@ -125,6 +153,35 @@ int main() {
     HMODULE ws = GetModuleHandleW(L"ws2_32.dll");
     *(void**)0x14307fef0 = (void*)GetProcAddress(ws, "bind");       *(void**)0x14307fee0 = (void*)GetProcAddress(ws, "socket");
     *(void**)0x14307ff70 = (void*)GetProcAddress(ws, "WSASocketW"); *(void**)0x14307ff10 = (void*)GetProcAddress(ws, "sendto");
+    // value engine world (issue #3): lock functions, ClassInfo id ranges, one domain with two partitions
+    HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+    *(void**)0x14307f388 = (void*)GetProcAddress(k32, "EnterCriticalSection"); *(void**)0x14307f2e8 = (void*)GetProcAddress(k32, "LeaveCriticalSection");
+    if (map(0x1442d0000, 0x10000) != (void*)0x1442d0000 || map(0x144ab0000, 0x10000) != (void*)0x144ab0000 ||
+        map(0x144a80000, 0x10000) != (void*)0x144a80000 || map(0x144ad0000, 0x10000) != (void*)0x144ad0000) { printf("FAIL  could not map the value-engine regions\n"); return 1; }
+    *(uint16_t*)(0x144ab56a0 + 0x48) = 100; *(uint16_t*)(0x144ab56a0 + 0x4a) = 100;   // StarshipMovementConfig
+    *(uint16_t*)(0x144a8c980 + 0x48) = 200; *(uint16_t*)(0x144a8c980 + 0x4a) = 200;   // StarshipShieldData
+    *(uint16_t*)(0x144a8ca00 + 0x48) = 300; *(uint16_t*)(0x144a8ca00 + 0x4a) = 300;   // StarshipHealthDamageData
+    *(uint16_t*)(0x144adafa0 + 0x48) = 400; *(uint16_t*)(0x144adafa0 + 0x4a) = 400;   // IncomBulletConfig
+    uint8_t* moveCls = fake_class(100); uint8_t* shieldCls = fake_class(200); uint8_t* otherCls = fake_class(999);
+    FakeMove player = fake_movement(moveCls, "Game/Gameplay/Starships/XWing/Config/StarshipMovementConfig_XWing", 2.5f);
+    FakeMove bot = fake_movement(moveCls, "Game/Gameplay/Starships/XWing_AI/Config/StarshipMovementConfig_XWingAI_Bot", 1.5f);
+    FakeMove creep = fake_movement(moveCls, "Game/Gameplay/Starships/XWing_AI/Config/StarshipMovementConfig_XWingAI", 2.5f);
+    uint8_t* shield = fake_alloc(0x100); *(uint64_t*)(shield + 8) = (uint64_t)shieldCls;
+    *(const char**)(shield + 0x18) = "Game/Gameplay/Starships/XWing/Config/StarshipShieldData_XWing";
+    FakeAttr* maxShield = fake_attr(0x5EED0001, 800.0f); *(uint64_t*)(shield + 0x68) = (uint64_t)maxShield;
+    { uint32_t ids[1] = { 0x5EED0001 }; float vals[1] = { 800.0f }; *(uint64_t*)(shield + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
+    uint8_t* other = fake_alloc(0x100); *(uint64_t*)(other + 8) = (uint64_t)otherCls;   // a type the engine must skip
+    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other;
+    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield;
+    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 3;
+    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 2;
+    uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
+    uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
+    *(uint8_t***)(domain + 0x138) = parts; *(uint8_t***)(domain + 0x140) = parts + 2;
+    uint8_t* centry = fake_alloc(0x80); *(uint8_t**)(centry + 0x68) = domain;
+    *(uint8_t**)(0x1442d18c8 + 4 * 8) = centry;   // compartment 4 ("Game")
+    wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
+    wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini"); DeleteFileW(defaultsPath);
     check(GetModuleHandleW(L"sws_server_test.dll") != nullptr, "DLL was loaded at startup by the launcher's APC");
     for (int i = 0; i < 300 && *(uint8_t*)0x1401ae7d0 != 0xFF; i++) Sleep(50);
     check(*(uint8_t*)0x1401ae7d0 == 0xFF && *(uint8_t*)0x1401aac90 == 0xFF && *(uint8_t*)0x1401bf4d0 == 0xFF, "server hooks installed");
@@ -151,6 +208,24 @@ int main() {
     alignas(16) static uint8_t gs[0x200];
     for (int i = 0; i < 150; i++) { ((void(__fastcall*)(void*, uint64_t, uint64_t, uint64_t))0x1401bfe60)(gs, 0, 0, 0); Sleep(30); }
     check(true, "ticked 4.5 s (see status log for the 3b spawn lines)");
+    // value engine (StandIn profile: afterburnermaxspeed=250, drifttransitiontime=5, maxspeeds[8]=150, shield 900)
+    printf("      (player: boost %g list %g, drift %g, maxspeeds[8] %g, plain %g; bot: boost %g drift %g; creep: boost %g drift %g; shield %g)\n",
+           player.ab->value, player.reg[3], player.drift->value, player.speeds[8], *(float*)(player.inst + 0x2ec),
+           bot.ab->value, bot.drift->value, creep.ab->value, creep.drift->value, maxShield->value);
+    check(player.ab->value == 250.0f && player.reg[3] == 250.0f, "value engine: attribute field and its list entry written (240 -> 250)");
+    check(player.speeds[8] == 150.0f && player.speeds[7] == 120.0f + 3.125f * 7, "value engine: one array element written, its neighbours untouched");
+    check(*(float*)(player.inst + 0x2ec) == 10000.0f && player.reg[1] == 1.0f, "value engine: fields without an override untouched");
+    check(bot.ab->value == 250.0f, "value engine: vs-AI bot follows the player where their defaults match");
+    check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
+    check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
+    check(maxShield->value == 900.0f, "value engine: shield config written");
+    {
+        char buf[16384] = {}; FILE* f = nullptr; size_t n = 0;
+        if (_wfopen_s(&f, defaultsPath, L"rb") == 0 && f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); }
+        check(n && strstr(buf, "[starshipmovementconfig_xwing]") && strstr(buf, "afterburnermaxspeed=240") &&
+              strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800"),
+              "value engine: defaults.ini records the values as loaded");
+    }
 
     // socket pass-through: stand-in vtables at the real addresses, then calls through them as the engine makes them
     {
@@ -219,6 +294,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         const char* canon[] = { "pinball=0;multidrift=1;", "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
+                                "starshipmovementconfig_xwing.drifttransitiontime=5;", "starshipmovementconfig_xwing.maxspeeds[8]=150;",
                                 "starshipshielddata_xwing.maxshieldhealth=900;" };
         uint32_t h = 2166136261u;
         for (const char* c : canon) for (const char* q = c; *q; q++) { h ^= (uint8_t)*q; h *= 16777619u; }

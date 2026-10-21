@@ -84,7 +84,7 @@ Then, with Steam running and the game closed, everyone runs `sws_launch.exe` and
 starts a **solo custom match vs AI**: on the host that becomes the real match (per `match_mode`); on a joiner it
 connects to the host instead. Joiners should start once the host's match lobby is up.
 
-**Profiles** hold the movement rules and, once the value engine lands (#3), changed game values. Name one in
+**Profiles** hold the movement rules and changed game values. Name one in
 `server.ini` with `profile=<name>`; the mod reads `profiles\<name>.ini` beside the DLL (see
 `mod/examples/profiles/Example.ini`):
 
@@ -97,6 +97,13 @@ no_multidrift=1
 [values]
 ; <asset>.<field>=<number>
 ```
+
+**Values** are written into the game's loaded data at runtime: movement, shields, hull and laser projectiles
+(the fields in `mod/config_fields.h`; arrays as `field[i]`). Asset and field names match the game's, lowercase:
+`starshipmovementconfig_xwing.afterburnermaxspeed=260`. Each launch writes `defaults.ini` beside the DLL with the
+values as the game loaded them, for every config it saw: the list of what can be changed, and the way back. A
+player ship's change also applies to its vs-AI bot version (copied, or scaled where the bot is tuned differently);
+the AI "creep" ships are left alone. Actual flight speed tops out at 300 whatever the data says (measured; the limit isn't in these configs).
 
 Everyone in a match must use the same profile. A fingerprint of it (the rules plus every value, normalized) is part of
 the network version, so players on different profiles are refused at connect; the log's `profile:` line shows it.
