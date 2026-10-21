@@ -1,0 +1,71 @@
+# STAR WARS: Squadrons community server mod
+# Rule of thumb: our own source, scripts and notes go in; game files, third-party tools, build output and
+# anything with personal data (logs, addresses) stay out. Players bring their own copy of the game.
+
+# --- Game files and data extracted from them (never redistribute) ---
+# copy of the game exe, Ghidra project, decompiler output
+work/
+# EBX dumps and other data extracted from the game
+out/
+*.exe.bak
+*.toc
+*.sb
+*.cas
+*.cat
+
+# --- Third-party tools and reference code (download separately; Kyber is GPLv3, reference only) ---
+ext/
+refs/
+
+# --- Build output ---
+probe/build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+# packaged test builds (zips); publish builds as GitHub releases instead
+release/
+
+# --- Logs and live configs (IP addresses, Tailscale addresses, Windows user names) ---
+probe_logs/
+logs/
+*.status.txt
+probe_*.bin
+rules_*.bin
+server_*.bin
+# live configs: commit *.example.ini versions instead
+server.ini
+rules.ini
+launch.ini
+
+# --- Generated from the game data by tools/ (regenerate rather than commit) ---
+unlock_ids.txt
+notes/sws_runtime_types.json
+notes/sws_sdk_types.json
+notes/customization-catalog.json
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+
+# --- Local tool and editor state ---
+.claude/settings.local.json
+.claude/output-styles/
+.vscode/
+.vs/
+*.swp
+Thumbs.db
+desktop.ini
+
+# --- Ported from Frosty Toolsuite (CC BY-NC-ND 4.0: no derivatives) and the scripts built on it.
+# Kept out of the public repo until the Frosty authors agree or the reader is rewritten from format notes.
+tools/frostbite/
+tools/swsdata.py
+tools/customization_catalog.py
+tools/unlock_ids.py
+tools/fbsdk.py
+tools/dump_sdk_types.py
