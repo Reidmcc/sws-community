@@ -180,6 +180,7 @@ int main() {
     *(uint16_t*)(0x144a8c980 + 0x48) = 200; *(uint16_t*)(0x144a8c980 + 0x4a) = 200;   // StarshipShieldData
     *(uint16_t*)(0x144a8ca00 + 0x48) = 300; *(uint16_t*)(0x144a8ca00 + 0x4a) = 300;   // StarshipHealthDamageData
     *(uint16_t*)(0x144adafa0 + 0x48) = 400; *(uint16_t*)(0x144adafa0 + 0x4a) = 400;   // IncomBulletConfig
+    *(uint16_t*)(0x144adb020 + 0x48) = 450; *(uint16_t*)(0x144adb020 + 0x4a) = 450;   // IncomExplosionData
     uint8_t* moveCls = fake_class(100); uint8_t* shieldCls = fake_class(200); uint8_t* otherCls = fake_class(999);
     FakeMove player = fake_movement(moveCls, "Game/Gameplay/Starships/XWing/Config/StarshipMovementConfig_XWing", 2.5f);
     FakeMove bot = fake_movement(moveCls, "Game/Gameplay/Starships/XWing_AI/Config/StarshipMovementConfig_XWingAI_Bot", 1.5f);
@@ -189,6 +190,10 @@ int main() {
     FakeAttr* maxShield = fake_attr(0x5EED0001, 800.0f); *(uint64_t*)(shield + 0x68) = (uint64_t)maxShield;
     { uint32_t ids[1] = { 0x5EED0001 }; float vals[1] = { 800.0f }; *(uint64_t*)(shield + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* other = fake_alloc(0x100); *(uint64_t*)(other + 8) = (uint64_t)otherCls;   // a type the engine must skip
+    uint8_t* blast = fake_alloc(0x100); *(uint64_t*)(blast + 8) = (uint64_t)fake_class(450);   // the piercing torpedo's explosion
+    *(const char**)(blast + 0x18) = "LiveService/Gameplay/Starships/Common/Projectiles/Config/Tuning/ExplosionConfigLS_Missile_PiercingTorpedo";
+    FakeAttr* blastDmg = fake_attr(0x5EED0002, 2000.0f); *(uint64_t*)(blast + 0x68) = (uint64_t)blastDmg;
+    { uint32_t ids[1] = { 0x5EED0002 }; float vals[1] = { 2000.0f }; *(uint64_t*)(blast + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     if (map(0x1449f0000, 0x10000) != (void*)0x1449f0000 || map(0x144a00000, 0x10000) != (void*)0x144a00000 ||
         map(0x144a30000, 0x10000) != (void*)0x144a30000) { printf("FAIL  could not map the weapon type regions\n"); return 1; }
     *(uint16_t*)(0x1449fc370 + 0x48) = 500; *(uint16_t*)(0x1449fc370 + 0x4a) = 500;   // StarshipWeaponConfig
@@ -206,9 +211,9 @@ int main() {
     { uint32_t ids[1] = { 0x77770001 }; float vals[1] = { 0.1333f }; *(uint64_t*)(weapon + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
     *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
-    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other;
+    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast;
     uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon;
-    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 3;
+    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 4;
     uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 3;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
@@ -254,6 +259,8 @@ int main() {
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");
+    check(blastDmg->value == 3000.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 3000.0f,
+          "value engine: an explosion config's blast damage and its list entry written (2000 -> 3000)");
     printf("      (turn rate %g %g %g, list %g %g %g; fire interval %g list %g; burst %d list %d; pip cost [2] %g [3] %g [4] %g)\n",
            player.turn->x, player.turn->y, player.turn->z, player.v3[0], player.v3[1], player.v3[2], rof->value,
            *(float*)(*(uint64_t*)(weapon + 0x40) + 4), burst->value, *(int32_t*)(ilist + 20),
@@ -271,7 +278,8 @@ int main() {
         check(n && strstr(buf, "[starshipmovementconfig_xwing]") && strstr(buf, "afterburnermaxspeed=240") &&
               strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800") &&
               strstr(buf, "afterburneraxisturnrate.y=5") && strstr(buf, "weaponfiring.laserregenpips[3].costpershot=3.25") &&
-              strstr(buf, "weaponfiring.burstfirenumshotsattribute=3"),
+              strstr(buf, "weaponfiring.burstfirenumshotsattribute=3") &&
+              strstr(buf, "[explosionconfigls_missile_piercingtorpedo]") && strstr(buf, "blastdamage=2000"),
               "value engine: defaults.ini records the values as loaded");
     }
 
@@ -341,7 +349,8 @@ int main() {
         // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
-        const char* canon[] = { "pinball=0;multidrift=1;", "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
+        const char* canon[] = { "pinball=0;multidrift=1;", "explosionconfigls_missile_piercingtorpedo.blastdamage=3000;",
+                                "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
                                 "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
                                 "starshipmovementconfig_xwing.drifttransitiontime=5;", "starshipmovementconfig_xwing.maxspeeds[8]=150;",
                                 "starshipshielddata_xwing.maxshieldhealth=900;",
@@ -356,7 +365,8 @@ int main() {
     // observation: fake components laid out as the game's (handle {vtable, .., +0x18 output object}; the output object
     // has its ClassInfo at +8 and fields from +0x18). Checked afterwards from the flight record (observe_report.py):
     // movement CurrentSpeed 100..300 in 3 records, AfterburnerMaxSpeed 320, never 999 (recorded after destruction);
-    // laser regen energy 0.5; weapon barrel 2; no health component (its output has the wrong ClassInfo).
+    // laser regen energy 0.5; weapon barrel 2; the decoy health component not recorded (wrong ClassInfo); the real one's
+    // CurrentHealth 624..1080 and last hit taken DamageDealt 123..456.
     {
         typedef uint64_t(__fastcall* ctor_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         uint8_t* mv = (uint8_t*)calloc(1, 0xCB0 + 0x20); uint8_t* md = (uint8_t*)calloc(1, 0x78);
@@ -369,9 +379,15 @@ int main() {
         *(uint64_t*)(wc + 0x1E0) = 0x14361e2a0; *(uint64_t*)(wc + 0x1E0 + 0x18) = (uint64_t)wd;
         *(uint64_t*)(wd + 8) = 0x144a15420; *(uint64_t*)(wd + 0x20) = (uint64_t)rg; *(int32_t*)(wd + 0x64) = 2; wd[0x6c] = 1;
         *(uint64_t*)(rg + 8) = 0x144a36d80; *(float*)(rg + 0x18) = 0.5f;
+        uint8_t* hc2 = (uint8_t*)calloc(1, 0x430 + 0x20); uint8_t* hd2 = (uint8_t*)calloc(1, 0x58); uint8_t* hit = (uint8_t*)calloc(1, 0x40);
+        *(uint64_t*)(hc2 + 0x430) = 0x143612168; *(uint64_t*)(hc2 + 0x430 + 0x18) = (uint64_t)hd2;
+        *(uint64_t*)(hd2 + 8) = 0x144a02ec0; *(float*)(hd2 + 0x30) = 1080.0f; *(uint64_t*)(hd2 + 0x18) = (uint64_t)hit;
+        *(uint64_t*)(hit + 8) = 0x144a15720; *(float*)(hit + 0x1c) = 123.0f;
         ((ctor_t)0x14169cf00)((uint64_t)mv, 0, 0, 0); ((ctor_t)0x141680fb0)((uint64_t)hc, 0, 0, 0); ((ctor_t)0x14172a5e0)((uint64_t)wc, 0, 0, 0);
+        ((ctor_t)0x141680fb0)((uint64_t)hc2, 0, 0, 0);
         const float speeds[] = { 100.0f, 100.0f, 150.0f, 150.0f, 300.0f, 300.0f };
         for (float v : speeds) { *(float*)(md + 0x1c) = v; Sleep(250); }
+        *(float*)(hit + 0x1c) = 456.0f; *(float*)(hd2 + 0x30) = 624.0f; Sleep(250);   // a second hit
         *(uint64_t*)(mv + 0xCB0) = 0; Sleep(350);   // destroyed: the handle loses its vtable
         *(float*)(md + 0x1c) = 999.0f; Sleep(350);
         check(true, "observation: fake components sampled (verify with observe_report.py on this run's record)");

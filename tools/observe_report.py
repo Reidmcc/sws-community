@@ -32,8 +32,10 @@ LAYOUT = {
     6: [(0, "MaxAmmo", "i"), (1, "CurrentAmmo", "i"), (2, "CooldownTime", "f"), (3, "MaxCooldownTime", "f"),
         (5, "ActiveTime", "f"), (6, "MaxActiveTime", "f"), (8, "PreFireDelayTime", "f"), (9, "MaxPreFireDelayTime", "f")],
     7: [(1, "CurrentBarrelIndex", "i"), (3, "IsWeaponActive", "b")],
+    8: [(0, "HitAngle", "f"), (1, "DamageDealt", "f"), (6, "HitType", "i")],
 }
-KIND = {1: "movement", 2: "health", 3: "power", 4: "laser regen", 5: "laser charge", 6: "ammo", 7: "weapon"}
+KIND = {1: "movement", 2: "health", 3: "power", 4: "laser regen", 5: "laser charge", 6: "ammo", 7: "weapon",
+        8: "last hit taken"}
 
 
 def decode(rows, word, typ):

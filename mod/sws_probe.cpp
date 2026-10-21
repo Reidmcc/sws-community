@@ -1282,7 +1282,9 @@ static void value_engine_scan() {
 // it to the flight record (type 10: state = component, f[0] = kind, f[1..] = the type's raw 32-bit words from +0x18)
 // only when it differs from the last record of that output, so idle turrets cost nothing. A handle that no longer
 // carries its vtable (component destroyed) is dropped. Kinds: 1 movement, 2 health, 3 power, 4 laser regen,
-// 5 laser charge, 6 ammo, 7 weapon (from +0x60: UI id, barrel index, tags, active).
+// 5 laser charge, 6 ammo, 7 weapon (from +0x60: UI id, barrel index, tags, active), 8 last hit taken (the health
+// output's +0x18 LastHitInfo: hit angle, damage dealt, origin, hit type; one record per hit unless two hits within a
+// sample are identical or land in the same 100 ms, when only the last shows).
 struct ObsComp { volatile LONG64 comp; int kind; };   // kind 1 movement, 2 health, 3 power, 4 weapon component
 enum { OBS_SLOTS = 4096, OBS_WORDS = 26 };
 static ObsComp g_obs[OBS_SLOTS];
@@ -1291,9 +1293,10 @@ static uint8_t g_obsHave[OBS_SLOTS][4];
 static const uint32_t kObsOff[5] = { 0, 0xCB0, 0x430, 0x1B8, 0x1E0 };
 static const uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
 // per output kind: the data object's ClassInfo, the first word's offset, and the number of words
-static const uint64_t kObsCi[8] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420 };
-static const uint32_t kObsBase[8] = { 0, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x60 };
-static const int kObsWords[8] = { 0, 23, 16, 12, 3, 3, 12, 4 };
+static const uint64_t kObsCi[9] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420,
+                                    0x144a15720 };
+static const uint32_t kObsBase[9] = { 0, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x60, 0x18 };
+static const int kObsWords[9] = { 0, 23, 16, 12, 3, 3, 12, 4, 7 };
 static volatile LONG g_obsCount[5];
 static volatile LONG g_obsFull;
 static void obs_register(uint64_t comp, int kind) {
@@ -1310,7 +1313,7 @@ static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data
     if (!data) return;
     uint64_t ci = rd<uint64_t>(data, 8);
     if (ci != kObsCi[kind]) {   // not the type we expect there: say so (first few per kind), never record it
-        static volatile LONG bad[8];
+        static volatile LONG bad[9];
         if (InterlockedIncrement(&bad[kind]) <= 3)
             status("observe: kind %d output %llx of component %llx has ClassInfo %llx, expected %llx; not recorded", kind, data, comp, ci, kObsCi[kind]);
         return;
@@ -1333,7 +1336,11 @@ static DWORD WINAPI observe_thread(LPVOID) {
             int kind = g_obs[i].kind; uint64_t h = comp + kObsOff[kind];
             if (rd<uint64_t>(h, 0) != kObsVt[kind]) { InterlockedExchange64(&g_obs[i].comp, 0); seen[i] = 0; continue; }
             uint64_t data = rd<uint64_t>(h, 0x18);
-            if (kind < 4) { obs_sample(i, 0, comp, kind, data); continue; }
+            if (kind < 4) {
+                obs_sample(i, 0, comp, kind, data);
+                if (kind == 2 && data && rd<uint64_t>(data, 8) == kObsCi[2]) obs_sample(i, 1, comp, 8, rd<uint64_t>(data, 0x18));
+                continue;
+            }
             if (!data) continue;
             obs_sample(i, 3, comp, 7, data);
             if (rd<uint64_t>(data, 8) != kObsCi[7]) continue;   // its sub-output pointers only mean something on the right type

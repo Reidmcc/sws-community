@@ -64,14 +64,7 @@ static const VeField kVeFields[] = {
     {"throttlespeedrate", 0x304, 0, -1},   // StarshipMovementConfig
     {"throttleincrementrepeatrate", 0x308, 0, -1},   // StarshipMovementConfig
     {"throttlesteplerprate", 0x30c, 0, -1},   // StarshipMovementConfig
-    {"inputactionpitch", 0x310, 1, -1},   // StarshipMovementConfig
-    {"inputactionyaw", 0x314, 1, -1},   // StarshipMovementConfig
-    {"inputactionroll", 0x318, 1, -1},   // StarshipMovementConfig
-    {"inputactionthrottle", 0x31c, 1, -1},   // StarshipMovementConfig
-    {"inputactionafterburner", 0x320, 1, -1},   // StarshipMovementConfig
     {"afterburnergamepadactivationdelay", 0x324, 0, -1},   // StarshipMovementConfig
-    {"inputactiondrift", 0x328, 1, -1},   // StarshipMovementConfig
-    {"inputactionmouserecenter", 0x32c, 1, -1},   // StarshipMovementConfig
     {"mousecursorscalefactor", 0x330, 0, -1},   // StarshipMovementConfig
     {"mouserecentersnapareasizeratio", 0x334, 0, -1},   // StarshipMovementConfig
     {"mouserecentersnapdelay", 0x338, 0, -1},   // StarshipMovementConfig
@@ -124,7 +117,6 @@ static const VeField kVeFields[] = {
     {"timetolive", 0x90, 3, -1},   // IncomBulletConfig
     {"initialspeed", 0x98, 3, -1},   // IncomBulletConfig
     {"weaponfiring", 0x60, 6, 10},   // StarshipWeaponConfig
-    {"aiweapontype", 0x88, 1, -1},   // StarshipWeaponConfig
     {"prefiredelayattribute", 0x18, 3, -1},   // StarshipWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // StarshipWeaponFiringData
     {"burstfirenumshotsattribute", 0x38, 4, -1},   // StarshipWeaponFiringData
@@ -137,20 +129,38 @@ static const VeField kVeFields[] = {
     {"simplemanagementsystempowerfloor", 0x80, 0, -1},   // StarshipPowerManagement
     {"weapontoengineconversionfactor", 0x84, 0, -1},   // StarshipPowerManagement
     {"enginetoweaponconversionfactor", 0x88, 0, -1},   // StarshipPowerManagement
-    {"powertransfermenuaction", 0x8c, 1, -1},   // StarshipPowerManagement
-    {"powertransfermenuinputactionx", 0x90, 1, -1},   // StarshipPowerManagement
-    {"powertransfermenuinputactiony", 0x94, 1, -1},   // StarshipPowerManagement
-    {"powertransfermenuinputactionselect", 0x98, 1, -1},   // StarshipPowerManagement
     {"stickreleasedelay", 0x9c, 0, -1},   // StarshipPowerManagement
-    {"powertransfercomboeptbalance", 0xa0, 1, -1},   // StarshipPowerManagement
-    {"powertransfercomboeptweapon", 0xa4, 1, -1},   // StarshipPowerManagement
-    {"powertransfercomboeptengine", 0xa8, 1, -1},   // StarshipPowerManagement
-    {"powertransfercomboshieldbalance", 0xac, 1, -1},   // StarshipPowerManagement
-    {"powertransfercomboshieldfront", 0xb0, 1, -1},   // StarshipPowerManagement
-    {"powertransfercomboshieldback", 0xb4, 1, -1},   // StarshipPowerManagement
     {"minpowerlevel", 0x18, 3, -1},   // StarshipPowerData
     {"maxpowerlevel", 0x20, 3, -1},   // StarshipPowerData
     {"defaultpowerlevel", 0x28, 3, -1},   // StarshipPowerData
+    {"targetspeed", 0x60, 3, -1},   // IncomMissileConfig
+    {"maxspeed", 0x68, 3, -1},   // IncomMissileConfig
+    {"enginetimetolive", 0x70, 3, -1},   // IncomMissileConfig
+    {"timetoactivateguidingsystem", 0x78, 3, -1},   // IncomMissileConfig
+    {"initialspeed", 0x80, 3, -1},   // IncomMissileConfig
+    {"timetolive", 0x88, 3, -1},   // IncomMissileConfig
+    {"timetoarm", 0x90, 3, -1},   // IncomMissileConfig
+    {"damage", 0x98, 3, -1},   // IncomMissileConfig
+    {"detonationradius", 0xa0, 3, -1},   // IncomMissileConfig
+    {"shieldbuffhealth", 0xa8, 3, -1},   // IncomMissileConfig
+    {"shieldbuffduration", 0xb0, 3, -1},   // IncomMissileConfig
+    {"evaderangeui", 0xb8, 3, -1},   // IncomMissileConfig
+    {"evadevelocityfactor", 0xc0, 5, -1},   // IncomMissileConfig
+    {"evadesmoothrate", 0xc8, 3, -1},   // IncomMissileConfig
+    {"nearmissenterdistance", 0xd0, 3, -1},   // IncomMissileConfig
+    {"nearmissexitdistance", 0xd8, 3, -1},   // IncomMissileConfig
+    {"losetargetbreakdistance", 0xe0, 3, -1},   // IncomMissileConfig
+    {"evadescorenearmissmissileevaded", 0xe8, 3, -1},   // IncomMissileConfig
+    {"losetargetgracetime", 0xf0, 3, -1},   // IncomMissileConfig
+    {"innerblastradius", 0x60, 3, -1},   // IncomExplosionData
+    {"blastdamage", 0x68, 3, -1},   // IncomExplosionData
+    {"blastradius", 0x70, 3, -1},   // IncomExplosionData
+    {"blastimpulse", 0x78, 3, -1},   // IncomExplosionData
+    {"shockwavedamage", 0x80, 3, -1},   // IncomExplosionData
+    {"shockwaveradius", 0x88, 3, -1},   // IncomExplosionData
+    {"shockwaveimpulse", 0x90, 3, -1},   // IncomExplosionData
+    {"shockwavetime", 0x98, 3, -1},   // IncomExplosionData
+    {"maxocclusionraycastradius", 0xa0, 3, -1},   // IncomExplosionData
     {"prefiredelayattribute", 0x18, 3, -1},   // ActivationWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // ActivationWeaponFiringData
     {"burstfirenumshotsattribute", 0x38, 4, -1},   // ActivationWeaponFiringData
@@ -184,11 +194,11 @@ static const VeField kVeFields[] = {
     {"efficientshieldregenratemultiplierattribute", 0xb0, 3, -1},   // LaserChargeWeaponFiringData
     {"efficientshieldsuperchargedregenratemultiplierattribute", 0xb8, 3, -1},   // LaserChargeWeaponFiringData
     {"costpershotmultiplier", 0xc0, 3, -1},   // LaserChargeWeaponFiringData
-    {"laserregenpips", 0xc8, 9, 16},   // LaserChargeWeaponFiringData
+    {"laserregenpips", 0xc8, 9, 18},   // LaserChargeWeaponFiringData
     {"damagemultipliermaxattribute", 0xe8, 3, -1},   // LaserChargeWeaponFiringData
     {"superchargeddamagemultipliermaxattribute", 0xf0, 3, -1},   // LaserChargeWeaponFiringData
     {"superchargedchargerateattribute", 0x100, 3, -1},   // LaserChargeWeaponFiringData
-    {"laserchargepips", 0x108, 9, 18},   // LaserChargeWeaponFiringData
+    {"laserchargepips", 0x108, 9, 20},   // LaserChargeWeaponFiringData
     {"costpershot", 0x8, 0, -1},   // LaserRegenPipData
     {"bulletregenrate", 0xc, 0, -1},   // LaserRegenPipData
     {"laserrechargedelay", 0x10, 0, -1},   // LaserRegenPipData
@@ -208,7 +218,7 @@ static const VeField kVeFields[] = {
     {"efficientshieldregenratemultiplierattribute", 0xb0, 3, -1},   // LaserRegenWeaponFiringData
     {"efficientshieldsuperchargedregenratemultiplierattribute", 0xb8, 3, -1},   // LaserRegenWeaponFiringData
     {"costpershotmultiplier", 0xc0, 3, -1},   // LaserRegenWeaponFiringData
-    {"laserregenpips", 0xc8, 9, 16},   // LaserRegenWeaponFiringData
+    {"laserregenpips", 0xc8, 9, 18},   // LaserRegenWeaponFiringData
     {"prefiredelayattribute", 0x18, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"burstfirenumshotsattribute", 0x38, 4, -1},   // MultiTargetAutoLockWeaponFiringData
@@ -223,7 +233,6 @@ static const VeField kVeFields[] = {
     {"maximumnumberoftargetstoacquireattribute", 0xd0, 4, -1},   // MultiTargetAutoLockWeaponFiringData
     {"delaybetweentagattribute", 0xd8, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"durationattribute", 0xf8, 3, -1},   // MultiTargetAutoLockWeaponFiringData
-    {"targetlocktype", 0x100, 1, -1},   // MultiTargetAutoLockWeaponFiringData
     {"prefiredelayattribute", 0x18, 3, -1},   // TargetLockWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // TargetLockWeaponFiringData
     {"burstfirenumshotsattribute", 0x38, 4, -1},   // TargetLockWeaponFiringData
@@ -242,30 +251,31 @@ static const VeField kVeFields[] = {
     {"basetargetlockincreaserateattribute", 0xc8, 3, -1},   // TargetLockWeaponFiringData
     {"basetargetlockdecayrateattribute", 0xd0, 3, -1},   // TargetLockWeaponFiringData
     {"completedlockdecaydelayattribute", 0xd8, 3, -1},   // TargetLockWeaponFiringData
-    {"targetlocktype", 0xe0, 1, -1},   // TargetLockWeaponFiringData
 };
 static const VeType kVeTypes[] = {
-    {"StarshipMovementConfig", 0x144ab56a0ull, 848, 0, 72, -1},   // 0
-    {"StarshipMovementInputConfig", 0x0ull, 72, 72, 5, -1},   // 1
-    {"StarshipMovementInputKickConfig", 0x0ull, 28, 77, 7, -1},   // 2
-    {"Vec2", 0x0ull, 8, 84, 2, -1},   // 3
-    {"StarshipShieldData", 0x144a8c980ull, 208, 86, 13, -1},   // 4
-    {"StarshipShieldRegenByPowerLevel", 0x0ull, 8, 99, 2, -1},   // 5
-    {"MaterialDecl", 0x0ull, 4, 101, 0, -1},   // 6
-    {"StarshipHealthDamageData", 0x144a8ca00ull, 176, 101, 10, -1},   // 7
-    {"IncomBulletConfig", 0x144adafa0ull, 160, 111, 8, -1},   // 8
-    {"StarshipWeaponConfig", 0x1449fc370ull, 144, 119, 2, -1},   // 9
-    {"StarshipWeaponFiringData", 0x144a029c0ull, 128, 121, 6, 10},   // 10
-    {"StarshipPowerManagement", 0x144ab5620ull, 192, 127, 17, -1},   // 11
-    {"StarshipPowerData", 0x144ade4a0ull, 48, 144, 3, 12},   // 12
-    {"ActivationWeaponFiringData", 0x144a38380ull, 152, 147, 7, 10},   // 13
-    {"AutoLockWeaponFiringData", 0x144a38300ull, 208, 154, 11, 10},   // 14
-    {"LaserChargeWeaponFiringData", 0x144a53940ull, 280, 165, 20, 10},   // 15
-    {"LaserRegenPipData", 0x0ull, 24, 185, 3, -1},   // 16
-    {"BarrelIndexToProjectileIndex", 0x0ull, 8, 188, 0, -1},   // 17
-    {"LaserChargePipData", 0x0ull, 4, 188, 1, -1},   // 18
-    {"LaserRegenWeaponFiringData", 0x144a38400ull, 232, 189, 16, 10},   // 19
-    {"MultiTargetAutoLockWeaponFiringData", 0x144a53840ull, 264, 205, 15, 10},   // 20
-    {"TargetLockWeaponFiringData", 0x144a538c0ull, 240, 220, 19, 10},   // 21
+    {"StarshipMovementConfig", 0x144ab56a0ull, 848, 0, 65, -1},   // 0
+    {"StarshipMovementInputConfig", 0x0ull, 72, 65, 5, -1},   // 1
+    {"StarshipMovementInputKickConfig", 0x0ull, 28, 70, 7, -1},   // 2
+    {"Vec2", 0x0ull, 8, 77, 2, -1},   // 3
+    {"StarshipShieldData", 0x144a8c980ull, 208, 79, 13, -1},   // 4
+    {"StarshipShieldRegenByPowerLevel", 0x0ull, 8, 92, 2, -1},   // 5
+    {"MaterialDecl", 0x0ull, 4, 94, 0, -1},   // 6
+    {"StarshipHealthDamageData", 0x144a8ca00ull, 176, 94, 10, -1},   // 7
+    {"IncomBulletConfig", 0x144adafa0ull, 160, 104, 8, -1},   // 8
+    {"StarshipWeaponConfig", 0x1449fc370ull, 144, 112, 1, -1},   // 9
+    {"StarshipWeaponFiringData", 0x144a029c0ull, 128, 113, 6, 10},   // 10
+    {"StarshipPowerManagement", 0x144ab5620ull, 192, 119, 7, -1},   // 11
+    {"StarshipPowerData", 0x144ade4a0ull, 48, 126, 3, 12},   // 12
+    {"IncomMissileConfig", 0x144adaf20ull, 256, 129, 19, -1},   // 13
+    {"IncomExplosionData", 0x144adb020ull, 176, 148, 9, -1},   // 14
+    {"ActivationWeaponFiringData", 0x144a38380ull, 152, 157, 7, 10},   // 15
+    {"AutoLockWeaponFiringData", 0x144a38300ull, 208, 164, 11, 10},   // 16
+    {"LaserChargeWeaponFiringData", 0x144a53940ull, 280, 175, 20, 10},   // 17
+    {"LaserRegenPipData", 0x0ull, 24, 195, 3, -1},   // 18
+    {"BarrelIndexToProjectileIndex", 0x0ull, 8, 198, 0, -1},   // 19
+    {"LaserChargePipData", 0x0ull, 4, 198, 1, -1},   // 20
+    {"LaserRegenWeaponFiringData", 0x144a38400ull, 232, 199, 16, 10},   // 21
+    {"MultiTargetAutoLockWeaponFiringData", 0x144a53840ull, 264, 215, 14, 10},   // 22
+    {"TargetLockWeaponFiringData", 0x144a538c0ull, 240, 229, 18, 10},   // 23
 };
-static const int kVeRoots[] = { 0, 4, 7, 8, 9, 11 };
+static const int kVeRoots[] = { 0, 4, 7, 8, 9, 11, 13, 14 };

@@ -6,7 +6,7 @@ copy in work/ (each class's runtime ClassInfo: the one .rdata object whose first
 The engine walks each root config's object graph and gives every number a dotted key, for example
   starshipweaponconfig_las_reb_xwing.weaponfiring.laserregenpips[3].costpershot
 It follows only the ship's own sub-objects: classes in FOLLOW (and their subclasses), attribute objects, and inline
-value types. Shared things (sounds, blueprints, curve assets, UI) are left out. Fields of the config base classes (the
+value types. Plain Int32 fields are identifiers or selectors and are left out. Shared things (sounds, blueprints, curve assets, UI) are left out. Fields of the config base classes (the
 attribute registration lists, identifiers) are not exposed; the engine keeps the lists in step itself.
 
 Field kinds (must match sws_probe.cpp):
@@ -30,7 +30,7 @@ EXE = os.path.join(PROJECT, "work", "starwarssquadrons.exe")
 OUT = os.path.join(PROJECT, "mod", "config_types.h")
 
 ROOTS = ["StarshipMovementConfig", "StarshipShieldData", "StarshipHealthDamageData", "IncomBulletConfig",
-         "StarshipWeaponConfig", "StarshipPowerManagement"]
+         "StarshipWeaponConfig", "StarshipPowerManagement", "IncomMissileConfig", "IncomExplosionData"]
 FOLLOW = ["StarshipWeaponFiringData", "StarshipPowerData"]          # sub-object classes followed (with subclasses)
 STOP_SUPERS = {"DataContainer", "GameDataContainer", "StarshipBaseConfig", "BaseConfig", "DataContainerPolicyAsset", "Asset"}
 ATTR = {"IncomAttributeFloat": 3, "IncomAttributeInt": 4, "IncomAttributeVec3": 5}
@@ -96,7 +96,10 @@ def main():
             if ft == "Float32":
                 t["fields"].append((nm, f["offset"], 0, -1))
             elif ft == "Int32":
-                t["fields"].append((nm, f["offset"], 1, -1))
+                # Plain Int32 fields in these configs are identifiers and selectors (input actions, power-transfer
+                # combos, AI weapon type, lock type), not amounts; the integer amounts are IncomAttributeInts.
+                # Changing one would break controls or behavior, not rebalance it, so they are not exposed.
+                continue
             elif ft == "Vec3":
                 t["fields"].append((nm, f["offset"], 2, -1))
             elif ft in ATTR:
