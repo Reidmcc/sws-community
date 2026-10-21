@@ -2,8 +2,9 @@
 
 Usage: .venv/Scripts/python.exe -I tools/observe_report.py <server_*.bin> [--all]
 
-For every client component the sampler saw (movement, health, power, weapon sub-outputs), prints the sample count,
-time span and min / max of each field. Without --all, only components whose values changed during the session are
+For every client component the sampler saw (movement, health, power, weapon sub-outputs), prints the record count,
+time span and min / max of each field. The sampler reads 10 times a second but records an output only when it changed,
+so a record count is a count of changes. Without --all, only components whose values changed during the session are
 shown (ships that just sat there are summarized in one line). Layouts: StarshipMovement/Health/PowerManagement
 ComponentOutputData, LaserRegen/LaserCharge/StarshipAmmo OutputData (the game's runtime type info).
 """
@@ -25,7 +26,8 @@ LAYOUT = {
         (7, "CurrentFrontShieldHealth", "f"), (8, "CurrentBackShieldHealth", "f"), (9, "CurrentMaxShieldHealth", "f"),
         (10, "CurrentMaxShieldBuffHealth", "f"), (11, "CurrentShieldBuffHealth", "f"), (14, "SecondLayerShieldPercentThreshold", "f")],
     3: [(4, "CurrentEnginePowerLevel", "f"), (6, "CurrentWeaponPowerLevel", "f"), (8, "CurrentShieldPowerLevel", "f")],
-    4: [(0, "CurrentEnergyNormalized", "f"), (1, "SuperChargedEnergyThreshold", "f"), (2, "IsSuperCharged", "b")],
+    4: [(0, "CurrentEnergyNormalized", "f"), (1, "SuperChargedEnergyThreshold", "f"), (2, "IsSuperCharged", "b"),
+        (2, "IsUnderRegenPenalty", "b1")],
     5: [(0, "ChargeNormalized", "f"), (1, "SuperChargeChargeNormalized", "f"), (2, "IsCharging", "b")],
     6: [(0, "MaxAmmo", "i"), (1, "CurrentAmmo", "i"), (2, "CooldownTime", "f"), (3, "MaxCooldownTime", "f"),
         (5, "ActiveTime", "f"), (6, "MaxActiveTime", "f"), (8, "PreFireDelayTime", "f"), (9, "MaxPreFireDelayTime", "f")],
@@ -40,7 +42,8 @@ def decode(rows, word, typ):
         return raw.view(np.float32).astype(np.float64)
     if typ == "i":
         return raw.view(np.int32).astype(np.float64)
-    return (raw & 0xFF).astype(np.float64)
+    shift = 8 * int(typ[1:] or 0)   # 'b' = first byte, 'b1' = second
+    return ((raw >> shift) & 0xFF).astype(np.float64)
 
 
 def main():
@@ -48,7 +51,7 @@ def main():
     show_all = "--all" in sys.argv
     a, freq, t0 = load(path)
     obs = a[a["type"] == 10]
-    print(f"{path}: {len(obs)} observation samples")
+    print(f"{path}: {len(obs)} observation records")
     if not len(obs):
         return
     kinds = obs["f"][:, 0].astype(int)
@@ -70,7 +73,7 @@ def main():
             if not changed and not show_all:
                 quiet += 1
                 continue
-            print(f"\n{KIND[k]} {int(comp):#x}: {len(rows)} samples over {span:.1f} s")
+            print(f"\n{KIND[k]} {int(comp):#x}: {len(rows)} records over {span:.1f} s")
             for f in fields:
                 print("   " + f)
     if quiet:

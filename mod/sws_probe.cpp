@@ -1272,48 +1272,74 @@ static void value_engine_scan() {
 }
 
 // ---- Observation (issue #11: what the game actually does with each value) ---------------------------------------------
-// Each client starship component keeps its live "output data" (what the HUD reads) inline, at a fixed offset, built by
-// its constructor: movement FUN_14169cf00 (+0xCB0), health FUN_141680fb0 (+0x430), weapon FUN_14172a5e0 (+0x1E0), power
-// FUN_1415fa310 (+0x1B8); each output object starts with its class's vtable. Hooking the constructors registers every
-// component as it is made; a sampler thread copies the outputs into the flight record 10 times a second (record type 10:
-// state = component, f[0] = kind, f[1..26] = 26 raw 32-bit words from the kind's base). A component whose output no
-// longer carries the vtable (destroyed) is dropped. Kinds: 1 movement (out+24), 2 health (out+24), 3 power (out+24),
-// 4 laser regen (*(out+32)+24), 5 laser charge (*(out+40)+24), 6 ammo (*(out+48)+24), 7 weapon (out+96).
+// Each client starship component holds a small handle to its live "output data" (what the HUD reads), built by its
+// constructor: movement FUN_14169cf00 (+0xCB0), health FUN_141680fb0 (+0x430), weapon FUN_14172a5e0 (+0x1E0), power
+// FUN_1415fa310 (+0x1B8). The handle is {vtable, owner, index, flag, data*}; data* (handle+0x18) is a refcounted
+// DataContainer made by FUN_141699400 / FUN_141680ed0 / FUN_14172a5e0's FUN_141713fe0 / FUN_1415fa0d0, with its
+// ClassInfo at +8 and its fields from +0x18 (offsets as in the runtime type info). The weapon output's +0x20/+0x28/+0x30
+// point at its laser regen, laser charge and ammo outputs, the same kind of object. Hooking the constructors registers
+// every component as it is made; a sampler thread reads each output 10 times a second, checks its ClassInfo, and writes
+// it to the flight record (type 10: state = component, f[0] = kind, f[1..] = the type's raw 32-bit words from +0x18)
+// only when it differs from the last record of that output, so idle turrets cost nothing. A handle that no longer
+// carries its vtable (component destroyed) is dropped. Kinds: 1 movement, 2 health, 3 power, 4 laser regen,
+// 5 laser charge, 6 ammo, 7 weapon (from +0x60: UI id, barrel index, tags, active).
 struct ObsComp { volatile LONG64 comp; int kind; };   // kind 1 movement, 2 health, 3 power, 4 weapon component
-static ObsComp g_obs[512];
+enum { OBS_SLOTS = 4096, OBS_WORDS = 26 };
+static ObsComp g_obs[OBS_SLOTS];
+static uint32_t g_obsLast[OBS_SLOTS][4][OBS_WORDS];   // last recorded words per output (movement/health/power use [0])
+static uint8_t g_obsHave[OBS_SLOTS][4];
 static const uint32_t kObsOff[5] = { 0, 0xCB0, 0x430, 0x1B8, 0x1E0 };
 static const uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
+// per output kind: the data object's ClassInfo, the first word's offset, and the number of words
+static const uint64_t kObsCi[8] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420 };
+static const uint32_t kObsBase[8] = { 0, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x60 };
+static const int kObsWords[8] = { 0, 23, 16, 12, 3, 3, 12, 4 };
 static volatile LONG g_obsCount[5];
+static volatile LONG g_obsFull;
 static void obs_register(uint64_t comp, int kind) {
-    for (int i = 0; i < 512; i++)
+    int i = 0;
+    for (; i < OBS_SLOTS; i++)
         if (InterlockedCompareExchange64(&g_obs[i].comp, (LONG64)comp, 0) == 0) { g_obs[i].kind = kind; break; }
+    if (i == OBS_SLOTS && InterlockedExchange(&g_obsFull, 1) == 0) status("observe: registry full (%d), later components not sampled", OBS_SLOTS);
     LONG n = InterlockedIncrement(&g_obsCount[kind]);
     static const char* names[5] = { "", "movement", "health", "power", "weapon" };
     if (n <= 3 || n % 50 == 0) status("observe: %s component %llx (#%ld)", names[kind], comp, n);
 }
-static void obs_record(uint64_t comp, int kind, uint64_t base) {
-    if (!base) return;
+// Record one output object if it is the expected type and changed since its last record. slot/sub index g_obsLast.
+static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data) {
+    if (!data) return;
+    uint64_t ci = rd<uint64_t>(data, 8);
+    if (ci != kObsCi[kind]) {   // not the type we expect there: say so (first few per kind), never record it
+        static volatile LONG bad[8];
+        if (InterlockedIncrement(&bad[kind]) <= 3)
+            status("observe: kind %d output %llx of component %llx has ClassInfo %llx, expected %llx; not recorded", kind, data, comp, ci, kObsCi[kind]);
+        return;
+    }
+    uint32_t w[OBS_WORDS]; int n = kObsWords[kind];
+    for (int i = 0; i < n; i++) w[i] = rd<uint32_t>(data, kObsBase[kind] + i * 4);
+    if (g_obsHave[slot][sub] && memcmp(w, g_obsLast[slot][sub], n * 4) == 0) return;
+    memcpy(g_obsLast[slot][sub], w, n * 4); g_obsHave[slot][sub] = 1;
     Rec* r = claim(); stamp(r, R_OUTPUT, comp); r->f[0] = (float)kind;
-    for (int i = 0; i < 26; i++) { uint32_t w = rd<uint32_t>(base, i * 4); memcpy(&r->f[1 + i], &w, 4); }
+    for (int i = 0; i < n; i++) memcpy(&r->f[1 + i], &w[i], 4);
     commit();
 }
 static DWORD WINAPI observe_thread(LPVOID) {
+    uint64_t seen[OBS_SLOTS] = {};   // the component each slot's history belongs to
     for (;;) {
         Sleep(100);
-        for (int i = 0; i < 512; i++) {
+        for (int i = 0; i < OBS_SLOTS; i++) {
             uint64_t comp = (uint64_t)g_obs[i].comp; if (!comp) continue;
-            int kind = g_obs[i].kind; uint64_t out = comp + kObsOff[kind];
-            if (rd<uint64_t>(out, 0) != kObsVt[kind]) { InterlockedExchange64(&g_obs[i].comp, 0); continue; }
-            if (kind == 1) obs_record(comp, 1, out + 24);
-            else if (kind == 2) obs_record(comp, 2, out + 24);
-            else if (kind == 3) obs_record(comp, 3, out + 24);
-            else {
-                uint64_t regen = rd<uint64_t>(out, 32), charge = rd<uint64_t>(out, 40), ammo = rd<uint64_t>(out, 48);
-                if (regen) obs_record(comp, 4, regen + 24);
-                if (charge) obs_record(comp, 5, charge + 24);
-                if (ammo) obs_record(comp, 6, ammo + 24);
-                obs_record(comp, 7, out + 96);
-            }
+            if (seen[i] != comp) { seen[i] = comp; memset(g_obsHave[i], 0, sizeof g_obsHave[i]); }
+            int kind = g_obs[i].kind; uint64_t h = comp + kObsOff[kind];
+            if (rd<uint64_t>(h, 0) != kObsVt[kind]) { InterlockedExchange64(&g_obs[i].comp, 0); seen[i] = 0; continue; }
+            uint64_t data = rd<uint64_t>(h, 0x18);
+            if (kind < 4) { obs_sample(i, 0, comp, kind, data); continue; }
+            if (!data) continue;
+            obs_sample(i, 3, comp, 7, data);
+            if (rd<uint64_t>(data, 8) != kObsCi[7]) continue;   // its sub-output pointers only mean something on the right type
+            obs_sample(i, 0, comp, 4, rd<uint64_t>(data, 0x20));
+            obs_sample(i, 1, comp, 5, rd<uint64_t>(data, 0x28));
+            obs_sample(i, 2, comp, 6, rd<uint64_t>(data, 0x30));
         }
     }
     return 0;
