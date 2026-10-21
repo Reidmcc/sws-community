@@ -92,7 +92,7 @@ def own_config(name, ship):
 def fmt(stock, factor, key=""):
     name = re.sub(r"\[\d+\]", "", key).rsplit(".", 1)[-1]
     v = stock / factor if INVERT.search(name) else stock * factor
-    return str(int(round(v))) if float(stock).is_integer() else f"{v:.6g}"
+    return f"{v:.6g}"   # never rounded: 20 / 3 must stay 6.66667 (whole-number stock x whole factor stays whole anyway)
 
 
 def main():
