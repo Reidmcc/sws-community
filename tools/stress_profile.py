@@ -16,7 +16,7 @@ recording (tools/observe_report.py) shows which values the game followed and whe
 A ship's own configs are those whose name has the ship as one of its _-separated parts, without an ai / bot / pvb / sp
 part (those are the AI and single-player variants). Negative stock values (-1 means unlimited) and zeros are left alone,
 and so are four kinds of field whose limits don't come from the engine, or which would spoil the flight (SKIP below):
-input tuning, power levels, fractions / thresholds / angles, and multipliers on another field (X and Xfactor).
+input tuning, power levels, fractions / thresholds / angles, and multipliers on another field (X and Xfactor or Xmultiplier).
 
 Usage: .venv/Scripts/python.exe -I tools/stress_profile.py <ship> [--factor 3] [--systems movement,turning,defense,weapons]
 """
@@ -43,7 +43,7 @@ SKIP = [
     ("fraction, threshold or angle: the limit comes from what it means (0..1, 0..180)",
      re.compile(r"(ratio|threshold|angle)(attribute)?$|percent|normalized")),
 ]
-COMPOUND = "multiplier on another field of the config (X and Xfactor): raising both would compound"
+COMPOUND = "multiplier on another field of the config (X and Xfactor / Xmultiplier): raising both would compound"
 
 
 def skip_reason(key, section):
@@ -52,10 +52,13 @@ def skip_reason(key, section):
     for why, pat in SKIP:
         if pat.search(name) or (pat is SKIP[0][1] and pat.search(k)):
             return why
-    if name.endswith("factor") and len(name) > 6:
-        scaled = k[:-6]
-        if any(re.sub(r"\[\d+\]", "", o).startswith(scaled) and o != key for o in section):
-            return COMPOUND
+    for suffix in ("factor", "multiplier"):
+        if name.endswith(suffix) and len(name) > len(suffix):
+            base = name[:-len(suffix)]   # e.g. maxspeeds (maxspeeds[i]), costpershot (laserregenpips[i].costpershot)
+            for o in section:
+                on = re.sub(r"\[\d+\]", "", o).rsplit(".", 1)[-1]
+                if o != key and (on == base or on.startswith(base)):
+                    return COMPOUND
     return None
 
 
