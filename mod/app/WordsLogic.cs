@@ -11,7 +11,7 @@ namespace SwsSettings
     static partial class Words
     {
         static Dictionary<string, string> exact;
-        static HashSet<string> vocab;
+        static HashSet<string> vocab, acronyms;
         static int maxWord;
         static readonly Dictionary<string, string> cache = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -20,6 +20,7 @@ namespace SwsSettings
             if (exact != null) return;
             exact = ExactPairs.ToDictionary(p => p[0], p => p[1], StringComparer.Ordinal);
             vocab = new HashSet<string>(Vocabulary, StringComparer.Ordinal);
+            acronyms = new HashSet<string>(Acronyms, StringComparer.Ordinal);
             maxWord = Vocabulary.Max(w => w.Length);
         }
 
@@ -34,13 +35,13 @@ namespace SwsSettings
                 var m = Regex.Match(part, @"^(.*?)((\[\d+\])*)$");
                 string name = m.Groups[1].Value, idx = m.Groups[2].Value;
                 string p = name.Length == 1 ? name : Name(name);
-                if (p.EndsWith(" attribute")) p = p.Substring(0, p.Length - 10);   // the game's marker for attribute-backed fields
+                if (p.EndsWith(" Attribute")) p = p.Substring(0, p.Length - 10);   // the game's marker for attribute-backed fields
                 parts.Add(idx.Length > 0 ? p + " " + idx : p);
             }
             // a vector's component reads as a suffix: "afterburner axis turn rate (y)"
             if (parts.Count > 1 && (parts[parts.Count - 1] == "x" || parts[parts.Count - 1] == "y" || parts[parts.Count - 1] == "z"))
             {
-                parts[parts.Count - 2] += " (" + parts[parts.Count - 1] + ")";
+                parts[parts.Count - 2] += " (" + parts[parts.Count - 1].ToUpperInvariant() + ")";
                 parts.RemoveAt(parts.Count - 1);
             }
             r = string.Join(" › ", parts);
@@ -55,6 +56,13 @@ namespace SwsSettings
             string e;
             if (exact.TryGetValue(name, out e)) return e;
             return string.Join(" ", name.Split('_').Where(s => s.Length > 0).Select(Split));
+        }
+
+        // a split word as a label shows it: capitalized, or in capitals where the game writes it so
+        static string Title(string w)
+        {
+            if (acronyms.Contains(w)) return w.ToUpperInvariant();
+            return w.Length == 0 ? w : char.ToUpperInvariant(w[0]) + w.Substring(1);
         }
 
         static string Split(string s)
@@ -83,7 +91,7 @@ namespace SwsSettings
                 if (merged.Count > 0 && w.Length == 1 && !vocab.Contains(w) && merged[merged.Count - 1].Length >= 1 && !vocab.Contains(merged[merged.Count - 1]))
                     merged[merged.Count - 1] += w;
                 else merged.Add(w);
-            return string.Join(" ", merged);
+            return string.Join(" ", merged.Select(Title));
         }
     }
 }
