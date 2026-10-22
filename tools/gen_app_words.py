@@ -56,9 +56,7 @@ def main():
          "        static readonly string[][] ExactPairs = {"]
     for k in sorted(exact):
         L.append(f'            new[] {{ "{k}", "{exact[k]}" }},')
-    L += ["        };", "        // words the game writes in capitals (AI, UI...), kept that way in split names",
-          "        static readonly string[] Acronyms = { " + " ".join(f'"{a}",' for a in sorted(acronyms)) + " };",
-          "        static readonly string[] Vocabulary = {"]
+    L += ["        };", "        static readonly string[] Vocabulary = {"]
     for i in range(0, len(vocab), 12):
         L.append("            " + " ".join(f'"{w}",' for w in vocab[i:i + 12]))
     L += ["        };", "    }", "}"]

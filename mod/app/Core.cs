@@ -121,16 +121,20 @@ namespace SwsSettings
     {
         public readonly SortedDictionary<string, SortedDictionary<string, double>> Assets =
             new SortedDictionary<string, SortedDictionary<string, double>>(StringComparer.Ordinal);
+        // each config's name as the game spells it ("; name=HullCustom_Chameleon_Xwing", written by the DLL)
+        public readonly Dictionary<string, string> Names = new Dictionary<string, string>(StringComparer.Ordinal);
+        public string NameOf(string asset) { string n; return Names.TryGetValue(asset, out n) ? n : null; }
         public static Defaults Load(string dir)
         {
             var d = new Defaults(); string file = Path.Combine(dir, "defaults.ini");
             if (!File.Exists(file)) return d;
-            SortedDictionary<string, double> cur = null;
+            SortedDictionary<string, double> cur = null; string section = null;
             foreach (var raw in File.ReadAllLines(file))
             {
                 string line = raw.Trim();
+                if (section != null && line.StartsWith("; name=")) { d.Names[section] = line.Substring(7).Trim(); continue; }
                 if (line.Length == 0 || line[0] == ';') continue;
-                if (line[0] == '[' && line.EndsWith("]")) { string n = line.Substring(1, line.Length - 2); if (!d.Assets.TryGetValue(n, out cur)) d.Assets[n] = cur = new SortedDictionary<string, double>(new FieldOrder()); continue; }
+                if (line[0] == '[' && line.EndsWith("]")) { string n = section = line.Substring(1, line.Length - 2); if (!d.Assets.TryGetValue(n, out cur)) d.Assets[n] = cur = new SortedDictionary<string, double>(new FieldOrder()); continue; }
                 int eq = line.IndexOf('='); double v;
                 if (cur != null && eq > 0 && Num.TryParse(line.Substring(eq + 1), out v)) cur[line.Substring(0, eq)] = v;
             }
@@ -254,8 +258,8 @@ namespace SwsSettings
             "tieinterceptor", "tiereaper", "tiedefender" };
         static readonly Dictionary<string, string> ShipNames = new Dictionary<string, string> {
             { "xwing", "X-wing" }, { "ywing", "Y-wing" }, { "awing", "A-wing" }, { "uwing", "U-wing" }, { "bwing", "B-wing" },
-            { "tiefighter", "TIE fighter" }, { "tiebomber", "TIE bomber" }, { "tieinterceptor", "TIE interceptor" },
-            { "tiereaper", "TIE reaper" }, { "tiedefender", "TIE defender" } };
+            { "tiefighter", "TIE Fighter" }, { "tiebomber", "TIE Bomber" }, { "tieinterceptor", "TIE Interceptor" },
+            { "tiereaper", "TIE Reaper" }, { "tiedefender", "TIE Defender" } };
         public static string ShipName(string s) { string n; return s != null && ShipNames.TryGetValue(s, out n) ? n : "Shared"; }
 
         static string[] Parts(string asset) { return asset.Split('_'); }

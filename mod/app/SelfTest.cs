@@ -18,6 +18,13 @@ namespace SwsSettings
                     Console.WriteLine(f + "\t" + Words.Pretty(f));
                 return 0;
             }
+            if (args[1] == "--configs")   // every config's short and full readable name, for review
+            {
+                var d = Defaults.Load(args[0]);
+                foreach (var a in d.Assets.Keys)
+                    Console.WriteLine(a + "\t" + Words.Config(a, true, d.NameOf(a)) + "\t" + Words.Config(a, false, d.NameOf(a)) + "\t" + (d.NameOf(a) ?? "(no name)"));
+                return 0;
+            }
             var limits = Limits.Load(args[0]);
             Console.WriteLine("limits: " + (limits.Loaded ? limits.ByKey.Count + " fields, " + limits.Primary.Count + " primary weapon configs" : "none"));
             for (int i = 1; i < args.Length; i++)

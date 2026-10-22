@@ -313,6 +313,7 @@ int main() {
               strstr(buf, "weaponfiring.burstfirenumshotsattribute=3") &&
               strstr(buf, "[explosionconfigls_missile_piercingtorpedo]") && strstr(buf, "blastdamage=2000") &&
               strstr(buf, "[hullcustom_heavy_xwing]") && strstr(buf, "healthmax=0.6") &&
+              strstr(buf, "; name=HullCustom_Heavy_Xwing") &&
               strstr(buf, "afterburnerchargerate[0]=0.5") && strstr(buf, "afterburnerchargerate[1]=-0.5"),
               "value engine: defaults.ini records the values as loaded");
         check(n && strstr(buf, "[oldconfig_from_earlier]") && strstr(buf, "foo=1") && strstr(buf, "bar[2]=-0.5") &&

@@ -18,7 +18,7 @@ namespace SwsSettings
             Field = Color.FromArgb(56, 58, 64), Line = Color.FromArgb(70, 73, 80), Text = Color.FromArgb(230, 232, 235),
             Muted = Color.FromArgb(150, 156, 165), Accent = Color.FromArgb(90, 140, 240), Changed = Color.FromArgb(232, 178, 80),
             Warn = Color.FromArgb(229, 100, 90), Good = Color.FromArgb(110, 200, 140);
-        public static readonly Font Body = new Font("Segoe UI", 9.5f), Small = new Font("Segoe UI", 8.5f),
+        public static readonly Font Body = new Font("Segoe UI", 9.5f), Small = new Font("Segoe UI", 9.5f),
             Bold = new Font("Segoe UI", 9.5f, FontStyle.Bold), Title = new Font("Segoe UI Semibold", 13f), Big = new Font("Segoe UI Semibold", 12f);
 
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
@@ -34,6 +34,14 @@ namespace SwsSettings
             b.FlatAppearance.MouseOverBackColor = primary ? ControlPaint.Light(Accent, 0.15f) : Line;
             if (click != null) b.Click += click;
             return b;
+        }
+        // a page or mode button: blue while active, and it stays blue under the mouse; inactive ones keep the grey hover
+        public static void SetActive(Button b, bool active)
+        {
+            b.BackColor = active ? Accent : Field; b.ForeColor = active ? Color.White : Text;
+            b.FlatAppearance.BorderColor = active ? Accent : Line;
+            b.FlatAppearance.MouseOverBackColor = active ? Accent : Line;
+            b.FlatAppearance.MouseDownBackColor = active ? Accent : Line;
         }
         public static Label Label(string text, Font font = null, Color? color = null)
         {
@@ -124,10 +132,12 @@ namespace SwsSettings
         readonly CheckBox showVariants = Theme.Check("AI and single-player configs");
         readonly CheckBox changedOnly = Theme.Check("Changed only");
         readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None,
-            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22 };
+            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22, ShowNodeToolTips = true };
         readonly DataGridView grid = new DataGridView { Dock = DockStyle.Fill };
         readonly Label status = Theme.Label("", Theme.Small, Theme.Muted);
         readonly Label readOnlyNote = Theme.Label("", Theme.Small, Theme.Changed);
+        readonly Label pickHint = new Label { Dock = DockStyle.Fill, AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Theme.Muted,
+            Font = Theme.Body, BackColor = Theme.Back, Visible = false };
 
         // play page
         Button hostToggle, joinToggle; bool joining;
@@ -190,17 +200,19 @@ namespace SwsSettings
                    "profile value " + (inProfile ? Num.G9(v) : "(none)") + ", in file " + file.Contains(asset + "." + field + "=") + "\r\n" +
                    "status '" + status.Text + "'";
         }
-        public void ShowValuesForShot()
+        public void ShowValuesForShot(string mode)
         {
             ShowPage(false);
             var ship = tree.Nodes.Find("xwing", false).FirstOrDefault() ?? (tree.Nodes.Count > 0 ? tree.Nodes[0] : null);
-            if (ship != null && ship.Nodes.Count > 0 && ship.Nodes[0].Nodes.Count > 0) { ship.Expand(); ship.Nodes[0].Expand(); tree.SelectedNode = ship.Nodes[0].Nodes[0]; }
+            if (ship == null) return;
+            ship.Expand();
+            if (mode == "ship") { tree.SelectedNode = ship; foreach (TreeNode sys in ship.Nodes) if (sys.Text.StartsWith("Engine") || sys.Text.StartsWith("Primary")) sys.Expand(); return; }
+            if (ship.Nodes.Count > 0) tree.SelectedNode = ship.Nodes[0];   // Movement: one config, shown directly
         }
         void ShowPage(bool play)
         {
             playPage.Visible = play; valuesPage.Visible = !play;
-            tabPlay.BackColor = play ? Theme.Accent : Theme.Field; tabPlay.ForeColor = play ? Color.White : Theme.Text;
-            tabValues.BackColor = !play ? Theme.Accent : Theme.Field; tabValues.ForeColor = !play ? Color.White : Theme.Text;
+            Theme.SetActive(tabPlay, play); Theme.SetActive(tabValues, !play);
             if (play) RefreshPlay();
         }
 
@@ -295,6 +307,7 @@ namespace SwsSettings
             split.Panel1.Controls.Add(tree); split.Panel1.Controls.Add(filter);
             SetupGrid();
             split.Panel2.Controls.Add(grid);
+            split.Panel2.Controls.Add(pickHint);
 
             valuesPage.Controls.Add(split); valuesPage.Controls.Add(bottom); valuesPage.Controls.Add(top);
             valuesPage.Layout += (s, e) => { if (split.Width > 400 && split.SplitterDistance != 300) try { split.SplitterDistance = 300; } catch { } };
@@ -330,7 +343,7 @@ namespace SwsSettings
                     foreach (var a in list)
                     {
                         int n = profile.Values.Keys.Count(k => k.StartsWith(a + ".", StringComparison.Ordinal));
-                        var an = new TreeNode(a + (n > 0 ? "  (" + n + ")" : "")) { Tag = a, ForeColor = n > 0 ? Theme.Changed : Theme.Text };
+                        var an = new TreeNode(ConfigName(a) + (n > 0 ? "  (" + n + ")" : "")) { Tag = a, ForeColor = n > 0 ? Theme.Changed : Theme.Text, ToolTipText = ConfigTip(a) };
                         yn.Nodes.Add(an);
                         if (keep == a) select = an;
                     }
@@ -345,7 +358,7 @@ namespace SwsSettings
             if (unknown.Count > 0)
             {
                 var un = new TreeNode("Not in defaults.ini") { ForeColor = Theme.Warn };
-                foreach (var a in unknown) un.Nodes.Add(new TreeNode(a) { Tag = a, ForeColor = Theme.Warn });
+                foreach (var a in unknown) un.Nodes.Add(new TreeNode(ConfigName(a)) { Tag = a, ForeColor = Theme.Warn, ToolTipText = ConfigTip(a) });
                 tree.Nodes.Add(un);
             }
             if (tree.Nodes.Count > 0 && select == null && defaults.Assets.Count > 0) { var x = tree.Nodes.Find("xwing", false); tree.Nodes[x.Length > 0 ? tree.Nodes.IndexOf(x[0]) : 0].Expand(); }
@@ -387,18 +400,26 @@ namespace SwsSettings
             grid.DataError += (s, e) => { e.ThrowException = false; };
         }
 
+        // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows the full name and the key
+        string ConfigName(string asset) { return Words.Config(asset, true, defaults.NameOf(asset)); }
+        string ConfigTip(string asset) { return Words.Config(asset, false, defaults.NameOf(asset)) + "\n" + asset; }
         IEnumerable<string> SelectedAssets()
         {
             var n = tree.SelectedNode; if (n == null) return Enumerable.Empty<string>();
-            var list = new List<string>();
-            Action<TreeNode> walk = null; walk = x => { if (x.Tag is string) list.Add((string)x.Tag); foreach (TreeNode c in x.Nodes) walk(c); };
-            walk(n); return list;
+            if (n.Tag is string) return new[] { (string)n.Tag };
+            if (n.Nodes.Count == 1 && n.Nodes[0].Tag is string) return new[] { (string)n.Nodes[0].Tag };
+            return Enumerable.Empty<string>();
         }
         void FillGrid()
         {
             grid.Rows.Clear();
             var assets = SelectedAssets().ToList();
-            grid.Columns["asset"].Visible = assets.Count != 1;
+            grid.Columns["asset"].Visible = false;
+            pickHint.Visible = assets.Count == 0; grid.Visible = assets.Count > 0;
+            if (assets.Count == 0)
+                pickHint.Text = tree.SelectedNode == null ? "Pick a config on the left to see its values."
+                    : tree.SelectedNode.Level == 0 ? "Open " + tree.SelectedNode.Text + " and pick a system or a config to see its values."
+                    : "Pick one of the configs under " + tree.SelectedNode.Text + " to see its values.";
             string q = search.Text.Trim().ToLowerInvariant();
             foreach (var a in assets)
             {
@@ -615,8 +636,7 @@ namespace SwsSettings
         {
             joining = join;
             hostPanel.Visible = !join; joinPanel.Visible = join;
-            hostToggle.BackColor = !join ? Theme.Accent : Theme.Field; hostToggle.ForeColor = !join ? Color.White : Theme.Text;
-            joinToggle.BackColor = join ? Theme.Accent : Theme.Field; joinToggle.ForeColor = join ? Color.White : Theme.Text;
+            Theme.SetActive(hostToggle, !join); Theme.SetActive(joinToggle, join);
         }
         string AppIni { get { return Path.Combine(dir, "sws_settings.ini"); } }
         List<string> Favorites() { return Ini.Get(AppIni, "join", "favorites", "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct().ToList(); }
@@ -664,7 +684,7 @@ namespace SwsSettings
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
                 form.Shown += (s, e) =>
                 {
-                    if (args.Length >= 3 && args[2] == "values") form.ShowValuesForShot();
+                    if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : "system");
                     Application.DoEvents();
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();
