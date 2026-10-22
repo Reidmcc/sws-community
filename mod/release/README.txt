@@ -52,8 +52,8 @@ Or by hand (server.ini, open it in Notepad):
 Playing
 -------
 1. Steam running, Squadrons closed.
-2. Click Launch in sws_settings.exe (or double-click sws_launch.exe), read what it says, type YES and press Enter.
-   The game starts.
+2. Click Launch in sws_settings.exe and confirm in the window it opens. The game starts.
+   (Or double-click sws_launch.exe, read what it says, type YES and press Enter.)
 3. In the game, start a SOLO CUSTOM MATCH VS AI, on the host and on every joiner. The host's becomes the real match
    (per match_mode); a joiner's connects to the host instead. Joiners: start once the host's lobby is up.
 4. Every ship component is unlocked, and EA's error 327 shouldn't appear.

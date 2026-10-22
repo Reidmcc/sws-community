@@ -68,16 +68,16 @@ namespace SwsSettings
         public static FlowLayoutPanel Row(int top = 0) { return new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = Color.Transparent, Margin = new Padding(0, top, 0, 0), Padding = new Padding(0) }; }
 
         // a small dark dialog: an optional text box, OK and Cancel
-        public static string Ask(IWin32Window owner, string title, string prompt, string initial, bool input = true)
+        public static string Ask(IWin32Window owner, string title, string prompt, string initial, bool input = true, string okText = "OK", int height = 0)
         {
             using (var f = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
-                MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, BackColor = Panel, ForeColor = Text, Font = Body, ClientSize = new Size(440, input ? 150 : 130) })
+                MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, BackColor = Panel, ForeColor = Text, Font = Body, ClientSize = new Size(height > 0 ? 520 : 440, height > 0 ? height : input ? 150 : 130) })
             {
-                var lbl = new Label { Text = prompt, Left = 16, Top = 14, Width = 408, Height = input ? 40 : 60, ForeColor = Text };
+                var lbl = new Label { Text = prompt, Left = 16, Top = 14, Width = f.ClientSize.Width - 32, Height = input ? 40 : f.ClientSize.Height - 70, ForeColor = Text };
                 var tb = new TextBox { Left = 16, Top = 58, Width = 408, Text = initial ?? "", BackColor = Field, ForeColor = Text, BorderStyle = BorderStyle.FixedSingle, Visible = input };
-                var ok = Button("OK", null, true); var cancel = Button("Cancel", null);
+                var ok = Button(okText, null, true); var cancel = Button("Cancel", null);
                 ok.DialogResult = DialogResult.OK; cancel.DialogResult = DialogResult.Cancel;
-                var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Left = 16, Width = 408, Height = 40, Top = f.ClientSize.Height - 50 };
+                var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Left = 16, Width = f.ClientSize.Width - 32, Height = 40, Top = f.ClientSize.Height - 50 };
                 buttons.Controls.Add(cancel); buttons.Controls.Add(ok);
                 f.Controls.AddRange(new Control[] { lbl, tb, buttons });
                 f.AcceptButton = ok; f.CancelButton = cancel;
@@ -148,6 +148,7 @@ namespace SwsSettings
         readonly List<KeyValuePair<string, string>> servers = new List<KeyValuePair<string, string>>();
         readonly Label tsAddress = Theme.Label("", Theme.Big, Theme.Accent), tsNote = Theme.Label("", Theme.Small, Theme.Muted);
         Button tsCopy;
+        readonly Label launchStatus = Theme.Label("", Theme.Body, Theme.Muted);
         readonly Panel hostPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Panel joinPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Label playProfile = Theme.Label("", Theme.Body), playWarn = Theme.Label("", Theme.Small, Theme.Warn);
@@ -602,7 +603,7 @@ namespace SwsSettings
             hostCol.Controls.Add(Theme.Label("Match type", Theme.Bold));
             modeBox.Width = 260; foreach (var m in ModeNames) modeBox.Items.Add(m);
             hostCol.Controls.Add(modeBox);
-            hostCol.Controls.Add(Theme.Label("In the game, start a solo custom match vs AI: the mod makes it this type, and your friends join it.", Theme.Small, Theme.Muted));
+            hostCol.Controls.Add(Theme.Label("In the game, create a custom match with the mode set to solo vs AI: the mod makes it the selected type, and your friends join it.", Theme.Small, Theme.Muted));
             var tsTitle = Theme.Label("Your Tailscale address: give it to the players joining you", Theme.Bold); tsTitle.Margin = new Padding(0, 18, 8, 0);
             hostCol.Controls.Add(tsTitle);
             var tsRow = Theme.Row(); tsAddress.Margin = new Padding(0, 4, 12, 0);
@@ -637,7 +638,8 @@ namespace SwsSettings
             var launch = Theme.Button("Launch the game", (s, e) => Launch(), true);
             launch.Margin = new Padding(0, 22, 0, 0); launch.Padding = new Padding(18, 8, 18, 8);
             col.Controls.Add(launch);
-            col.Controls.Add(Theme.Label("Steam must be running. The launcher's window asks you to type YES before it starts the game.", Theme.Small, Theme.Muted));
+            col.Controls.Add(Theme.Label("Steam must be running. You'll be asked to confirm before the game starts.", Theme.Small, Theme.Muted));
+            col.Controls.Add(launchStatus);
             col.Controls.Add(playWarn);
             playPage.Controls.Add(col);
         }
@@ -737,6 +739,9 @@ namespace SwsSettings
             }
             catch { return null; }
         }
+        // Launch: the consent the launcher asked for in its console (type YES) is a popup here; the launcher then runs
+        // hidden with --yes, which skips only that question: its checks (EasyAntiCheat, the game already running, files
+        // missing) all come first and still refuse, and what it says is shown if it doesn't start the game.
         void Launch()
         {
             if (!server.Exists) { Theme.Tell(this, "Launch", "There's no server.ini beside this app."); return; }
@@ -746,16 +751,75 @@ namespace SwsSettings
             {
                 string a = addressBox.Text.Trim();
                 if (a.Length == 0 || a.Any(c => char.IsWhiteSpace(c) || c == ';')) { Theme.Tell(this, "Join", "Type the host's address first."); return; }
-                server.Join = a;
             }
-            else
+            string what = joining ? "join " + addressBox.Text.Trim() : "host " + ModeNames[Math.Max(0, modeBox.SelectedIndex)];
+            if (Theme.Ask(this, "Launch the game",
+                "This starts Squadrons directly, without EasyAntiCheat, with the community server mod loaded from the start, to " +
+                what + " with the profile '" + profile.Name + "'.\n\nThe game's EasyAntiCheat DLL loads but stays inactive, as with any direct launch. " +
+                "Loading a mod into the game carries some risk to your EA account; we think it's low, but nobody can promise it's zero.",
+                null, false, "Launch", 210) == null) return;
+            ApplyPlaySettings();
+            launchStatus.ForeColor = Theme.Muted; launchStatus.Text = "Starting...";
+            var t = new System.Threading.Thread(() =>
             {
-                server.Join = "";
-                server.MatchMode = Modes[Math.Max(0, modeBox.SelectedIndex)];
-            }
+                int code; string output = RunLauncher(launcher, out code);
+                BeginInvoke((Action)(() => ShowLaunchResult(code, output)));
+            }) { IsBackground = true };
+            t.Start();
+        }
+        void ApplyPlaySettings()
+        {
+            if (joining) server.Join = addressBox.Text.Trim();
+            else { server.Join = ""; server.MatchMode = Modes[Math.Max(0, modeBox.SelectedIndex)]; }
             server.Profile = profile.Name;
-            try { Process.Start(new ProcessStartInfo(launcher) { WorkingDirectory = dir, UseShellExecute = true }); }
-            catch (Exception ex) { Theme.Tell(this, "Launch", "Couldn't start the launcher: " + ex.Message); }
+        }
+        string RunLauncher(string launcher, out int code)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(launcher, "--yes") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
+                // read as it comes and stop when the launcher exits: the game it starts may keep the output pipe open,
+                // so waiting for the pipe to close could wait for the game
+                var text = new System.Text.StringBuilder();
+                DataReceivedEventHandler take = (s, e) => { if (e.Data != null) lock (text) text.AppendLine(e.Data); };
+                using (var p = new Process { StartInfo = psi })
+                {
+                    p.OutputDataReceived += take; p.ErrorDataReceived += take;
+                    p.Start(); p.StandardInput.Close();
+                    p.BeginOutputReadLine(); p.BeginErrorReadLine();
+                    bool done = p.WaitForExit(60000);
+                    System.Threading.Thread.Sleep(300);   // the last lines arrive just after exit
+                    lock (text)
+                    {
+                        if (!done) { try { p.Kill(); } catch { } code = -1; return text + "\n(the launcher didn't finish within a minute)"; }
+                        code = p.ExitCode;
+                        return text.ToString();
+                    }
+                }
+            }
+            catch (Exception ex) { code = -1; return "Couldn't run the launcher: " + ex.Message; }
+        }
+        void ShowLaunchResult(int code, string output)
+        {
+            var lines = output.Replace("\r", "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0 && !x.StartsWith("Community server mod launcher")).ToList();
+            string note = string.Join(" ", lines.Where(x => x.StartsWith("Note:")));
+            if (code == 0 && lines.Any(x => x.StartsWith("Started pid")))
+            {
+                launchStatus.ForeColor = Theme.Good;
+                launchStatus.Text = "The game is starting." + (note.Length > 0 ? " " + note : "");
+                return;
+            }
+            launchStatus.ForeColor = Theme.Warn;
+            launchStatus.Text = "The game wasn't started.";
+            Theme.Ask(this, "The game wasn't started", string.Join("\n", lines.DefaultIfEmpty("The launcher stopped without saying why (exit code " + code + ").")), null, false, "OK", 220);
+        }
+        // --test-launch: the launch path after the popup (settings, hidden launcher, its output), reported to a file
+        public string TestLaunch()
+        {
+            ApplyPlaySettings();
+            int code; string output = RunLauncher(Path.Combine(dir, "sws_launch.exe"), out code);
+            return "exit " + code + "\r\n" + output;
         }
     }
 
@@ -778,6 +842,12 @@ namespace SwsSettings
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();
                 };
+            }
+            // --test-launch <report>: the launch path after the confirmation popup, reported to a file
+            if (args.Length >= 2 && args[0] == "--test-launch")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestLaunch(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             // --test-edit <report> <asset> <field> <text>: one cell edit as the grid does it, reported to a file
             if (args.Length >= 5 && args[0] == "--test-edit")
