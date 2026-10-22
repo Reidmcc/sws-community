@@ -345,5 +345,7 @@ namespace SwsSettings
         public string Join { get { return Ini.Get(File, "server", "join", "").Trim(); } set { Ini.Set(File, "server", "join", value); } }
         public string MatchMode { get { return Ini.Get(File, "server", "match_mode", "").Trim(); } set { Ini.Set(File, "server", "match_mode", value); } }
         public int Listen { get { return Ini.GetInt(File, "server", "listen", 0); } }
+        // record=1: the DLL writes the flight record and runs the observation sampler (testing only)
+        public bool Record { get { return Ini.GetInt(File, "server", "record", 0) != 0; } set { Ini.Set(File, "server", "record", value ? "1" : "0"); } }
     }
 }

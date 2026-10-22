@@ -130,6 +130,7 @@ namespace SwsSettings
         readonly CheckBox rulePinball = Theme.Check("Block zero-throttle pinballing"), ruleMultidrift = Theme.Check("Block multidrifting");
         readonly TextBox search = new TextBox { Width = 230, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body };
         readonly CheckBox showVariants = Theme.Check("AI and single-player configs");
+        readonly CheckBox recordCheck = Theme.Check("Record flight data for testing");
         readonly CheckBox changedOnly = Theme.Check("Changed only");
         readonly CheckBox showLocked = Theme.Check("Show locked values");
         readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None,
@@ -635,6 +636,10 @@ namespace SwsSettings
             prof.Controls.Add(Theme.Button("Change profile", (s, e) => ShowPage(false)));
             col.Controls.Add(prof);
 
+            recordCheck.Margin = new Padding(0, 18, 0, 0);
+            recordCheck.CheckedChanged += (s, e) => { if (server.Exists && server.Record != recordCheck.Checked) server.Record = recordCheck.Checked; };
+            col.Controls.Add(recordCheck);
+            col.Controls.Add(Theme.Label("Only for testing changes to the mod: it records every ship's flight data (30-50 MB a match, in the logs folder) and uses some CPU. Leave it off to play.", Theme.Small, Theme.Muted));
             var launch = Theme.Button("Launch the game", (s, e) => Launch(), true);
             launch.Margin = new Padding(0, 22, 0, 0); launch.Padding = new Padding(18, 8, 18, 8);
             col.Controls.Add(launch);
@@ -651,6 +656,7 @@ namespace SwsSettings
             int mi = Array.IndexOf(Modes, server.MatchMode.ToLowerInvariant()); modeBox.SelectedIndex = mi >= 0 ? mi : 0;
             addressBox.Text = join;
             RefreshServers(join);
+            recordCheck.Checked = server.Record;
             string ts = TailscaleAddress();
             tsAddress.Text = ts ?? ""; tsCopy.Visible = ts != null;
             tsNote.Text = ts != null ? "Port 25200 is added for them. Everyone needs Tailscale, with this PC shared to them in Tailscale's admin page."

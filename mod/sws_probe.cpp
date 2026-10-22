@@ -54,12 +54,24 @@ static volatile LONG64 g_head;  // next slot to claim
 static volatile LONG64 g_done;  // records fully written (approx; writer tolerates lag)
 static volatile LONG64 g_dropped;
 
+// [server] record: 1 = write the flight record (*.bin, the hooks' records) and run the observation sampler. Off by
+// default in the server build (Pseudo, 2026-10-22: playing, hosting or joining doesn't need it; it costs disk and CPU),
+// set from the settings app's checkbox. The probe and rules builds always record. Off, claim() hands back a scratch
+// record that goes nowhere: the hooks' code is unchanged, and nothing is queued or written.
+#ifdef SERVER
+static bool g_record = false;
+#else
+static bool g_record = true;
+#endif
+static __declspec(thread) Rec t_scratch;
 static __declspec(thread) LONG64 t_idx;
 static Rec* claim() {
+    if (!g_record) return &t_scratch;
     t_idx = InterlockedIncrement64(&g_head) - 1;
     return &g_ring[t_idx & (RING - 1)];
 }
 static void commit() {
+    if (!g_record) return;
     Rec* r = &g_ring[t_idx & (RING - 1)];
     MemoryBarrier();
     r->seq = (uint32_t)(t_idx + 1);
@@ -547,7 +559,8 @@ static void read_server_ini() {
       g_joinRemote = GetPrivateProfileIntW(L"server", L"join_remote", 0, ini) != 0;
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
-      g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
+      g_record = GetPrivateProfileIntW(L"server", L"record", 0, ini) != 0;
+      g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -2509,8 +2522,7 @@ static void setup() {
     char path[MAX_PATH];
     // _SH_DENYWR: other processes may read the logs while the game is running (fopen_s opens exclusively)
     sprintf_s(path, "%s.status.txt", base); g_status = _fsopen(path, "w", _SH_DENYWR);
-    sprintf_s(path, "%s.bin", base);
-    g_out = _fsopen(path, "wb", _SH_DENYWR);
+    char binPath[MAX_PATH]; sprintf_s(binPath, "%s.bin", base);
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     status("%s loaded; build %s %s; qpc freq %lld; log %s", prefix, __DATE__, __TIME__, fq.QuadPart, path);
 #ifdef RULES
@@ -2528,6 +2540,10 @@ static void setup() {
 #ifdef SERVER
     read_server_ini();
 #endif
+    if (g_record) {   // the flight record is created only when recording (server.ini [server] record=1)
+        g_out = _fsopen(binPath, "wb", _SH_DENYWR);
+        status("record: on; flight record %s", binPath);
+    } else status("record: off (the settings app's \"Record flight data\" checkbox; server.ini record=1)");
     g_ring = (Rec*)VirtualAlloc(nullptr, sizeof(Rec) * RING, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     { Rec* r = claim(); stamp(r, R_INFO, 0); r->f[0] = (float)fq.QuadPart; *(int64_t*)&r->f[2] = fq.QuadPart; commit(); }
 }
