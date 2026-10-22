@@ -36,8 +36,14 @@ TYPES_H = os.path.join(PROJECT, "mod", "config_types.h")
 OUT = os.path.join(BUILD, "limits.ini")
 
 COMPONENTS = ["enginecustom", "hullcustom", "shieldcustom"]   # engine / hull / shield components: one category
+# capital ships and their turrets (each its own category; the same list is in sws_probe.cpp and app/Core.cs)
+CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
+           "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
+           "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
+           "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
+           "turretfirepatternsettingsasset"]
 CATEGORIES = ["starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata", "starshippowermanagement",
-              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS
+              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL
 SPEED_CAP = 300.0
 SPEED_FIELDS = {"starshipmovementconfig.maxspeeds", "starshipmovementconfig.afterburnermaxspeed",
                 "starshipmovementconfig.minspeed"}

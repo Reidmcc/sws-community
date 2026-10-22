@@ -201,7 +201,12 @@ static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini n
 static char (*g_primaryWeapons)[96]; static int g_primaryCount;
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
     "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
-    "enginecustom", "hullcustom", "shieldcustom" };   // the components share one category: starshipcustomconfig
+    "enginecustom", "hullcustom", "shieldcustom",   // the components share one category: starshipcustomconfig
+    "capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
+    "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
+    "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
+    "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
+    "turretfirepatternsettingsasset" };   // capital ships and turrets (tools/gen_limits.py CAPITAL)
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }

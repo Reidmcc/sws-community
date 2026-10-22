@@ -59,9 +59,7 @@ namespace SwsSettings
         static readonly Dictionary<string, string> Abbrev = new Dictionary<string, string>(StringComparer.Ordinal) {
             { "las", "Laser" }, { "reb", "Rebel" }, { "imp", "Imperial" }, { "ls", "" }, { "pvb", "PvB" }, { "sp", "SP" },
             { "ai", "AI" }, { "bot", "Bot" } };
-        static readonly string[] TypePrefixes = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
-            "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
-            "enginecustom", "hullcustom", "shieldcustom" };
+        static readonly string[] TypePrefixes = Limits.Types;
 
         // a config's readable name. Full: "Engine Custom Agile Y-wing". Short, for the tree (which already shows the ship
         // and the kind of config): the distinctive part, "Agile"; the full name where nothing else is left.
@@ -81,6 +79,8 @@ namespace SwsSettings
                     if (low != ship) rest.Add("AI");
                     continue;
                 }
+                string cap = Catalog.CapitalName(low);
+                if (cap != null) { full.Add(cap); continue; }
                 if (Abbrev.TryGetValue(low, out word)) { if (word.Length > 0) { full.Add(word); rest.Add(word); } continue; }
                 if (i == 0)
                 {
