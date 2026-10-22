@@ -1561,6 +1561,12 @@ static void apply_match_mode(uint64_t ls, const char* where) {
     char nm[160], g0[48], s0[48], g1[48], s1[48];
     safe_copy(rd<uint64_t>(ls, 8), nm, sizeof nm);
     safe_copy(go(ls, "GameMode"), g0, sizeof g0); safe_copy(go(ls, "SquadronComposition"), s0, sizeof s0);
+    // Only matches that are already a PvP / vs-AI mode (the solo custom match starts as Frontline_Bots): Practice,
+    // Missions and the Tutorial run on single-player levels that can't be Fleet Battles, and stay as they are.
+    if (_stricmp(g0, "Frontline_Bots") && _stricmp(g0, "Frontline") && _stricmp(g0, "Dogfight")) {
+        status("mode: %s '%s': GameMode '%s' left as it is (match_mode applies to PvP and vs-AI matches)", where, nm, g0);
+        return;
+    }
     so(ls, "GameMode", gm); so(ls, "SquadronComposition", sc);
     safe_copy(go(ls, "GameMode"), g1, sizeof g1); safe_copy(go(ls, "SquadronComposition"), s1, sizeof s1);
     status("mode: %s '%s': GameMode/SquadronComposition %s/%s -> %s/%s", where, nm, g0, s0, g1, s1);
