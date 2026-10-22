@@ -331,7 +331,7 @@ namespace SwsSettings
             {
                 if (!showVariants.Checked && Catalog.IsVariant(asset)) continue;
                 if (changedOnly.Checked && !profile.Values.Keys.Any(k => k.StartsWith(asset + ".", StringComparison.Ordinal))) continue;
-                string ship = Catalog.ShipOf(asset) ?? "~shared";
+                string ship = Catalog.ShipOf(asset) ?? Catalog.Shared;
                 string sys = Catalog.SystemOf(asset, limits);
                 SortedDictionary<string, List<string>> systems;
                 if (!bySpec.TryGetValue(ship, out systems)) bySpec[ship] = systems = new SortedDictionary<string, List<string>>();
@@ -339,11 +339,11 @@ namespace SwsSettings
                 list.Add(asset);
             }
             TreeNode select = null;
-            foreach (var ship in Catalog.Ships.Concat(new[] { "~shared" }))
+            foreach (var ship in Catalog.Groups)
             {
                 SortedDictionary<string, List<string>> systems;
                 if (!bySpec.TryGetValue(ship, out systems)) continue;
-                var sn = new TreeNode(Catalog.ShipName(ship == "~shared" ? null : ship)) { Name = ship };
+                var sn = new TreeNode(Catalog.ShipName(ship)) { Name = ship };
                 foreach (var sys in Catalog.SystemOrder)
                 {
                     List<string> list; if (!systems.TryGetValue(sys, out list)) continue;

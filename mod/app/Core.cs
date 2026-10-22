@@ -67,9 +67,16 @@ namespace SwsSettings
         public bool Loaded;
         public readonly Dictionary<string, Limit> ByKey = new Dictionary<string, Limit>(StringComparer.Ordinal);
         public readonly HashSet<string> Primary = new HashSet<string>(StringComparer.Ordinal);
-        static readonly string[] Types = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
+        public readonly HashSet<string> Capital = new HashSet<string>(StringComparer.Ordinal);   // [capital]: <type>_capital
+        public static readonly string[] Types = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
             "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
-            "enginecustom", "hullcustom", "shieldcustom" };
+            "enginecustom", "hullcustom", "shieldcustom",
+            "capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
+            "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
+            "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
+            "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
+            "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+            "materialgrid" };   // laser and ion damage against capital ships
 
         public static Limits Load(string dir)
         {
@@ -87,13 +94,14 @@ namespace SwsSettings
                 L.ByKey[key] = new Limit { Key = key, Lo = lo, Hi = hi, IsInt = flags.Contains('i'), Neg1 = flags.Contains('n'),
                     Locked = flags.Contains('x'), Source = semi > 0 ? line.Substring(semi + 1).Trim() : "" };
             }
-            foreach (var line in Ini.Section(file, "primary"))
-            {
-                if (line.Length == 0 || line[0] == ';') continue;
-                int eq = line.IndexOf('='); string name = eq >= 0 ? line.Substring(0, eq) : line;
-                name = new string(name.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
-                if (name.Length > 0) L.Primary.Add(name);
-            }
+            foreach (var section in new[] { "primary", "capital" })
+                foreach (var line in Ini.Section(file, section))
+                {
+                    if (line.Length == 0 || line[0] == ';') continue;
+                    int eq = line.IndexOf('='); string name = eq >= 0 ? line.Substring(0, eq) : line;
+                    name = new string(name.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
+                    if (name.Length > 0) (section == "primary" ? L.Primary : L.Capital).Add(name);
+                }
             return L;
         }
         // the DLL's find_limit: <type of the asset>.<field without [n]>
@@ -103,6 +111,7 @@ namespace SwsSettings
             string type = Types.FirstOrDefault(t => asset.StartsWith(t, StringComparison.Ordinal));
             if (type == null) return null;
             if (type == "enginecustom" || type == "hullcustom" || type == "shieldcustom") type = "starshipcustomconfig";
+            else if (Capital.Contains(asset)) type += "_capital";
             else if (type == "starshipweaponconfig") type += Primary.Contains(asset) ? "_primary" : "_aux";
             string key = type + "." + Regex.Replace(field, @"\[[^\]]*\]", "");
             Limit l; return ByKey.TryGetValue(key, out l) ? l : null;
@@ -260,7 +269,24 @@ namespace SwsSettings
             { "xwing", "X-wing" }, { "ywing", "Y-wing" }, { "awing", "A-wing" }, { "uwing", "U-wing" }, { "bwing", "B-wing" },
             { "tiefighter", "TIE Fighter" }, { "tiebomber", "TIE Bomber" }, { "tieinterceptor", "TIE Interceptor" },
             { "tiereaper", "TIE Reaper" }, { "tiedefender", "TIE Defender" } };
-        public static string ShipName(string s) { string n; return s != null && ShipNames.TryGetValue(s, out n) ? n : "Shared"; }
+        // capital ships, by the name part their configs use (Fleet Battles: MC75, CR90 corvettes and Nebulon-B frigates;
+        // Star Destroyer, Raider corvettes and Arquitens light cruisers; the rest appear in other modes)
+        public static readonly string[] CapitalShips = { "stardestroyer", "mc75", "corvette", "frigate", "raider",
+            "lightcruiser", "starhawk", "quasar", "gozanti", "gr75", "igv55", "zeta", "bff" };
+        static readonly Dictionary<string, string> CapitalNames = new Dictionary<string, string> {
+            { "stardestroyer", "Star Destroyer" }, { "mc75", "MC75" }, { "corvette", "Corvette (CR90)" },
+            { "frigate", "Frigate (Nebulon-B)" }, { "raider", "Raider" }, { "lightcruiser", "Light cruiser (Arquitens)" },
+            { "starhawk", "Starhawk" }, { "quasar", "Quasar Fire" }, { "gozanti", "Gozanti" }, { "gr75", "GR-75" },
+            { "igv55", "IGV-55" }, { "zeta", "Zeta" }, { "bff", "BFF" } };
+        public const string Turrets = "~turrets", Shared = "~shared";
+        public static readonly string[] Groups = Ships.Concat(CapitalShips).Concat(new[] { Turrets, Shared }).ToArray();
+        public static string ShipName(string s)
+        {
+            string n;
+            if (s != null && (ShipNames.TryGetValue(s, out n) || CapitalNames.TryGetValue(s, out n))) return n;
+            return s == Turrets ? "Turrets (shared)" : "Shared";
+        }
+        public static string CapitalName(string s) { string n; return CapitalNames.TryGetValue(s, out n) ? n : null; }
 
         static string[] Parts(string asset) { return asset.Split('_'); }
         public static string ShipOf(string asset)
@@ -268,6 +294,8 @@ namespace SwsSettings
             var parts = Parts(asset);
             foreach (var s in Ships) if (parts.Contains(s)) return s;
             foreach (var s in Ships) if (parts.Any(p => p == s + "ai")) return s;
+            foreach (var s in CapitalShips) if (parts.Any(p => p.StartsWith(s, StringComparison.Ordinal))) return s;   // frigatemedium
+            if (parts.Any(p => p.StartsWith("turret", StringComparison.Ordinal))) return Turrets;
             return null;
         }
         // AI, bot and single-player variants
@@ -282,17 +310,29 @@ namespace SwsSettings
             if (asset.StartsWith("starshippowermanagement")) return "Power";
             if (asset.StartsWith("starshipshielddata")) return "Shields";
             if (asset.StartsWith("starshiphealthdamagedata")) return "Hull";
+            if (asset.StartsWith("starshipweaponconfig") && Parts(asset).Contains("turret")) return "Turret weapons";
             if (asset.StartsWith("starshipweaponconfig")) return limits.Primary.Contains(asset) ? "Primary weapons" : "Aux and countermeasures";
             if (asset.StartsWith("bulletconfig")) return "Laser projectiles";
             if (asset.StartsWith("missileconfig") || asset.StartsWith("explosionconfig")) return "Missiles and explosions";
             if (asset.StartsWith("enginecustom")) return "Engine components";
             if (asset.StartsWith("hullcustom")) return "Hull components";
             if (asset.StartsWith("shieldcustom")) return "Shield components";
+            if (asset.StartsWith("capitalshiphealthsettings")) return "Hull";
+            if (asset.StartsWith("shieldhealthsettings")) return "Shields";
+            if (asset.StartsWith("damagesectionsettings")) return "Damage sections";
+            if (asset.StartsWith("capitalshipsubsystemsettings") || asset.StartsWith("capitalshipweaponsubsystemsettings")
+                || asset.StartsWith("capitalshipresupplysubsystemsettings")) return "Subsystems";
+            if (asset.StartsWith("capitalshipweakpointssettings")) return "Weak points";
+            if (asset.StartsWith("turret")) return "Turrets";
+            if (asset.StartsWith("capitalshipenginewashdamageareasettings")) return "Engine wash";
+            if (asset.StartsWith("damageovertimesettings")) return "Damage over time";
+            if (asset == "materialgrid") return "Damage to capital ships";
             return "Other";
         }
         public static readonly string[] SystemOrder = { "Movement", "Power", "Shields", "Hull", "Primary weapons",
-            "Aux and countermeasures", "Laser projectiles", "Missiles and explosions", "Engine components", "Hull components",
-            "Shield components", "Other" };
+            "Aux and countermeasures", "Turret weapons", "Laser projectiles", "Missiles and explosions", "Engine components",
+            "Hull components", "Shield components", "Damage sections", "Subsystems", "Weak points", "Turrets", "Engine wash",
+            "Damage over time", "Damage to capital ships", "Other" };
     }
 
     // server.ini beside the launcher (mod/release/server.ini): the active profile and host/join settings

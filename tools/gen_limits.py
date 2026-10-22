@@ -19,7 +19,7 @@ The rule (Pseudo, 2026-10-21): up to 5x the highest stock value; a floor just ab
 Then the bounds that come from the engine or from what a field means, each applied only where the stock values agree:
   - speed: actual speed caps at 300.00 (measured in flight), so maxspeeds, afterburnermaxspeed and minspeed max 300;
   - fractions (ratio, percent, normalized, non-angle thresholds): max 1;
-  - angles: max 180;
+  - angles: within -180..180 (-360..360 where the game ships a wider one, like turret targeting cones);
   - power levels: max 4 (the per-level tables, maxspeeds and shield regen by level, have 9 entries: levels 0..4).
 Integer fields are rounded inward, with a positive floor of at least 1.
 
@@ -36,13 +36,28 @@ TYPES_H = os.path.join(PROJECT, "mod", "config_types.h")
 OUT = os.path.join(BUILD, "limits.ini")
 
 COMPONENTS = ["enginecustom", "hullcustom", "shieldcustom"]   # engine / hull / shield components: one category
+# laser and ion damage against capital ships: multipliers on material-grid cells (the DLL's grid settings, stock 1)
+GRID = ["materialgrid"]
+# capital ships and their turrets (each its own category; the same list is in sws_probe.cpp and app/Core.cs)
+CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
+           "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
+           "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
+           "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
+           "turretfirepatternsettingsasset"]
 CATEGORIES = ["starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata", "starshippowermanagement",
-              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS
+              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL + GRID
+# Capital ships and turrets have their own movement, weapon, bullet, missile and explosion configs, of the same types
+# as the starfighters'. Pooled together, a Star Destroyer's turn torque would set the X-wing's ceiling, so those configs
+# are limited on their own: <type>_capital.<field>, and listed under [capital] for the DLL and the app.
+FIGHTERS = ["xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper",
+            "tiedefender"]
+CAPITAL_SHIPS = ["stardestroyer", "mc75", "corvette", "frigate", "raider", "lightcruiser", "starhawk", "quasar",
+                 "gozanti", "gr75", "igv55", "zeta", "bff"]   # the same list as the app's Catalog.CapitalShips
 SPEED_CAP = 300.0
 SPEED_FIELDS = {"starshipmovementconfig.maxspeeds", "starshipmovementconfig.afterburnermaxspeed",
                 "starshipmovementconfig.minspeed"}
 ANGLE = re.compile(r"angle(attribute)?$|anglethreshold$|anglezone$")
-FRACTION = re.compile(r"(ratio|threshold)(attribute)?$|percent|normalized")
+FRACTION = re.compile(r"(ratio|threshold)(attribute)?$|percent|normalized|healthratio")
 INPUT_DEVICE = re.compile(r"gamepad|joystick|mouse")   # anywhere in the field path
 POWER_LEVEL = re.compile(r"powerlevel$|powerchargelevel$|regenlevel$|powerfloor$")
 
@@ -54,9 +69,19 @@ def category(asset, keys=()):
     c = next((c for c in CATEGORIES if asset.startswith(c)), None)
     if c in COMPONENTS:
         return "starshipcustomconfig"
+    if c and c not in CAPITAL and is_capital(asset):
+        return c + "_capital"
     if c == "starshipweaponconfig":
         c += "_primary" if any(k.startswith("weaponfiring.laserregenpips") for k in keys) else "_aux"
     return c
+
+
+def is_capital(asset):
+    """a capital ship's or a capital/station turret's config (not a starfighter's, not a laser mine's turret)"""
+    parts = asset.split("_")
+    if any(p.startswith(f) for p in parts for f in FIGHTERS) or "lasermine" in parts:
+        return False
+    return any(p.startswith(c) for p in parts for c in CAPITAL_SHIPS) or any(p.startswith("turret") for p in parts)
 
 
 def read_defaults():
@@ -71,16 +96,18 @@ def read_defaults():
                 cur[re.sub(r"\[\d+\]", "", k.strip())] = cur.get(re.sub(r"\[\d+\]", "", k.strip()), []) + [float(v)]
             except ValueError:
                 pass
-    pools, primaries = {}, []
+    pools, primaries, capital = {}, [], []
     for asset, fields in sections.items():
         c = category(asset, fields)
         if not c:
             continue
         if c == "starshipweaponconfig_primary":
             primaries.append(asset)
+        if c.endswith("_capital"):
+            capital.append(asset)
         for path, vals in fields.items():
             pools.setdefault(f"{c}.{path}", []).extend(vals)
-    return pools, sorted(primaries)
+    return pools, sorted(primaries), sorted(capital)
 
 
 def int_fields():
@@ -107,10 +134,19 @@ def limit(key, vals, is_int):
         # min -0.9, so the result never drops below 10% of the base; where the game ships lower (-1), that is allowed.
         hi, lo = max(0.0, 5 * mx), min(-0.9, mn)
         src = ["5x highest stock %" if mx > 0 else "0 (stock never raises it)", "-0.9 (10% of base)" if mn >= -0.9 else "lowest stock %"]
+    elif key.startswith("materialgrid."):
+        # Pseudo, 2026-10-22: starfighter lasers should be able to do trivial damage to capital ships, so the floor is 0
+        # (no damage at all); the ceiling is the usual 5x
+        lo, src[1] = 0.0, "0 (no damage)"
     elif key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
         hi = SPEED_CAP; src[0] = "speed cap 300 (measured)"
-    elif ANGLE.search(name) and hi > 180 and mx <= 180:
-        hi = 180.0; src[0] = "angle, 180"
+    elif ANGLE.search(name):
+        # 180 (360 where the game itself ships a wider one: turret targeting cones), and the same below zero
+        cap = 180.0 if mx <= 180 else 360.0
+        if hi > cap:
+            hi = cap; src[0] = f"angle, {cap:g}"
+        if lo < -cap:
+            lo = -cap; src[1] = f"angle, -{cap:g}"
     elif FRACTION.search(name) and not ANGLE.search(name) and hi > 1 and mx <= 1:
         hi = 1.0; src[0] = "fraction, 1"
     if is_int:
@@ -128,7 +164,7 @@ def limit(key, vals, is_int):
 
 
 def main():
-    pools, primaries = read_defaults()
+    pools, primaries, capital = read_defaults()
     ints = int_fields()
     lines = ["; Limits table for issue #11, generated by tools/gen_limits.py from defaults.ini. Do not edit by hand.",
              "; <category>.<field path, no indices> = min,max,flags",
@@ -136,7 +172,8 @@ def main():
              "; Sources follow each line. Rule: up to 5x the highest stock value, floor 0.1x the lowest (0 where the",
              "; game ships 0), then the speed cap (300), fractions (1) and angles (180). Locked: power levels, and",
              "; fields every config ships as 0. Weapons are pooled as primaries and aux separately ([primary] lists",
-             "; the primary weapon configs; every other weapon config is aux).",
+             "; the primary weapon configs; every other weapon config is aux). Capital ships' and turrets' configs of",
+             "; the starfighter types are pooled on their own as <type>_capital ([capital] lists them).",
              "[limits]"]
     locked = 0
     for key in sorted(pools):
@@ -146,8 +183,10 @@ def main():
         locked += lk
         lines.append(f"{key}={lo:.9g},{hi:.9g},{flags}   ; {src}; stock {mn:.9g}..{mx:.9g} over {len(pools[key])}")
     lines += ["", "[primary]"] + [f"{a}=1" for a in primaries]
+    lines += ["", "[capital]"] + [f"{a}=1" for a in capital]
     open(OUT, "w", encoding="utf-8", newline="\r\n").write("\n".join(lines) + "\n")
-    print(f"{len(pools)} fields -> {OUT} ({locked} locked; {len(primaries)} primary weapon configs)")
+    print(f"{len(pools)} fields -> {OUT} ({locked} locked; {len(primaries)} primary weapon configs; "
+          f"{len(capital)} capital-ship configs of starfighter types)")
 
 
 if __name__ == "__main__":
