@@ -181,6 +181,7 @@ int main() {
     *(uint16_t*)(0x144a8ca00 + 0x48) = 300; *(uint16_t*)(0x144a8ca00 + 0x4a) = 300;   // StarshipHealthDamageData
     *(uint16_t*)(0x144adafa0 + 0x48) = 400; *(uint16_t*)(0x144adafa0 + 0x4a) = 400;   // IncomBulletConfig
     *(uint16_t*)(0x144adb020 + 0x48) = 450; *(uint16_t*)(0x144adb020 + 0x4a) = 450;   // IncomExplosionData
+    *(uint16_t*)(0x144ad9aa0 + 0x48) = 800; *(uint16_t*)(0x144ad9aa0 + 0x4a) = 800;   // TurretFirePatternSettings (the LAST root)
     uint8_t* moveCls = fake_class(100); uint8_t* shieldCls = fake_class(200); uint8_t* otherCls = fake_class(999);
     FakeMove player = fake_movement(moveCls, "Game/Gameplay/Starships/XWing/Config/StarshipMovementConfig_XWing", 2.5f);
     FakeMove bot = fake_movement(moveCls, "Game/Gameplay/Starships/XWing_AI/Config/StarshipMovementConfig_XWingAI_Bot", 1.5f);
@@ -212,6 +213,11 @@ int main() {
     *(const char**)(blast + 0x18) = "LiveService/Gameplay/Starships/Common/Projectiles/Config/Tuning/ExplosionConfigLS_Missile_PiercingTorpedo";
     FakeAttr* blastDmg = fake_attr(0x5EED0002, 2000.0f); *(uint64_t*)(blast + 0x68) = (uint64_t)blastDmg;
     { uint32_t ids[1] = { 0x5EED0002 }; float vals[1] = { 2000.0f }; *(uint64_t*)(blast + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
+    // a turret fire pattern: a plain policy asset (no attribute registration lists) of the last root type, so a cap on
+    // the number of roots the scan looks at shows up here (the first capital-ship build scanned only 16 of 24)
+    uint8_t* firePattern = fake_alloc(0x100); *(uint64_t*)(firePattern + 8) = (uint64_t)fake_class(800);
+    *(const char**)(firePattern + 0x18) = "Game/Gameplay/Starships/Common/AI/TurretTargeting/TurretFirePatternSettingsAsset_Frontline";
+    *(float*)(firePattern + 0x20) = 1.0f; *(float*)(firePattern + 0x30) = 2.0f;
     if (map(0x1449f0000, 0x10000) != (void*)0x1449f0000 || map(0x144a00000, 0x10000) != (void*)0x144a00000 ||
         map(0x144a30000, 0x10000) != (void*)0x144a30000) { printf("FAIL  could not map the weapon type regions\n"); return 1; }
     *(uint16_t*)(0x1449fc370 + 0x48) = 500; *(uint16_t*)(0x1449fc370 + 0x4a) = 500;   // StarshipWeaponConfig
@@ -230,9 +236,9 @@ int main() {
     { uint32_t ids[1] = { 0x77770001 }; float vals[1] = { 0.1333f }; *(uint64_t*)(weapon + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
     *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
-    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast; insts1[4] = hull;
+    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast; insts1[4] = hull; insts1[5] = firePattern;
     uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon;
-    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 5;
+    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 6;
     uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 3;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
@@ -289,6 +295,8 @@ int main() {
     check(maxShield->value == 900.0f, "value engine: shield config written");
     check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
+    check(*(float*)(firePattern + 0x20) == 0.75f && *(float*)(firePattern + 0x30) == 2.0f,
+          "value engine: the last root type (turret fire pattern, a plain policy asset) scanned and written");
     printf("      (hull component modifiers: health %g, turn %g, boost charge [0] %g [1] %g)\n", *mods[0], *mods[1], *mods[2], *mods[3]);
     check(*mods[0] == 0.8f, "components: a modifier named by its attribute written (hull healthmax 0.6 -> 0.8)");
     check(*mods[1] == -0.9f, "components: a modifier below the floor clamped (turn -2 -> -0.9)");
@@ -397,7 +405,8 @@ int main() {
                                 "starshipshielddata_xwing.maxshieldhealth=900;",
                                 "starshipweaponconfig_las_reb_xwing.weaponfiring.burstfirenumshotsattribute=5;",
                                 "starshipweaponconfig_las_reb_xwing.weaponfiring.laserregenpips[3].costpershot=1.5;",
-                                "starshipweaponconfig_las_reb_xwing.weaponfiring.timebetweenautomaticshotsattribute=0.1;" };
+                                "starshipweaponconfig_las_reb_xwing.weaponfiring.timebetweenautomaticshotsattribute=0.1;",
+                                "turretfirepatternsettingsasset_frontline.mindelaybetweenbursts=0.75;" };
         uint32_t h = 2166136261u;
         for (const char* c : canon) for (const char* q = c; *q; q++) { h ^= (uint8_t)*q; h *= 16777619u; }
         printf("      (expected fingerprint %08x -> protocol %08x)\n", h, 0x00a0b0c0u ^ h);

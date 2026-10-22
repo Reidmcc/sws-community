@@ -1409,8 +1409,9 @@ static void value_engine_scan() {
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
     if (!enter || !leave) return;
-    uint16_t lo[16], hi[16];
-    for (int k = 0; k < kVeRootCount && k < 16; k++) {
+    static_assert(sizeof kVeRoots / sizeof kVeRoots[0] <= 64, "raise kMaxRoots");
+    const int kMaxRoots = 64; uint16_t lo[kMaxRoots], hi[kMaxRoots];
+    for (int k = 0; k < kVeRootCount; k++) {
         lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
@@ -1428,7 +1429,7 @@ static void value_engine_scan() {
                 uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
                 uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
                 uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
-                for (int k = 0; k < kVeRootCount && k < 16; k++) {
+                for (int k = 0; k < kVeRootCount; k++) {
                     if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
                     const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
                     char asset[96]; int j = 0;
