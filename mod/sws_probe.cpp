@@ -200,7 +200,8 @@ struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
 static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
 static char (*g_primaryWeapons)[96]; static int g_primaryCount;
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
-    "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig" };
+    "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
+    "enginecustom", "hullcustom", "shieldcustom" };   // the components share one category: starshipcustomconfig
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -234,6 +235,7 @@ static const ValueLimit* find_limit(const char* asset, const char* field) {
     const char* type = nullptr;
     for (const char* t : kLimitTypes) if (!strncmp(asset, t, strlen(t))) { type = t; break; }
     if (!type) return nullptr;
+    if (!strcmp(type, "enginecustom") || !strcmp(type, "hullcustom") || !strcmp(type, "shieldcustom")) type = "starshipcustomconfig";
     char key[160]; int k = sprintf_s(key, "%s.", type);
     if (!strcmp(type, "starshipweaponconfig")) {
         bool primary = false;
@@ -1201,6 +1203,16 @@ static int ve_resolve(uint64_t obj, int declared) {
     }
     return best;
 }
+// an attribute's key name from its IncomAttributeId asset (name at +0x18): ".../AttributeId_HealthMax" -> "healthmax"
+static void attr_name(uint64_t idObj, char* out, size_t cap) {
+    out[0] = 0; if (!idObj) return;
+    char full[160]; safe_copy(rd<uint64_t>(idObj, 0x18), full, sizeof full);
+    const char* s = strrchr(full, '/'); s = s ? s + 1 : full;
+    if (!_strnicmp(s, "attributeid_", 12)) s += 12;
+    size_t k = 0;
+    for (; *s && k + 1 < cap; s++) if (isalnum((unsigned char)*s) || *s == '_') out[k++] = (char)tolower((unsigned char)*s);
+    out[k] = 0;
+}
 static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve_fn fn, void* ctx) {
     if (!obj || depth > 5) return;
     const VeType& T = kVeTypes[type];
@@ -1233,6 +1245,25 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
                 size_t m = strlen(key); sprintf_s(key + m, cap - m, "[%d]", j);
                 if (f.kind == 8) { VeLeaf l{ key, arr + 4ull * j, false, 0, 0, 0 }; fn(ctx, l); }
                 else ve_walk(arr + (uint64_t)stride * j, f.type, key, cap, depth + 1, fn, ctx);
+                key[m] = 0;
+            }
+            break; }
+        case 10: {   // a component's AttributeModifier list: each Float modifier, named by its attribute
+            key[n] = 0;
+            uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 64) cnt = 0;
+            char names[64][64]; uint64_t mods[64];
+            for (int j = 0; j < cnt; j++) {
+                mods[j] = rd<uint64_t>(arr, 8 * j); names[j][0] = 0;
+                if (mods[j] && rd<uint64_t>(mods[j], 8) == kVeTypes[f.type].classInfo) attr_name(rd<uint64_t>(mods[j], 0x18), names[j], 64);
+            }
+            for (int j = 0; j < cnt; j++) {
+                if (!names[j][0]) continue;
+                int total = 0, k = 0;
+                for (int q = 0; q < cnt; q++) if (!strcmp(names[q], names[j])) { if (q < j) k++; total++; }
+                size_t m = strlen(key);
+                if (m + strlen(names[j]) + 8 >= cap) continue;
+                if (total > 1) sprintf_s(key + m, cap - m, ".%s[%d]", names[j], k); else sprintf_s(key + m, cap - m, ".%s", names[j]);
+                VeLeaf l{ key, mods[j] + 0x30, false, 0, 0, 0 }; fn(ctx, l);
                 key[m] = 0;
             }
             break; }
