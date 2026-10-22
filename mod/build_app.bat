@@ -6,8 +6,8 @@ setlocal
 cd /d "%~dp0"
 set "CSC=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\Roslyn\csc.exe"
 if not exist "%CSC%" goto nocsc
-"%CSC%" -nologo -optimize+ -target:winexe -out:build\sws_settings.exe -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll app\App.cs app\Core.cs || exit /b 1
-"%CSC%" -nologo -optimize+ -target:exe -out:build\sws_settings_test.exe app\SelfTest.cs app\Core.cs || exit /b 1
+"%CSC%" -nologo -optimize+ -target:winexe -out:build\sws_settings.exe -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll app\App.cs app\Core.cs app\Words.cs app\WordsLogic.cs || exit /b 1
+"%CSC%" -nologo -optimize+ -target:exe -out:build\sws_settings_test.exe app\SelfTest.cs app\Core.cs app\Words.cs app\WordsLogic.cs || exit /b 1
 echo APP BUILD OK
 exit /b 0
 :nocsc

@@ -359,6 +359,7 @@ namespace SwsSettings
             grid.BackgroundColor = Theme.Back; grid.GridColor = Theme.Line; grid.BorderStyle = BorderStyle.None;
             grid.EnableHeadersVisualStyles = false; grid.RowHeadersVisible = false; grid.AllowUserToAddRows = false; grid.AllowUserToDeleteRows = false;
             grid.AllowUserToResizeRows = false; grid.SelectionMode = DataGridViewSelectionMode.CellSelect; grid.MultiSelect = false;
+            grid.EditMode = DataGridViewEditMode.EditOnEnter;   // one click on Your value starts typing (Pseudo)
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill; grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             grid.ColumnHeadersHeight = 30; grid.RowTemplate.Height = 24; grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
             grid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Panel, ForeColor = Theme.Muted, Font = Theme.Small, SelectionBackColor = Theme.Panel, Padding = new Padding(4, 0, 0, 0) };
@@ -407,13 +408,14 @@ namespace SwsSettings
                 foreach (var f in keys)
                 {
                     string key = a + "." + f;
-                    if (q.Length > 0 && !f.Contains(q)) continue;
+                    string pretty = Words.Pretty(f);
+                    if (q.Length > 0 && !f.Contains(q.Replace(" ", "")) && pretty.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     double v; bool changed = profile.Values.TryGetValue(key, out v);
                     if (changedOnly.Checked && !changed) continue;
                     double stock = double.NaN; bool known = fields != null && fields.TryGetValue(f, out stock);
                     var l = limits.Find(a, f);
                     string range = !limits.Loaded ? "" : l == null ? "no limit" : l.Locked ? "locked" : Num.Show(l.Lo) + " to " + Num.Show(l.Hi) + (l.Neg1 ? " (or -1)" : "");
-                    int r = grid.Rows.Add(a, f, known ? Num.Show(stock) : "?", changed ? Num.Show(v) : "", range, changed ? "reset" : "");
+                    int r = grid.Rows.Add(a, pretty, known ? Num.Show(stock) : "?", changed ? Num.Show(v) : "", range, changed ? "reset" : "");
                     var row = grid.Rows[r]; row.Tag = key;
                     bool locked = profile.BuiltIn || (limits.Loaded && (l == null || l.Locked));
                     row.Cells["value"].ReadOnly = locked;
@@ -541,7 +543,8 @@ namespace SwsSettings
         }
         void ImportProfile()
         {
-            using (var d = new OpenFileDialog { Title = "Import a profile", Filter = "Profiles (*.ini)|*.ini" })
+            Directory.CreateDirectory(Path.Combine(dir, "profiles"));
+            using (var d = new OpenFileDialog { Title = "Import a profile", Filter = "Profiles (*.ini)|*.ini", InitialDirectory = Path.Combine(dir, "profiles") })
             {
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 string n = Path.GetFileNameWithoutExtension(d.FileName);
