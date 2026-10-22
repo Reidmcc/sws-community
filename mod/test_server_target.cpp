@@ -240,7 +240,16 @@ int main() {
     uint8_t* centry = fake_alloc(0x80); *(uint8_t**)(centry + 0x68) = domain;
     *(uint8_t**)(0x1442d18c8 + 4 * 8) = centry;   // compartment 4 ("Game")
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
-    wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini"); DeleteFileW(defaultsPath);
+    wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini");
+    {   // an earlier launch's file: a config this run never loads (must be carried over) and a stale section for one it
+        // does (must be rewritten whole, so its stale key goes)
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, defaultsPath, L"wb") == 0 && f) {
+            fputs("; earlier launch" "\r\n" "\r\n" "[oldconfig_from_earlier]" "\r\n" "foo=1" "\r\n" "bar[2]=-0.5" "\r\n" "\r\n"
+                  "[starshipmovementconfig_xwing]" "\r\n" "stalefield=9" "\r\n", f);
+            fclose(f);
+        }
+    }
     check(GetModuleHandleW(L"sws_server_test.dll") != nullptr, "DLL was loaded at startup by the launcher's APC");
     for (int i = 0; i < 300 && *(uint8_t*)0x1401ae7d0 != 0xFF; i++) Sleep(50);
     check(*(uint8_t*)0x1401ae7d0 == 0xFF && *(uint8_t*)0x1401aac90 == 0xFF && *(uint8_t*)0x1401bf4d0 == 0xFF, "server hooks installed");
@@ -306,6 +315,9 @@ int main() {
               strstr(buf, "[hullcustom_heavy_xwing]") && strstr(buf, "healthmax=0.6") &&
               strstr(buf, "afterburnerchargerate[0]=0.5") && strstr(buf, "afterburnerchargerate[1]=-0.5"),
               "value engine: defaults.ini records the values as loaded");
+        check(n && strstr(buf, "[oldconfig_from_earlier]") && strstr(buf, "foo=1") && strstr(buf, "bar[2]=-0.5") &&
+              !strstr(buf, "stalefield") && !strstr(buf, "earlier launch"),
+              "value engine: defaults.ini keeps configs from earlier launches; a config seen again is rewritten whole");
     }
 
     // socket pass-through: stand-in vtables at the real addresses, then calls through them as the engine makes them

@@ -1342,10 +1342,26 @@ static void process_config(uint64_t inst, int type, const char* asset) {
             v.warned = true; status("values: %s.%s: no such value in this config (see defaults.ini for the names)", asset, v.key); }
     }
 }
+// defaults.ini accumulates across launches: each session loads only some configs (some weapons only in a match), and
+// the limits (tools/gen_limits.py) must come from every config ever seen, not from whichever launch wrote last. The
+// file as it was when this session started is kept, and its sections for configs this session hasn't seen are carried
+// over after the ones it has; a config seen again is rewritten whole.
+static char* g_prevDefaults; static bool g_prevLoaded;
 static void write_defaults_file() {
     if (!g_defaultsDirty || !g_dllDir[0]) return;
     g_defaultsDirty = false;
     wchar_t path[MAX_PATH]; swprintf_s(path, L"%ls\\defaults.ini", g_dllDir);
+    if (!g_prevLoaded) {
+        g_prevLoaded = true;
+        FILE* p = nullptr;
+        if (!_wfopen_s(&p, path, L"rb") && p) {
+            fseek(p, 0, SEEK_END); long len = ftell(p); fseek(p, 0, SEEK_SET);
+            if (len > 0 && len < (64 << 20) && (g_prevDefaults = (char*)malloc(len + 1)) != nullptr) {
+                size_t got = fread(g_prevDefaults, 1, len, p); g_prevDefaults[got] = 0;
+            }
+            fclose(p);
+        }
+    }
     FILE* f = nullptr; if (_wfopen_s(&f, path, L"w") || !f) return;
     fprintf(f, "; Values as the game loaded them (written by the value engine, issue #3). Sections are assets, keys are fields.\n");
     for (int a = 0; a < g_seenCount; a++) {
@@ -1356,7 +1372,23 @@ static void write_defaults_file() {
             if (d.hash && !strncmp(d.key, g_seenAssets[a], al) && d.key[al] == '.') fprintf(f, "%s=%.9g\n", d.key + al + 1, d.value);
         }
     }
+    int carried = 0; bool keep = false;   // earlier launches' configs this session hasn't seen
+    for (const char* line = g_prevDefaults; line && *line; ) {
+        const char* end = strchr(line, '\n'); size_t len = end ? (size_t)(end - line) : strlen(line);
+        char name[96];
+        if (line[0] == '[') {
+            const char* close = (const char*)memchr(line, ']', len);
+            size_t nl = close ? (size_t)(close - line - 1) : 0;
+            keep = close && nl > 0 && nl < sizeof name;
+            if (keep) { memcpy(name, line + 1, nl); name[nl] = 0; keep = !asset_seen(name); }
+            if (keep) { fprintf(f, "\n"); carried++; }
+        }
+        if (keep && len && line[0] != '\r' && line[0] != '\n') fprintf(f, "%.*s\n", (int)(len && line[len - 1] == '\r' ? len - 1 : len), line);
+        line = end ? end + 1 : nullptr;
+    }
     fclose(f);
+    static int lastCarried = -1;
+    if (carried != lastCarried) { lastCarried = carried; status("values: defaults.ini keeps %d config(s) from earlier launches", carried); }
 }
 static void value_engine_scan() {
     if (!g_valuesOn) return;

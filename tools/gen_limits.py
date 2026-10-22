@@ -91,8 +91,9 @@ def int_fields():
 
 
 def limit(key, vals, is_int):
-    sentinel = -1.0 in vals
-    v = [x for x in vals if x != -1.0] or [0.0]
+    # -1 is ammo's "unlimited" marker; on a component it is a real -100%, so components pool it like any value
+    sentinel = -1.0 in vals and not key.startswith("starshipcustomconfig.")
+    v = ([x for x in vals if x != -1.0] if sentinel else list(vals)) or [0.0]
     mn, mx = min(v), max(v)
     src = []
     hi = 5 * mx if mx > 0 else (0.0 if mx == 0 else 0.1 * mx)
