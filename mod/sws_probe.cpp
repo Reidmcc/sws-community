@@ -815,6 +815,16 @@ static DWORD WINAPI udp_watch(LPVOID) {
     status("listen: UDP watch ended");
     return 0;
 }
+// Is this LevelSetup a PvP or vs-AI match (GameMode Frontline_Bots, Frontline or Dogfight)? Practice, Missions and
+// the Tutorial run on single-player root levels: hosting (listen) and match_mode must leave them single-player, or
+// the client is dropped back to the menu (Practice with listen=1, 2026-10-21).
+static bool pvp_match(uint64_t ls, char* gm, size_t gmsz) {
+    typedef uint64_t(__fastcall* getopt_t)(uint64_t ls, const char* key);
+    gm[0] = 0;
+    if (!ls) return false;
+    safe_copy(((getopt_t)0x141191d50)(ls, "GameMode"), gm, gmsz);
+    return !_stricmp(gm, "Frontline_Bots") || !_stricmp(gm, "Frontline") || !_stricmp(gm, "Dogfight");
+}
 static void __fastcall h_spawn(uint64_t gs, uint8_t* info) {
     uint64_t ls = rd<uint64_t>((uint64_t)info, 0x18);
     status("spawnServer gs=%p tick=%u sp=%d localhost=%d dedicated=%d encrypted=%d coop=%d menu=%d keep=%d level='%s'",
@@ -860,7 +870,10 @@ static void __fastcall h_spawn(uint64_t gs, uint8_t* info) {
         status("join: not spawning a local match server (join_local_server=0)");
         return;
     }
-    if (g_listen && !g_dedicated && !info[0x29] && info[0x24]) {
+    char spawnMode[48] = "";
+    if (g_listen && !g_dedicated && !info[0x29] && info[0x24] && !pvp_match(rd<uint64_t>((uint64_t)info, 0x18), spawnMode, sizeof spawnMode))
+        status("listen: '%s' match left single-player (hosting applies to PvP and vs-AI matches)", spawnMode);
+    else if (g_listen && !g_dedicated && !info[0x29] && info[0x24]) {
         info[0x24] = 0;
         status("listen: match spawn made networked (isSinglePlayer 1 -> 0, isLocalHost=%d)", (int)info[0x25]);
         HANDLE w = CreateThread(nullptr, 0, udp_watch, nullptr, 0, nullptr); if (w) CloseHandle(w);
@@ -1515,7 +1528,10 @@ static void __fastcall h_cinit(uint64_t client, char sp, char localhost, char co
         status("mode: host client kept on the local flow (game type 1 Hosted -> 2, localhost %d -> 1, hosted %d -> 0)", (int)localhost, (int)hosted);
         sp = 1; localhost = 1; hosted = 0;
     }
-    if (g_listen && !g_dedicated && !menu && sp) {
+    char initMode[48] = "";
+    if (g_listen && !g_dedicated && !menu && sp && !pvp_match(client + 0x408, initMode, sizeof initMode))
+        status("listen: host client left single-player for a '%s' match", initMode);
+    else if (g_listen && !g_dedicated && !menu && sp) {
         sp = 0;
         status("listen: host client init made networked (sp 1 -> 0, localhost %d)", (int)localhost);
     }
@@ -1563,7 +1579,8 @@ static void apply_match_mode(uint64_t ls, const char* where) {
     safe_copy(go(ls, "GameMode"), g0, sizeof g0); safe_copy(go(ls, "SquadronComposition"), s0, sizeof s0);
     // Only matches that are already a PvP / vs-AI mode (the solo custom match starts as Frontline_Bots): Practice,
     // Missions and the Tutorial run on single-player levels that can't be Fleet Battles, and stay as they are.
-    if (_stricmp(g0, "Frontline_Bots") && _stricmp(g0, "Frontline") && _stricmp(g0, "Dogfight")) {
+    char pm[48];
+    if (!pvp_match(ls, pm, sizeof pm)) {
         status("mode: %s '%s': GameMode '%s' left as it is (match_mode applies to PvP and vs-AI matches)", where, nm, g0);
         return;
     }
