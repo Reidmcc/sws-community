@@ -131,6 +131,7 @@ namespace SwsSettings
         readonly TextBox search = new TextBox { Width = 230, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body };
         readonly CheckBox showVariants = Theme.Check("AI and single-player configs");
         readonly CheckBox changedOnly = Theme.Check("Changed only");
+        readonly CheckBox showLocked = Theme.Check("Show locked values");
         readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None,
             LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22, ShowNodeToolTips = true };
         readonly DataGridView grid = new DataGridView { Dock = DockStyle.Fill };
@@ -306,7 +307,8 @@ namespace SwsSettings
             filter.Controls.Add(search);
             showVariants.CheckedChanged += (s, e) => BuildTree();
             changedOnly.CheckedChanged += (s, e) => { BuildTree(); FillGrid(); };
-            filter.Controls.Add(showVariants); filter.Controls.Add(changedOnly);
+            showLocked.CheckedChanged += (s, e) => FillGrid();
+            filter.Controls.Add(showVariants); filter.Controls.Add(changedOnly); filter.Controls.Add(showLocked);
             tree.AfterSelect += (s, e) => FillGrid();
             split.Panel1.Controls.Add(tree); split.Panel1.Controls.Add(filter);
             SetupGrid();
@@ -439,6 +441,9 @@ namespace SwsSettings
                     if (changedOnly.Checked && !changed) continue;
                     double stock = double.NaN; bool known = fields != null && fields.TryGetValue(f, out stock);
                     var l = limits.Find(a, f);
+                    // locked fields, and fields with no limit (the game won't apply them either), only on request;
+                    // a value the profile does set for one stays visible, so it can be seen and reset
+                    if (!showLocked.Checked && !changed && limits.Loaded && (l == null || l.Locked)) continue;
                     string range = !limits.Loaded ? "" : l == null ? "no limit" : l.Locked ? "locked" : Num.Show(l.Lo) + " to " + Num.Show(l.Hi) + (l.Neg1 ? " (or -1)" : "");
                     int r = grid.Rows.Add(a, pretty, known ? Num.Show(stock) : "?", changed ? Num.Show(v) : "", range, changed ? "reset" : "");
                     var row = grid.Rows[r]; row.Tag = key;
