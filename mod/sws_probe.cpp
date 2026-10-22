@@ -189,6 +189,90 @@ static bool profile_name_ok(const wchar_t* n) {
         if (!(iswalnum(*c) || *c == L' ' || *c == L'_' || *c == L'-' || *c == L'.')) return false;
     return true;
 }
+// Limits (issue #11). limits.ini beside the DLL (tools/gen_limits.py, from defaults.ini; shipped in releases) gives
+// every changeable field a range: <type>.<field path without indices> = min,max,flags (i = integer, n = -1 allowed).
+// A profile value is clamped to it before anything else sees it, so the log, the fingerprint and every config write
+// (the vs-AI bots' scaled values included) use the clamped value; two players asking 320 and 300 for a speed capped
+// at 300 match. A value whose field has no limit is not applied, nor is one whose field is locked (flag x: power
+// levels, and fields every config ships as 0). Weapons are limited as primaries or aux: limits.ini's [primary] section
+// names the primary weapon configs. Without limits.ini nothing is clamped (logged).
+struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
+static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
+static char (*g_primaryWeapons)[96]; static int g_primaryCount;
+static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
+    "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig" };
+static void load_limits(const wchar_t* dir) {
+    wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
+    if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
+    const DWORD cap = 1 << 18; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
+    DWORD n = sec ? GetPrivateProfileSectionW(L"limits", sec, cap, li) : 0;
+    g_limits = (ValueLimit*)calloc(2048, sizeof(ValueLimit)); g_limitCount = 0;
+    for (wchar_t* e = sec; g_limits && n && *e && g_limitCount < 2048; e += wcslen(e) + 1) {
+        wchar_t* eq = wcschr(e, L'='); if (!eq || e[0] == L';') continue;
+        ValueLimit& L = g_limits[g_limitCount]; int k = 0;
+        for (wchar_t* c = e; c < eq && k < 159; c++) if (!iswspace(*c)) L.key[k++] = (char)towlower(*c);
+        L.key[k] = 0;
+        wchar_t flags[8] = L"";
+        if (swscanf_s(eq + 1, L"%lf,%lf,%7[inx]", &L.lo, &L.hi, flags, (unsigned)_countof(flags)) < 2 || !k) continue;
+        L.isInt = wcschr(flags, L'i') != nullptr; L.neg1 = wcschr(flags, L'n') != nullptr; L.locked = wcschr(flags, L'x') != nullptr;
+        g_limitCount++;
+    }
+    n = sec ? GetPrivateProfileSectionW(L"primary", sec, cap, li) : 0;
+    g_primaryWeapons = (char(*)[96])calloc(1024, 96);
+    for (wchar_t* e = sec; g_primaryWeapons && n && *e && g_primaryCount < 1024; e += wcslen(e) + 1) {
+        if (e[0] == L';') continue;
+        int k = 0; char* d = g_primaryWeapons[g_primaryCount];   // the name is everything before '='
+        for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
+        d[k] = 0; if (k) g_primaryCount++;
+    }
+    free(sec);
+    status("limits: %d field limits, %d primary weapon configs from %ls", g_limitCount, g_primaryCount, li);
+}
+// the limit for asset.field: <type of the asset>.<field without [n]>
+static const ValueLimit* find_limit(const char* asset, const char* field) {
+    if (g_limitCount <= 0) return nullptr;
+    const char* type = nullptr;
+    for (const char* t : kLimitTypes) if (!strncmp(asset, t, strlen(t))) { type = t; break; }
+    if (!type) return nullptr;
+    char key[160]; int k = sprintf_s(key, "%s.", type);
+    if (!strcmp(type, "starshipweaponconfig")) {
+        bool primary = false;
+        for (int i = 0; i < g_primaryCount && !primary; i++) primary = !strcmp(g_primaryWeapons[i], asset);
+        k = sprintf_s(key, "%s_%s.", type, primary ? "primary" : "aux");
+    }
+    for (const char* c = field; *c && k < 159; c++) {
+        if (*c == '[') { while (*c && *c != ']') c++; if (!*c) break; continue; }
+        key[k++] = *c;
+    }
+    key[k] = 0;
+    for (int i = 0; i < g_limitCount; i++) if (!strcmp(g_limits[i].key, key)) return &g_limits[i];
+    return nullptr;
+}
+static double clamp_to(const ValueLimit* L, double v) {
+    if (!L) return v;
+    if (L->neg1 && v == -1.0) return v;
+    if (L->isInt) v = (double)llround(v);
+    return v < L->lo ? L->lo : v > L->hi ? L->hi : v;
+}
+// clamp the profile's overrides (before the fingerprint); drop the ones whose field has no limit
+static void clamp_overrides() {
+    if (g_limitCount < 0) return;
+    int kept = 0;
+    for (int i = 0; i < g_overrideCount; i++) {
+        ValueOverride& o = g_overrides[i];
+        const char* dot = strchr(o.key, '.');
+        char asset[96] = "";
+        if (dot && dot - o.key < 96) strncpy_s(asset, o.key, dot - o.key);
+        const ValueLimit* L = dot ? find_limit(asset, dot + 1) : nullptr;
+        if (!L) { status("limits: %s has no limit (unknown field, or not in limits.ini); not applied", o.key); continue; }
+        if (L->locked) { status("limits: %s is locked (power levels, and fields the game always ships as 0); not applied", o.key); continue; }
+        double c = clamp_to(L, o.value);
+        if (c != o.value) status("limits: %s = %.9g is outside %.9g..%.9g; clamped to %.9g", o.key, o.value, L->lo, L->hi, c);
+        o.value = c;
+        g_overrides[kept++] = o;
+    }
+    g_overrideCount = kept;
+}
 static wchar_t g_dllDir[MAX_PATH];
 static void load_profile(const wchar_t* dir) {
     wcscpy_s(g_dllDir, dir);
@@ -232,6 +316,8 @@ static void load_profile(const wchar_t* dir) {
             free(sec);
         }
     }
+    load_limits(dir);
+    clamp_overrides();
     g_profileFp = profile_fingerprint();
     status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d, %d value override(s), fingerprint %08x%s",
            g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, g_overrideCount, g_profileFp,
@@ -1059,7 +1145,7 @@ static gstick_t o_gstick;
 // +32) are kept in step with the ROOT config's registration lists: float +0x40 and int +0x48 entries {u32 id, value at +4};
 // Vec3 +0x50 entries 32 bytes {Vec3 at 0, u32 id at +16} (layouts from the decoded type info).
 
-struct ValueTarget { char asset[96]; char key[160]; double value; char botOf[96]; bool logged; bool warned; bool hit; };
+struct ValueTarget { char asset[96]; char key[160]; double value; char botOf[96]; bool logged; bool warned; bool hit; const ValueLimit* limit; };
 static ValueTarget* g_targets; static int g_targetCount = -1;
 
 struct DefaultSlot { uint32_t hash; char key[256]; double value; };
@@ -1087,10 +1173,10 @@ static void build_targets() {
         const char* k = g_overrides[i].key; const char* dot = strchr(k, '.');
         if (!dot || dot == k || !dot[1] || dot - k >= 96 || strlen(dot + 1) >= 160) { status("values: '%s' is not asset.field; ignored", k); continue; }
         ValueTarget& t = g_targets[g_targetCount++];
-        strncpy_s(t.asset, k, dot - k); strcpy_s(t.key, dot + 1); t.value = g_overrides[i].value;
+        strncpy_s(t.asset, k, dot - k); strcpy_s(t.key, dot + 1); t.value = g_overrides[i].value; t.limit = find_limit(t.asset, t.key);
         for (const BotMap& b : kBotMap) if (!strcmp(t.asset, b.player)) {
             ValueTarget& u = g_targets[g_targetCount++];
-            strcpy_s(u.asset, b.bot); strcpy_s(u.key, t.key); u.value = t.value; strcpy_s(u.botOf, b.player);
+            strcpy_s(u.asset, b.bot); strcpy_s(u.key, t.key); u.value = t.value; strcpy_s(u.botOf, b.player); u.limit = t.limit;
         }
     }
     status("values: %d override(s) -> %d target(s) including vs-AI bot counterparts", g_overrideCount, g_targetCount);
@@ -1188,6 +1274,9 @@ static void apply_leaf(void* c, const VeLeaf& l) {
             if ((float)pd->value == (float)bd->value) target = v.value;
             else if (pd->value != 0) target = bd->value * v.value / pd->value;
             else continue;
+            double c = clamp_to(v.limit, target);   // a bot's scaled value stays within the same field's limit
+            if (c != target && !v.logged) status("limits: %s (vs-AI bot) %.9g clamped to %.9g", l.key, target, c);
+            target = c;
         }
         double now = leaf_value(l);
         uint64_t reg = register_slot(x->root, l.list, l.attrId, l.comp);

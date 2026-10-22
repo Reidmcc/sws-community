@@ -259,8 +259,8 @@ int main() {
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");
-    check(blastDmg->value == 3000.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 3000.0f,
-          "value engine: an explosion config's blast damage and its list entry written (2000 -> 3000)");
+    check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
+          "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
     printf("      (turn rate %g %g %g, list %g %g %g; fire interval %g list %g; burst %d list %d; pip cost [2] %g [3] %g [4] %g)\n",
            player.turn->x, player.turn->y, player.turn->z, player.v3[0], player.v3[1], player.v3[2], rof->value,
            *(float*)(*(uint64_t*)(weapon + 0x40) + 4), burst->value, *(int32_t*)(ilist + 20),
@@ -349,7 +349,8 @@ int main() {
         // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
-        const char* canon[] = { "pinball=0;multidrift=1;", "explosionconfigls_missile_piercingtorpedo.blastdamage=3000;",
+        // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
+        const char* canon[] = { "pinball=0;multidrift=1;", "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
                                 "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
                                 "starshipmovementconfig_xwing.drifttransitiontime=5;", "starshipmovementconfig_xwing.maxspeeds[8]=150;",

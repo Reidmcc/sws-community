@@ -98,12 +98,19 @@ no_multidrift=1
 ; <asset>.<field>=<number>
 ```
 
-**Values** are written into the game's loaded data at runtime: movement, shields, hull and laser projectiles
-(every number in a ship's movement, shield, hull, projectile, weapon and power configs, reached through `mod/config_types.h`; keys like `field`, `field[i]`, `field.x`, `weaponfiring.laserregenpips[3].costpershot`). Asset and field names match the game's, lowercase:
+**Values** are written into the game's loaded data at runtime: every number in a ship's movement, shield, hull,
+laser, missile, explosion, weapon and power configs (reached through `mod/config_types.h`; keys like `field`, `field[i]`, `field.x`, `weaponfiring.laserregenpips[3].costpershot`). Asset and field names match the game's, lowercase:
 `starshipmovementconfig_xwing.afterburnermaxspeed=260`. Each launch writes `defaults.ini` beside the DLL with the
 values as the game loaded them, for every config it saw: the list of what can be changed, and the way back. A
 player ship's change also applies to its vs-AI bot version (copied, or scaled where the bot is tuned differently);
-the AI "creep" ships are left alone. Actual flight speed tops out at 300 whatever the data says (measured; the limit isn't in these configs).
+the AI "creep" ships are left alone.
+
+**Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
+a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match
+modifiers allow), down to 0.1× the lowest (0 where the game ships 0), with tighter bounds where they're known: speeds
+at most 300 (actual flight speed tops out there, measured), fractions at most 1, angles at most 180, power levels at
+most 4. A value outside its range is clamped, with a `limits:` line in the log; a field with no limit isn't applied.
+The clamped value is the one in the fingerprint. `tools/gen_limits.py` writes `limits.ini` from `defaults.ini`.
 
 Everyone in a match must use the same profile. A fingerprint of it (the rules plus every value, normalized) is part of
 the network version, so players on different profiles are refused at connect; the log's `profile:` line shows it.

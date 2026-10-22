@@ -1,12 +1,14 @@
 @echo off
 rem Build a player release: dist\sws-community-v<version>\ and its zip.
 rem Usage: make_release.bat <version>     (for example: make_release.bat 0.1.0)
-rem Needs build\unlock_ids.txt, which is generated from the game's data by the local research tools (not in the repo).
+rem Needs build\unlock_ids.txt, which is generated from the game's data by the local research tools (not in the repo),
+rem and build\limits.ini, from tools\gen_limits.py (reads build\defaults.ini, written by any launch of the mod).
 setlocal
 if "%~1"=="" (echo usage: make_release.bat ^<version^> & exit /b 1)
 set "VER=%~1"
 set "HERE=%~dp0"
 if not exist "%HERE%build\unlock_ids.txt" (echo build\unlock_ids.txt is missing: generate it first. & exit /b 1)
+if not exist "%HERE%build\limits.ini" (echo build\limits.ini is missing: run tools\gen_limits.py first. & exit /b 1)
 
 call "%HERE%build_server.bat" || exit /b 1
 
@@ -19,6 +21,7 @@ mkdir "%OUT%\profiles" || exit /b 1
 copy /y "%HERE%build\sws_launch.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\sws_server.dll" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\unlock_ids.txt" "%OUT%\" >nul || exit /b 1
+copy /y "%HERE%build\limits.ini" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\server.ini" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\README.txt" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\profiles\*.ini" "%OUT%\profiles\" >nul || exit /b 1
