@@ -25,6 +25,8 @@ copy /y "%HERE%build\sws_settings.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\sws_check.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\unlock_ids.txt" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\limits.ini" "%OUT%\" >nul || exit /b 1
+rem defaults.ini: every config recorded so far, so the settings app lists all values before a player's first launch
+if exist "%HERE%build\defaults.ini" copy /y "%HERE%build\defaults.ini" "%OUT%\" >nul
 copy /y "%HERE%release\server.ini" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\README.txt" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\profiles\*.ini" "%OUT%\profiles\" >nul || exit /b 1
