@@ -11,6 +11,7 @@ if not exist "%HERE%build\unlock_ids.txt" (echo build\unlock_ids.txt is missing:
 if not exist "%HERE%build\limits.ini" (echo build\limits.ini is missing: run tools\gen_limits.py first. & exit /b 1)
 
 call "%HERE%build_server.bat" || exit /b 1
+call "%HERE%build_app.bat" || exit /b 1
 
 set "DIST=%HERE%..\dist"
 set "OUT=%DIST%\sws-community-v%VER%"
@@ -20,6 +21,7 @@ mkdir "%OUT%\profiles" || exit /b 1
 
 copy /y "%HERE%build\sws_launch.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\sws_server.dll" "%OUT%\" >nul || exit /b 1
+copy /y "%HERE%build\sws_settings.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\unlock_ids.txt" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\limits.ini" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\server.ini" "%OUT%\" >nul || exit /b 1

@@ -39,7 +39,7 @@ TURNING = re.compile(r"turn|axis|torque|steer|rotation|roll|yaw|pitch|angular") 
 # (reason, pattern on the field's own name: the key's last dotted part, array indices removed; input configs by prefix)
 SKIP = [
     ("input tuning: would change how the controls feel, not the ship",
-     re.compile(r"(gamepad|joystick)inputconfig\.|^mouse|stickreleasedelay")),
+     re.compile(r"gamepad|joystick|mouse|stickreleasedelay")),   # the same input-device fields gen_limits locks
     ("power level: its ceiling is the length of the per-level tables (maxspeeds, shield regen by level)",
      re.compile(r"powerlevel|powerchargelevel|regenlevel$|powerfloor")),
     ("fraction, threshold or angle: the limit comes from what it means (0..1, 0..180)",

@@ -49,8 +49,18 @@ nothing. Settings come from `server.ini` and `rules.ini` beside the DLL. Logs go
 
 ## Playing
 
-Everyone needs the same build of the mod, the same `rules.ini`, and a network path between them. The tested setup is
+Everyone needs the same build of the mod, the same profile, and a network path between them. The tested setup is
 [Tailscale](https://tailscale.com): every player installs it, and the host shares their PC with the others.
+
+**The settings app, `sws_settings.exe`** (beside the launcher), does all of this without editing files:
+- **Play:** host (pick the match type) or join (the host's address, with favorites), then Launch, which runs
+  `sws_launch.exe` and its YES prompt.
+- **Profile and values:** profiles (new, duplicate, rename, delete, import), the movement rules, and every changeable
+  value by ship and system, each with its default (from `defaults.ini`) and its allowed range (from `limits.ini`).
+  Values are clamped to their range as you type, locked fields are read-only, and changes are saved as you go. The
+  header shows the profile's fingerprint, computed the way the DLL does (`mod/app/Core.cs`).
+
+The rest of this section is the same by hand:
 
 **Host** (`server.ini` beside the DLL):
 
@@ -132,6 +142,9 @@ Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
   templates in `mod/release/`. It needs `build/unlock_ids.txt`, generated from the game's data.
 
 - `build_server.bat` builds `sws_server.dll`, `sws_launch.exe`, the server test DLL and the stand-in test target.
+- `build_app.bat` builds the settings app, `sws_settings.exe` (C#, the .NET Framework that ships with Windows), and
+  `sws_settings_test.exe`, which prints the fingerprint the app computes for a profile, to check against the DLL's log.
+  `sws_settings.exe --shot <png> [values]` renders the window to an image and exits.
 - `build.bat` / `build_rules.bat` build the earlier probe and rules-only variants.
 
 `sws_probe.cpp` is one source file with several builds, selected by defines: `/DRULES` (movement rules), `/DSERVER`
@@ -147,7 +160,7 @@ sws_launch.exe --target <full path to test_server_target.exe> --dll sws_server_t
 
 ## Repository layout
 
-- `mod/`: the mod's source, the launcher, the test targets and the build scripts.
+- `mod/`: the mod's source, the launcher, the test targets and the build scripts; `mod/app/` is the settings app.
 - `tools/`: analysis tools (PE map, disassembler over the exception table, RIP-relative cross-references, displacement
   scans, log readers).
 - `ghidra_scripts/`: headless decompile and caller-walk scripts.

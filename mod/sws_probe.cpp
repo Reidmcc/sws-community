@@ -1153,6 +1153,7 @@ static ValueTarget* g_targets; static int g_targetCount = -1;
 struct DefaultSlot { uint32_t hash; char key[256]; double value; };
 static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 17; static int g_defaultCount;
 static char (*g_seenAssets)[96]; static int g_seenCount; static bool g_defaultsDirty;
+static char (*g_seenNames)[96];   // each seen config's name as the game spells it (defaults.ini "; name=" lines)
 static const int kVeTypeCount = (int)(sizeof kVeTypes / sizeof kVeTypes[0]);
 static const int kVeRootCount = (int)(sizeof kVeRoots / sizeof kVeRoots[0]);
 
@@ -1327,6 +1328,10 @@ static void apply_leaf(void* c, const VeLeaf& l) {
 static void process_config(uint64_t inst, int type, const char* asset) {
     char key[256]; VeCtx c{ inst, asset };
     if (!asset_seen(asset) && g_seenCount < 4096) {
+        if (g_seenNames) {   // the asset's own name, before lowercasing: "HullCustom_Chameleon_Xwing"
+            const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
+            strncpy_s(g_seenNames[g_seenCount], sl ? sl + 1 : base, _TRUNCATE);
+        }
         strcpy_s(g_seenAssets[g_seenCount++], asset);
         status("values: config %llx %s", inst, asset);
         strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, record_leaf, &c);
@@ -1366,6 +1371,7 @@ static void write_defaults_file() {
     fprintf(f, "; Values as the game loaded them (written by the value engine, issue #3). Sections are assets, keys are fields.\n");
     for (int a = 0; a < g_seenCount; a++) {
         fprintf(f, "\n[%s]\n", g_seenAssets[a]);
+        if (g_seenNames && g_seenNames[a][0]) fprintf(f, "; name=%s\n", g_seenNames[a]);   // the game's own spelling, for readable labels
         size_t al = strlen(g_seenAssets[a]);
         for (int i = 0; i < kDefaultSlots; i++) {
             const DefaultSlot& d = g_defaults[i];
@@ -1393,7 +1399,7 @@ static void write_defaults_file() {
 static void value_engine_scan() {
     if (!g_valuesOn) return;
     if (g_targetCount < 0) build_targets();
-    if (!g_defaults) { g_defaults = (DefaultSlot*)calloc(kDefaultSlots, sizeof(DefaultSlot)); g_seenAssets = (char(*)[96])calloc(4096, 96); }
+    if (!g_defaults) { g_defaults = (DefaultSlot*)calloc(kDefaultSlots, sizeof(DefaultSlot)); g_seenAssets = (char(*)[96])calloc(4096, 96); g_seenNames = (char(*)[96])calloc(4096, 96); }
     if (!g_defaults || !g_seenAssets || !committed(0x1442d18c8)) return;
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);

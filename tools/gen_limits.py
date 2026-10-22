@@ -43,6 +43,7 @@ SPEED_FIELDS = {"starshipmovementconfig.maxspeeds", "starshipmovementconfig.afte
                 "starshipmovementconfig.minspeed"}
 ANGLE = re.compile(r"angle(attribute)?$|anglethreshold$|anglezone$")
 FRACTION = re.compile(r"(ratio|threshold)(attribute)?$|percent|normalized")
+INPUT_DEVICE = re.compile(r"gamepad|joystick|mouse")   # anywhere in the field path
 POWER_LEVEL = re.compile(r"powerlevel$|powerchargelevel$|regenlevel$|powerfloor$")
 
 
@@ -117,7 +118,9 @@ def limit(key, vals, is_int):
         if 0 < mn and lo < 1:
             lo = 1
     locked = None
-    if POWER_LEVEL.search(name):
+    if INPUT_DEVICE.search(key):
+        locked = "input device: locked (Pseudo, 2026-10-21: changing how people's hardware drives the game would change the feel for no benefit)"
+    elif POWER_LEVEL.search(name):
         locked = "power level: locked (Pseudo, PR #13: power management is too core to change)"
     elif lo == hi == 0:
         locked = "every config ships 0: locked (Pseudo, PR #13: probably invariant for a reason)"
