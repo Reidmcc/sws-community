@@ -28,8 +28,16 @@ One-time setup
    host shares their PC with the others in Tailscale's admin page. The host's address is their Tailscale IP (100.x.y.z).
 
 
-Settings (server.ini, open it in Notepad)
------------------------------------------
+Settings: sws_settings.exe
+--------------------------
+Double-click sws_settings.exe for everything below without editing files:
+- Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch.
+- Profile and values: pick, make, copy, rename, import or delete profiles; turn the movement rules on or off; and change
+  any of the game's values (speeds, shields, hull, weapons, components...) for every ship, each with its default and the
+  range it's allowed. Reset one value or all of them to default. The fingerprint at the top must match everyone else's.
+The values list fills in as you play: the mod records each part of the game the first time it loads it.
+
+Or by hand (server.ini, open it in Notepad):
 - HOST: leave "join=" empty, and pick the mode on the "match_mode=" line: fleet (Fleet Battles), coop (co-op vs AI),
   solo, or dogfight.
 - JOIN: put the host's address after "join=", for example  join=100.101.102.103
@@ -38,13 +46,14 @@ Settings (server.ini, open it in Notepad)
     Default        the game as shipped
     NoMultidrift   pinballing allowed, multidrifting removed
     AsIntended     both exploits removed
-  Profiles are files in the profiles folder; you can copy one and edit it.
+  Profiles are files in the profiles folder; you can copy one and edit it, or use sws_settings.exe.
 
 
 Playing
 -------
 1. Steam running, Squadrons closed.
-2. Double-click sws_launch.exe, read what it says, type YES and press Enter. The game starts.
+2. Click Launch in sws_settings.exe (or double-click sws_launch.exe), read what it says, type YES and press Enter.
+   The game starts.
 3. In the game, start a SOLO CUSTOM MATCH VS AI, on the host and on every joiner. The host's becomes the real match
    (per match_mode); a joiner's connects to the host instead. Joiners: start once the host's lobby is up.
 4. Every ship component is unlocked, and EA's error 327 shouldn't appear.
