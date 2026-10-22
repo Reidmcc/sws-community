@@ -446,7 +446,9 @@ namespace SwsSettings
                     // locked fields, and fields with no limit (the game won't apply them either), only on request;
                     // a value the profile does set for one stays visible, so it can be seen and reset
                     if (!showLocked.Checked && !changed && limits.Loaded && (l == null || l.Locked)) continue;
-                    string range = !limits.Loaded ? "" : l == null ? "no limit" : l.Locked ? "locked" : Num.Show(l.Lo) + " to " + Num.Show(l.Hi) + (l.Neg1 ? " (or -1)" : "");
+                    string range = !limits.Loaded ? "" : l == null ? "no limit" : l.Locked ? "locked"
+                        : l.Source.StartsWith("yes/no") ? "0 = no, 1 = yes"
+                        : Num.Show(l.Lo) + " to " + Num.Show(l.Hi) + (l.Neg1 ? " (or -1)" : "");
                     int r = grid.Rows.Add(a, pretty, known ? Num.Show(stock) : "?", changed ? Num.Show(v) : "", range, changed ? "reset" : "");
                     var row = grid.Rows[r]; row.Tag = key;
                     bool locked = profile.BuiltIn || (limits.Loaded && (l == null || l.Locked));
