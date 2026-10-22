@@ -29,11 +29,12 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <malloc.h>
+#include <math.h>
 #include <share.h>
 #include <intrin.h>
 
 // ---------------------------------------------------------------- records
-enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8 };
+enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8, R_OUTPUT = 10 };   // 9 is R_RULE (the movement rules)
 
 #pragma pack(push, 1)
 struct Rec {
@@ -402,6 +403,7 @@ static bool g_joinLocalServer = true;   // [server] join_local_server: 0 = a joi
 static bool g_joinRemote = false;       // [server] join_remote: 1 = a joiner's match connection is a remote client, not a local host
 static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue requests (diagnostic)
 static char g_matchMode[16];
+static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -440,6 +442,7 @@ static void read_server_ini() {
       g_joinRemote = GetPrivateProfileIntW(L"server", L"join_remote", 0, ini) != 0;
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
+      g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
@@ -812,6 +815,16 @@ static DWORD WINAPI udp_watch(LPVOID) {
     status("listen: UDP watch ended");
     return 0;
 }
+// Is this LevelSetup a PvP or vs-AI match (GameMode Frontline_Bots, Frontline or Dogfight)? Practice, Missions and
+// the Tutorial run on single-player root levels: hosting (listen) and match_mode must leave them single-player, or
+// the client is dropped back to the menu (Practice with listen=1, 2026-10-21).
+static bool pvp_match(uint64_t ls, char* gm, size_t gmsz) {
+    typedef uint64_t(__fastcall* getopt_t)(uint64_t ls, const char* key);
+    gm[0] = 0;
+    if (!ls) return false;
+    safe_copy(((getopt_t)0x141191d50)(ls, "GameMode"), gm, gmsz);
+    return !_stricmp(gm, "Frontline_Bots") || !_stricmp(gm, "Frontline") || !_stricmp(gm, "Dogfight");
+}
 static void __fastcall h_spawn(uint64_t gs, uint8_t* info) {
     uint64_t ls = rd<uint64_t>((uint64_t)info, 0x18);
     status("spawnServer gs=%p tick=%u sp=%d localhost=%d dedicated=%d encrypted=%d coop=%d menu=%d keep=%d level='%s'",
@@ -857,7 +870,10 @@ static void __fastcall h_spawn(uint64_t gs, uint8_t* info) {
         status("join: not spawning a local match server (join_local_server=0)");
         return;
     }
-    if (g_listen && !g_dedicated && !info[0x29] && info[0x24]) {
+    char spawnMode[48] = "";
+    if (g_listen && !g_dedicated && !info[0x29] && info[0x24] && !pvp_match(rd<uint64_t>((uint64_t)info, 0x18), spawnMode, sizeof spawnMode))
+        status("listen: '%s' match left single-player (hosting applies to PvP and vs-AI matches)", spawnMode);
+    else if (g_listen && !g_dedicated && !info[0x29] && info[0x24]) {
         info[0x24] = 0;
         status("listen: match spawn made networked (isSinglePlayer 1 -> 0, isLocalHost=%d)", (int)info[0x25]);
         HANDLE w = CreateThread(nullptr, 0, udp_watch, nullptr, 0, nullptr); if (w) CloseHandle(w);
@@ -1030,22 +1046,27 @@ static gstick_t o_gstick;
 // each typed by its ClassInfo's runtime id (+0x48) within the wanted class's id range (+0x48 .. +0x4a). Starship
 // configs are Assets, so each names itself (char* at +0x18). For every config of a supported class it records the
 // values as loaded (defaults.ini beside the DLL, once per asset per session), then writes the profile's overrides
-// wherever the current value differs, so a reloaded copy is patched again. Fields come from config_fields.h:
-//   kind 0 Float32 in place; kind 1 IncomAttributeFloat (Value at +32, and the FloatIncomAttributesToRegister entry
-//   {u32 attribute id, f32 value} at config+0x40 whose id matches the attribute's IncomAttributeId.Identifier);
-//   kind 2 Float32-Array element (pointer, count at -4), key "field[i]".
+// wherever the current value differs, so a reloaded copy is patched again. What a config contains comes from the type
+// table in config_types.h (see the object-graph walk below); an attribute's IncomAttributeId.Identifier links it to
+// its entry in the root config's registration lists.
 // vs-AI bots (Pseudo, #3): a player asset's override also goes to its bot counterpart: the same value where the two
 // defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
-#include "config_fields.h"
+#include "config_types.h"   // the type table the engine walks (tools/gen_config_types.py)
+#include "bot_map.h"        // player config -> vs-AI bot configs, generated from the pvb_bot collections
+// Object-graph walk (2026-10-21): each root config is walked through the type table, and every number gets a dotted key:
+// asset.field, asset.field[i], asset.field.x (Vec3), asset.sub.field (a followed sub-object, its actual class resolved from
+// its ClassInfo id), asset.field[i].member (arrays of value types). Attribute leaves (IncomAttributeFloat/Int/Vec3, Value at
+// +32) are kept in step with the ROOT config's registration lists: float +0x40 and int +0x48 entries {u32 id, value at +4};
+// Vec3 +0x50 entries 32 bytes {Vec3 at 0, u32 id at +16} (layouts from the decoded type info).
 
-#include "bot_map.h"   // player config -> vs-AI bot configs, generated from the pvb_bot collections
-struct ValueTarget { char asset[96]; char key[96]; double value; char botOf[96]; bool logged; bool warned; };
+struct ValueTarget { char asset[96]; char key[160]; double value; char botOf[96]; bool logged; bool warned; bool hit; };
 static ValueTarget* g_targets; static int g_targetCount = -1;
 
-// defaults: "asset.key" -> value as loaded, open addressing
-struct DefaultSlot { uint32_t hash; char key[176]; double value; };
-static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 16; static int g_defaultCount;
+struct DefaultSlot { uint32_t hash; char key[256]; double value; };
+static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 17; static int g_defaultCount;
 static char (*g_seenAssets)[96]; static int g_seenCount; static bool g_defaultsDirty;
+static const int kVeTypeCount = (int)(sizeof kVeTypes / sizeof kVeTypes[0]);
+static const int kVeRootCount = (int)(sizeof kVeRoots / sizeof kVeRoots[0]);
 
 static DefaultSlot* default_slot(const char* key, bool create) {
     uint32_t h = fnv1a(2166136261u, key); if (!h) h = 1;
@@ -1064,7 +1085,7 @@ static void build_targets() {
     g_targetCount = 0;
     for (int i = 0; g_targets && i < g_overrideCount; i++) {
         const char* k = g_overrides[i].key; const char* dot = strchr(k, '.');
-        if (!dot || dot == k || !dot[1]) { status("values: '%s' is not asset.field; ignored", k); continue; }
+        if (!dot || dot == k || !dot[1] || dot - k >= 96 || strlen(dot + 1) >= 160) { status("values: '%s' is not asset.field; ignored", k); continue; }
         ValueTarget& t = g_targets[g_targetCount++];
         strncpy_s(t.asset, k, dot - k); strcpy_s(t.key, dot + 1); t.value = g_overrides[i].value;
         for (const BotMap& b : kBotMap) if (!strcmp(t.asset, b.player)) {
@@ -1075,81 +1096,130 @@ static void build_targets() {
     status("values: %d override(s) -> %d target(s) including vs-AI bot counterparts", g_overrideCount, g_targetCount);
 }
 
-// the float a key names on this instance, or null
-static float* field_ptr(uint64_t inst, const ConfigField& f, int index, uint32_t* attrId) {
-    if (attrId) *attrId = 0;
-    if (f.kind == 0) return index < 0 ? (float*)(inst + f.offset) : nullptr;
-    if (f.kind == 1) {
-        if (index >= 0) return nullptr;
-        uint64_t attr = rd<uint64_t>(inst, f.offset); if (!attr) return nullptr;
-        uint64_t idObj = rd<uint64_t>(attr, 24);
-        if (attrId && idObj) *attrId = rd<uint32_t>(idObj, 32);
-        return (float*)(attr + 32);
-    }
-    uint64_t arr = rd<uint64_t>(inst, f.offset);
-    if (!arr || index < 0 || index >= (int)rd<uint32_t>(arr - 4, 0)) return nullptr;
-    return (float*)arr + index;
-}
-static float* register_entry(uint64_t inst, uint32_t attrId) {
-    uint64_t list = rd<uint64_t>(inst, 0x40); if (!list || !attrId) return nullptr;
-    uint32_t n = rd<uint32_t>(list - 4, 0);
-    for (uint32_t i = 0; i < n && i < 4096; i++) if (rd<uint32_t>(list, i * 8) == attrId) return (float*)(list + i * 8 + 4);
-    return nullptr;
-}
-static bool write_float(float* p, float v) { __try { *p = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+// a number the walk reached: its full key, address, type, and the attribute it belongs to (if any)
+struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; };
+typedef void (*ve_fn)(void* ctx, const VeLeaf& l);
 
-static void record_defaults(uint64_t inst, int cls, const char* asset) {
-    if (asset_seen(asset) || g_seenCount >= 4096) return;
-    strcpy_s(g_seenAssets[g_seenCount++], asset);
-    char key[176];
-    for (const ConfigField& f : kConfigFields) {
-        if (f.cls != cls) continue;
-        int n = 1;
-        if (f.kind == 2) { uint64_t arr = rd<uint64_t>(inst, f.offset); n = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (n > 64) n = 0; }
-        for (int i = 0; i < n; i++) {
-            float* fp = field_ptr(inst, f, f.kind == 2 ? i : -1, nullptr); if (!fp) continue;
-            if (f.kind == 2) sprintf_s(key, "%s.%s[%d]", asset, f.name, i); else sprintf_s(key, "%s.%s", asset, f.name);
-            DefaultSlot* d = default_slot(key, true); if (d) d->value = rd<float>((uint64_t)fp, 0);
-        }
+// the actual class of a followed sub-object: the most specific type of its family whose id range holds its ClassInfo id
+static int ve_resolve(uint64_t obj, int declared) {
+    int fam = kVeTypes[declared].followRoot;
+    if (fam < 0) return declared;
+    uint64_t ci = rd<uint64_t>(obj, 8); if (!ci) return -1;
+    uint16_t id = rd<uint16_t>(ci, 0x48);
+    int best = -1, span = 1 << 30;
+    for (int t = 0; t < kVeTypeCount; t++) {
+        if (kVeTypes[t].followRoot != fam || !kVeTypes[t].classInfo) continue;
+        uint16_t lo = rd<uint16_t>(kVeTypes[t].classInfo, 0x48), hi = rd<uint16_t>(kVeTypes[t].classInfo, 0x4a);
+        if (hi < lo || (uint16_t)(id - lo) > (uint16_t)(hi - lo)) continue;
+        if (hi - lo < span) { span = hi - lo; best = t; }
     }
-    g_defaultsDirty = true;
+    return best;
 }
-static void apply_targets(uint64_t inst, int cls, const char* asset) {
-    char key[176];
+static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve_fn fn, void* ctx) {
+    if (!obj || depth > 5) return;
+    const VeType& T = kVeTypes[type];
+    static const char* xyz[3] = { "x", "y", "z" };
+    for (int i = 0; i < T.fieldCount; i++) {
+        const VeField& f = kVeFields[T.firstField + i];
+        size_t n = strlen(key);
+        if (n + strlen(f.name) + 12 >= cap) continue;
+        sprintf_s(key + n, cap - n, ".%s", f.name);
+        uint64_t a = obj + f.offset;
+        switch (f.kind) {
+        case 0: case 1: { VeLeaf l{ key, a, f.kind == 1, 0, 0, 0 }; fn(ctx, l); break; }
+        case 2: for (int c = 0; c < 3; c++) { size_t m = strlen(key); sprintf_s(key + m, cap - m, ".%s", xyz[c]);
+                    VeLeaf l{ key, a + 4 * c, false, 0, 0, 0 }; fn(ctx, l); key[m] = 0; } break;
+        case 3: case 4: case 5: {
+            uint64_t at = rd<uint64_t>(a, 0); if (!at) break;
+            uint64_t idObj = rd<uint64_t>(at, 24); uint32_t id = idObj ? rd<uint32_t>(idObj, 32) : 0;
+            if (f.kind == 3) { VeLeaf l{ key, at + 32, false, id, 1, 0 }; fn(ctx, l); }
+            else if (f.kind == 4) { VeLeaf l{ key, at + 32, true, id, 2, 0 }; fn(ctx, l); }
+            else for (int c = 0; c < 3; c++) { size_t m = strlen(key); sprintf_s(key + m, cap - m, ".%s", xyz[c]);
+                     VeLeaf l{ key, at + 32 + 4 * c, false, id, 3, c }; fn(ctx, l); key[m] = 0; }
+            break; }
+        case 6: { uint64_t sub = rd<uint64_t>(a, 0); int t2 = sub ? ve_resolve(sub, f.type) : -1;
+                  if (t2 >= 0) ve_walk(sub, t2, key, cap, depth + 1, fn, ctx); break; }
+        case 7: ve_walk(a, f.type, key, cap, depth + 1, fn, ctx); break;
+        case 8: case 9: {
+            uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 64) cnt = 0;
+            uint32_t stride = f.kind == 8 ? 4 : kVeTypes[f.type].size;
+            for (int j = 0; j < cnt; j++) {
+                size_t m = strlen(key); sprintf_s(key + m, cap - m, "[%d]", j);
+                if (f.kind == 8) { VeLeaf l{ key, arr + 4ull * j, false, 0, 0, 0 }; fn(ctx, l); }
+                else ve_walk(arr + (uint64_t)stride * j, f.type, key, cap, depth + 1, fn, ctx);
+                key[m] = 0;
+            }
+            break; }
+        }
+        key[n] = 0;
+    }
+}
+static double leaf_value(const VeLeaf& l) { return l.isInt ? (double)rd<int32_t>(l.addr, 0) : (double)rd<float>(l.addr, 0); }
+static bool leaf_write(uint64_t addr, bool isInt, double v) {
+    __try { if (isInt) *(int32_t*)addr = (int32_t)llround(v); else *(float*)addr = (float)v; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// the root config's registration-list slot for an attribute (and Vec3 component)
+static uint64_t register_slot(uint64_t root, int list, uint32_t id, int comp) {
+    if (!id || !list) return 0;
+    uint64_t arr = rd<uint64_t>(root, list == 1 ? 0x40 : list == 2 ? 0x48 : 0x50); if (!arr) return 0;
+    uint32_t n = rd<uint32_t>(arr - 4, 0), stride = list == 3 ? 32 : 8, idOff = list == 3 ? 16 : 0;
+    for (uint32_t i = 0; i < n && i < 4096; i++)
+        if (rd<uint32_t>(arr, i * stride + idOff) == id) return arr + (uint64_t)i * stride + (list == 3 ? 4ull * comp : 4);
+    return 0;
+}
+
+struct VeCtx { uint64_t root; const char* asset; };
+static void record_leaf(void* c, const VeLeaf& l) {
+    DefaultSlot* d = default_slot(l.key, true); if (d) d->value = leaf_value(l);
+}
+static void apply_leaf(void* c, const VeLeaf& l) {
+    VeCtx* x = (VeCtx*)c; char key[256];
+    size_t al = strlen(x->asset);
     for (int t = 0; t < g_targetCount; t++) {
         ValueTarget& v = g_targets[t];
-        if (strcmp(v.asset, asset)) continue;
-        // key: field or field[i]
-        char fname[96]; int index = -1; strcpy_s(fname, v.key);
-        if (char* br = strchr(fname, '[')) { index = atoi(br + 1); *br = 0; }
-        const ConfigField* f = nullptr;
-        for (const ConfigField& c : kConfigFields) if (c.cls == cls && !strcmp(c.name, fname)) { f = &c; break; }
-        if (!f || (f->kind == 2) != (index >= 0)) {
-            if (!v.warned) { v.warned = true; status("values: %s.%s: not a supported field of %s%s", asset, v.key, kConfigClasses[cls].name,
-                                                      f && f->kind == 2 ? " (an array: use field[i])" : ""); }
-            continue;
-        }
+        if (strcmp(v.asset, x->asset) || strcmp(l.key + al + 1, v.key)) continue;
+        v.hit = true;
         double target = v.value;
         if (v.botOf[0]) {   // follow the player's change: same value, or the bot's own default scaled by the same ratio
             sprintf_s(key, "%s.%s", v.botOf, v.key); DefaultSlot* pd = default_slot(key, false);
-            sprintf_s(key, "%s.%s", asset, v.key); DefaultSlot* bd = default_slot(key, false);
-            if (!pd || !bd) continue;   // the player's config hasn't been seen yet; try next scan
+            DefaultSlot* bd = default_slot(l.key, false);
+            if (!pd || !bd) continue;   // the player's config hasn't been seen yet; next scan
             if ((float)pd->value == (float)bd->value) target = v.value;
             else if (pd->value != 0) target = bd->value * v.value / pd->value;
             else continue;
         }
-        uint32_t attrId = 0;
-        float* fp = field_ptr(inst, *f, index, &attrId); if (!fp) continue;
-        float now = rd<float>((uint64_t)fp, 0), want = (float)target;
-        float* reg = f->kind == 1 ? register_entry(inst, attrId) : nullptr;
-        bool regStale = reg && rd<float>((uint64_t)reg, 0) != want;
-        if (now == want && !regStale) continue;
-        bool ok = write_float(fp, want) && (!reg || write_float(reg, want));
+        double now = leaf_value(l);
+        uint64_t reg = register_slot(x->root, l.list, l.attrId, l.comp);
+        double regNow = reg ? (l.isInt ? (double)rd<int32_t>(reg, 0) : (double)rd<float>(reg, 0)) : 0;
+        bool same = l.isInt ? llround(now) == llround(target) : (float)now == (float)target;
+        bool regSame = !reg || (l.isInt ? llround(regNow) == llround(target) : (float)regNow == (float)target);
+        if (same && regSame) continue;
+        bool ok = leaf_write(l.addr, l.isInt, target) && (!reg || leaf_write(reg, l.isInt, target));
         if (!v.logged) {
             v.logged = true;
-            status("values: %s.%s %.9g -> %.9g%s%s%s", asset, v.key, now, want, v.botOf[0] ? " (vs-AI bot, following the player)" : "",
-                   f->kind == 1 ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry found)") : "", ok ? "" : " WRITE FAILED");
+            status("values: %s %.9g -> %.9g%s%s%s", l.key, now, l.isInt ? (double)llround(target) : (double)(float)target,
+                   v.botOf[0] ? " (vs-AI bot, following the player)" : "",
+                   l.list ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry)") : "", ok ? "" : " WRITE FAILED");
         }
+    }
+}
+static void process_config(uint64_t inst, int type, const char* asset) {
+    char key[256]; VeCtx c{ inst, asset };
+    if (!asset_seen(asset) && g_seenCount < 4096) {
+        strcpy_s(g_seenAssets[g_seenCount++], asset);
+        status("values: config %llx %s", inst, asset);
+        strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, record_leaf, &c);
+        g_defaultsDirty = true;
+    }
+    bool any = false;
+    for (int t = 0; t < g_targetCount; t++) if (!strcmp(g_targets[t].asset, asset)) any = true;
+    if (!any) return;
+    strcpy_s(key, asset); ve_walk(inst, type, key, sizeof key, 0, apply_leaf, &c);
+    for (int t = 0; t < g_targetCount; t++) {
+        ValueTarget& v = g_targets[t];
+        if (!strcmp(v.asset, asset) && !v.hit && !v.warned && !v.botOf[0]) {
+            v.warned = true; status("values: %s.%s: no such value in this config (see defaults.ini for the names)", asset, v.key); }
     }
 }
 static void write_defaults_file() {
@@ -1176,8 +1246,9 @@ static void value_engine_scan() {
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
     if (!enter || !leave) return;
-    uint16_t lo[8], hi[8]; const int nc = (int)(sizeof kConfigClasses / sizeof kConfigClasses[0]);
-    for (int k = 0; k < nc; k++) { lo[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x48); hi[k] = rd<uint16_t>(kConfigClasses[k].classInfo, 0x4a); }
+    uint16_t lo[16], hi[16];
+    for (int k = 0; k < kVeRootCount && k < 16; k++) {
+        lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
         uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
@@ -1194,15 +1265,14 @@ static void value_engine_scan() {
                 uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
                 uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
                 uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
-                for (int k = 0; k < nc; k++) {
+                for (int k = 0; k < kVeRootCount && k < 16; k++) {
                     if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
-                    const char* nm = (const char*)rd<uint64_t>(inst, 0x18);
-                    char asset[96]; const char* base = safe_str((uint64_t)nm); const char* sl = strrchr(base, '/');
-                    int j = 0; for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
+                    const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
+                    char asset[96]; int j = 0;
+                    for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
                     asset[j] = 0; if (!j) break;
                     matched++;
-                    record_defaults(inst, k, asset);
-                    apply_targets(inst, k, asset);
+                    process_config(inst, kVeRoots[k], asset);
                     break;
                 }
             }
@@ -1213,6 +1283,98 @@ static void value_engine_scan() {
     if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
     write_defaults_file();
 }
+
+// ---- Observation (issue #11: what the game actually does with each value) ---------------------------------------------
+// Each client starship component holds a small handle to its live "output data" (what the HUD reads), built by its
+// constructor: movement FUN_14169cf00 (+0xCB0), health FUN_141680fb0 (+0x430), weapon FUN_14172a5e0 (+0x1E0), power
+// FUN_1415fa310 (+0x1B8). The handle is {vtable, owner, index, flag, data*}; data* (handle+0x18) is a refcounted
+// DataContainer made by FUN_141699400 / FUN_141680ed0 / FUN_14172a5e0's FUN_141713fe0 / FUN_1415fa0d0, with its
+// ClassInfo at +8 and its fields from +0x18 (offsets as in the runtime type info). The weapon output's +0x20/+0x28/+0x30
+// point at its laser regen, laser charge and ammo outputs, the same kind of object. Hooking the constructors registers
+// every component as it is made; a sampler thread reads each output 10 times a second, checks its ClassInfo, and writes
+// it to the flight record (type 10: state = component, f[0] = kind, f[1..] = the type's raw 32-bit words from +0x18)
+// only when it differs from the last record of that output, so idle turrets cost nothing. A handle that no longer
+// carries its vtable (component destroyed) is dropped. Kinds: 1 movement, 2 health, 3 power, 4 laser regen,
+// 5 laser charge, 6 ammo, 7 weapon (from +0x60: UI id, barrel index, tags, active), 8 last hit taken (the health
+// output's +0x18 LastHitInfo: hit angle, damage dealt, origin, hit type; one record per hit unless two hits within a
+// sample are identical or land in the same 100 ms, when only the last shows).
+struct ObsComp { volatile LONG64 comp; int kind; };   // kind 1 movement, 2 health, 3 power, 4 weapon component
+enum { OBS_SLOTS = 4096, OBS_WORDS = 26 };
+static ObsComp g_obs[OBS_SLOTS];
+static uint32_t g_obsLast[OBS_SLOTS][4][OBS_WORDS];   // last recorded words per output (movement/health/power use [0])
+static uint8_t g_obsHave[OBS_SLOTS][4];
+static const uint32_t kObsOff[5] = { 0, 0xCB0, 0x430, 0x1B8, 0x1E0 };
+static const uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
+// per output kind: the data object's ClassInfo, the first word's offset, and the number of words
+static const uint64_t kObsCi[9] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420,
+                                    0x144a15720 };
+static const uint32_t kObsBase[9] = { 0, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x60, 0x18 };
+static const int kObsWords[9] = { 0, 23, 16, 12, 3, 3, 12, 4, 7 };
+static volatile LONG g_obsCount[5];
+static volatile LONG g_obsFull;
+static void obs_register(uint64_t comp, int kind) {
+    int i = 0;
+    for (; i < OBS_SLOTS; i++)
+        if (InterlockedCompareExchange64(&g_obs[i].comp, (LONG64)comp, 0) == 0) { g_obs[i].kind = kind; break; }
+    if (i == OBS_SLOTS && InterlockedExchange(&g_obsFull, 1) == 0) status("observe: registry full (%d), later components not sampled", OBS_SLOTS);
+    LONG n = InterlockedIncrement(&g_obsCount[kind]);
+    static const char* names[5] = { "", "movement", "health", "power", "weapon" };
+    if (n <= 3 || n % 50 == 0) status("observe: %s component %llx (#%ld)", names[kind], comp, n);
+}
+// Record one output object if it is the expected type and changed since its last record. slot/sub index g_obsLast.
+static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data) {
+    if (!data) return;
+    uint64_t ci = rd<uint64_t>(data, 8);
+    if (ci != kObsCi[kind]) {   // not the type we expect there: say so (first few per kind), never record it
+        static volatile LONG bad[9];
+        if (InterlockedIncrement(&bad[kind]) <= 3)
+            status("observe: kind %d output %llx of component %llx has ClassInfo %llx, expected %llx; not recorded", kind, data, comp, ci, kObsCi[kind]);
+        return;
+    }
+    uint32_t w[OBS_WORDS]; int n = kObsWords[kind];
+    for (int i = 0; i < n; i++) w[i] = rd<uint32_t>(data, kObsBase[kind] + i * 4);
+    if (g_obsHave[slot][sub] && memcmp(w, g_obsLast[slot][sub], n * 4) == 0) return;
+    memcpy(g_obsLast[slot][sub], w, n * 4); g_obsHave[slot][sub] = 1;
+    Rec* r = claim(); stamp(r, R_OUTPUT, comp); r->f[0] = (float)kind;
+    for (int i = 0; i < n; i++) memcpy(&r->f[1 + i], &w[i], 4);
+    commit();
+}
+static DWORD WINAPI observe_thread(LPVOID) {
+    uint64_t seen[OBS_SLOTS] = {};   // the component each slot's history belongs to
+    for (;;) {
+        Sleep(100);
+        for (int i = 0; i < OBS_SLOTS; i++) {
+            uint64_t comp = (uint64_t)g_obs[i].comp; if (!comp) continue;
+            if (seen[i] != comp) { seen[i] = comp; memset(g_obsHave[i], 0, sizeof g_obsHave[i]); }
+            int kind = g_obs[i].kind; uint64_t h = comp + kObsOff[kind];
+            if (rd<uint64_t>(h, 0) != kObsVt[kind]) { InterlockedExchange64(&g_obs[i].comp, 0); seen[i] = 0; continue; }
+            uint64_t data = rd<uint64_t>(h, 0x18);
+            if (kind < 4) {
+                obs_sample(i, 0, comp, kind, data);
+                if (kind == 2 && data && rd<uint64_t>(data, 8) == kObsCi[2]) obs_sample(i, 1, comp, 8, rd<uint64_t>(data, 0x18));
+                continue;
+            }
+            if (!data) continue;
+            obs_sample(i, 3, comp, 7, data);
+            if (rd<uint64_t>(data, 8) != kObsCi[7]) continue;   // its sub-output pointers only mean something on the right type
+            obs_sample(i, 0, comp, 4, rd<uint64_t>(data, 0x20));
+            obs_sample(i, 1, comp, 5, rd<uint64_t>(data, 0x28));
+            obs_sample(i, 2, comp, 6, rd<uint64_t>(data, 0x30));
+        }
+    }
+    return 0;
+}
+typedef uint64_t(__fastcall* ctor3_t)(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4);
+static ctor3_t o_cmovctor, o_chealthctor, o_cweaponctor, o_cpowerctor;
+static uint64_t __fastcall h_cmovctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cmovctor(self, a2, a3, a4); if (g_observe) obs_register(self, 1); return r; }
+static uint64_t __fastcall h_chealthctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_chealthctor(self, a2, a3, a4); if (g_observe) obs_register(self, 2); return r; }
+static uint64_t __fastcall h_cpowerctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cpowerctor(self, a2, a3, a4); if (g_observe) obs_register(self, 3); return r; }
+static uint64_t __fastcall h_cweaponctor(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t r = o_cweaponctor(self, a2, a3, a4); if (g_observe) obs_register(self, 4); return r; }
+
 
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
@@ -1366,7 +1528,10 @@ static void __fastcall h_cinit(uint64_t client, char sp, char localhost, char co
         status("mode: host client kept on the local flow (game type 1 Hosted -> 2, localhost %d -> 1, hosted %d -> 0)", (int)localhost, (int)hosted);
         sp = 1; localhost = 1; hosted = 0;
     }
-    if (g_listen && !g_dedicated && !menu && sp) {
+    char initMode[48] = "";
+    if (g_listen && !g_dedicated && !menu && sp && !pvp_match(client + 0x408, initMode, sizeof initMode))
+        status("listen: host client left single-player for a '%s' match", initMode);
+    else if (g_listen && !g_dedicated && !menu && sp) {
         sp = 0;
         status("listen: host client init made networked (sp 1 -> 0, localhost %d)", (int)localhost);
     }
@@ -1412,6 +1577,13 @@ static void apply_match_mode(uint64_t ls, const char* where) {
     char nm[160], g0[48], s0[48], g1[48], s1[48];
     safe_copy(rd<uint64_t>(ls, 8), nm, sizeof nm);
     safe_copy(go(ls, "GameMode"), g0, sizeof g0); safe_copy(go(ls, "SquadronComposition"), s0, sizeof s0);
+    // Only matches that are already a PvP / vs-AI mode (the solo custom match starts as Frontline_Bots): Practice,
+    // Missions and the Tutorial run on single-player levels that can't be Fleet Battles, and stay as they are.
+    char pm[48];
+    if (!pvp_match(ls, pm, sizeof pm)) {
+        status("mode: %s '%s': GameMode '%s' left as it is (match_mode applies to PvP and vs-AI matches)", where, nm, g0);
+        return;
+    }
     so(ls, "GameMode", gm); so(ls, "SquadronComposition", sc);
     safe_copy(go(ls, "GameMode"), g1, sizeof g1); safe_copy(go(ls, "SquadronComposition"), s1, sizeof s1);
     status("mode: %s '%s': GameMode/SquadronComposition %s/%s -> %s/%s", where, nm, g0, s0, g1, s1);
@@ -1866,6 +2038,18 @@ static Site g_sites[] = {
     {"bundle-queue 0x14021b2b0", 0x14021b2b0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0x50,0xff,0xff,0xff},
      (void*)h_bqueue, (void**)&o_bqueue},
+    {"client-movement-ctor 0x14169cf00", 0x14169cf00, 15,
+     {0x48,0x8b,0xc4,0x48,0x89,0x48,0x08,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x70},
+     (void*)h_cmovctor, (void**)&o_cmovctor},
+    {"client-health-ctor 0x141680fb0", 0x141680fb0, 19,
+     {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xa0,0x00,0x00,0x00},
+     (void*)h_chealthctor, (void**)&o_chealthctor},
+    {"client-weapon-ctor 0x14172a5e0", 0x14172a5e0, 14,
+     {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55,0x56,0x57},
+     (void*)h_cweaponctor, (void**)&o_cweaponctor},
+    {"client-power-ctor 0x1415fa310", 0x1415fa310, 21,
+     {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x48,0x83,0xec,0x30,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff},
+     (void*)h_cpowerctor, (void**)&o_cpowerctor},
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
@@ -2089,6 +2273,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         if (g_sockLog) { install_socket_passthrough(); HANDLE t = CreateThread(nullptr, 0, sock_summary, nullptr, 0, nullptr); if (t) CloseHandle(t); }
 #endif
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
+        if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif
