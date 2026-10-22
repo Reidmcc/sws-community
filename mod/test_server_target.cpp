@@ -114,6 +114,7 @@ int main() {
     // 0x1417db400 (the return address the DLL's grid settings key on), then add rsp, 0x28 and ret to the test.
     if (map(0x140570000, 0x10000) != (void*)0x140570000 || map(0x1417d0000, 0x10000) != (void*)0x1417d0000) { printf("FAIL  could not map the material-lookup regions\n"); return 1; }
     const uint8_t matlookup[] = {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02,
+                                 0x48,0x8b,0x43,0x08,   // mov rax, [rbx+8]: like the real one, it reads the grid it is given
                                  0x48,0xb8, 0,0,0,0,0,0,0,0, 0x48,0x83,0xc4,0x20, 0x5b, 0xc3};
     put(0x14057dd20, matlookup, sizeof matlookup);
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
@@ -299,18 +300,21 @@ int main() {
     *(uint16_t*)(0x1449f9290 + 0x48) = 900; *(uint16_t*)(0x1449f9290 + 0x4a) = 900;
     uint8_t* stockCell = fake_alloc(0x40); *(uint64_t*)(stockCell + 8) = (uint64_t)fake_class(900);
     *(float*)(stockCell + 0x20) = 1.0f; *(float*)(stockCell + 0x24) = 1.0f; *(float*)(stockCell + 0x28) = 2.0f;
-    { DWORD old; VirtualProtect((void*)(0x14057dd20 + 17), 8, PAGE_EXECUTE_READWRITE, &old);
-      *(uint64_t*)(0x14057dd20 + 17) = (uint64_t)stockCell; FlushInstructionCache(GetCurrentProcess(), (void*)0x14057dd20, 32); }
+    { DWORD old; VirtualProtect((void*)(0x14057dd20 + 21), 8, PAGE_EXECUTE_READWRITE, &old);
+      *(uint64_t*)(0x14057dd20 + 21) = (uint64_t)stockCell; FlushInstructionCache(GetCurrentProcess(), (void*)0x14057dd20, 40); }
+    // the level's grid: a real allocation, freed below as a level change frees it
+    uint8_t* gridBuf = (uint8_t*)VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    const uint64_t grid = (uint64_t)gridBuf;
     const uint32_t laserMat = 0x00300480, ionMat = 0x00a00780, capitalMat = 0x00b00980, defaultMat = 0x00000080, shieldMat = 0x00600580;
-    ((matl_t)0x14057dd20)(0x1000, &laserMat, &capitalMat);
+    ((matl_t)0x14057dd20)(grid, &laserMat, &capitalMat);
     alignas(16) static uint8_t gs[0x200];
     for (int i = 0; i < 150; i++) { ((void(__fastcall*)(void*, uint64_t, uint64_t, uint64_t))0x1401bfe60)(gs, 0, 0, 0); Sleep(30); }
     check(true, "ticked 4.5 s (see status log for the 3b spawn lines)");
     {   // StandIn: materialgrid.laserdamage.capitalhull=0.05. Through the hull site, a laser on the capital material and on
         // the default material (a corvette's hull) get the private copy; ion, a shield target, and any other caller don't
-        uint64_t viaCap = ((matl_t)0x1417db3f7)(0x1000, &laserMat, &capitalMat), viaDef = ((matl_t)0x1417db3f7)(0x1000, &laserMat, &defaultMat);
-        uint64_t ion = ((matl_t)0x1417db3f7)(0x1000, &ionMat, &capitalMat), shield = ((matl_t)0x1417db3f7)(0x1000, &laserMat, &shieldMat);
-        uint64_t other = ((matl_t)0x14057dd20)(0x1000, &laserMat, &capitalMat);
+        uint64_t viaCap = ((matl_t)0x1417db3f7)(grid, &laserMat, &capitalMat), viaDef = ((matl_t)0x1417db3f7)(grid, &laserMat, &defaultMat);
+        uint64_t ion = ((matl_t)0x1417db3f7)(grid, &ionMat, &capitalMat), shield = ((matl_t)0x1417db3f7)(grid, &laserMat, &shieldMat);
+        uint64_t other = ((matl_t)0x14057dd20)(grid, &laserMat, &capitalMat);
         printf("      (grid: hull site laser->capital %p (x%g), ->default %p, ion %p, ->shield %p, other caller %p; stock %p)\n",
                (void*)viaCap, viaCap ? *(float*)(viaCap + 0x20) : -1.0f, (void*)viaDef, (void*)ion, (void*)shield, (void*)other, stockCell);
         check(viaCap && viaCap != (uint64_t)stockCell && *(float*)(viaCap + 0x20) == 0.05f && *(float*)(viaCap + 0x28) == 2.0f &&
@@ -318,6 +322,11 @@ int main() {
               "grid: a laser hit on a capital hull (capital or corvette material) gets the 0.05 copy of the stock cell");
         check(ion == (uint64_t)stockCell && shield == (uint64_t)stockCell && other == (uint64_t)stockCell && *(float*)(stockCell + 0x20) == 1.0f,
               "grid: ion, a shield target and other callers keep the game's own cell, which is unchanged");
+        // the match ends and its grid is freed (2026-10-22: the DLL kept looking up the first grid every 2 s and crashed
+        // the game on the way back to the menu). Keep ticking: nothing may touch the freed grid.
+        VirtualFree(gridBuf, 0, MEM_RELEASE);
+        for (int i = 0; i < 90; i++) { ((void(__fastcall*)(void*, uint64_t, uint64_t, uint64_t))0x1401bfe60)(gs, 0, 0, 0); Sleep(30); }
+        check(true, "grid: after the grid is freed, 2.7 s of ticks and scans run without touching it");
     }
     // value engine (StandIn profile: afterburnermaxspeed=250, drifttransitiontime=5, maxspeeds[8]=150, shield 900)
     printf("      (player: boost %g list %g, drift %g, maxspeeds[8] %g, plain %g; bot: boost %g drift %g; creep: boost %g drift %g; shield %g)\n",
@@ -435,7 +444,8 @@ int main() {
         {   // material grid lookup: hooked, and a call goes through to the original (which returns the stock cell here);
             // with material_log=1 in server_3b.ini the log gets one "material:" line for this pair, however often it's asked
             uint32_t laser = 0x00300480, capital = 0x00b00980;
-            uint64_t r1 = ((matl_t)0x14057dd20)(0, &laser, &capital), r2 = ((matl_t)0x14057dd20)(0, &laser, &capital);
+            uint8_t* grid2 = (uint8_t*)VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            uint64_t r1 = ((matl_t)0x14057dd20)((uint64_t)grid2, &laser, &capital), r2 = ((matl_t)0x14057dd20)((uint64_t)grid2, &laser, &capital);
             check(*(uint8_t*)0x14057dd20 == 0xFF && r1 == (uint64_t)stockCell && r2 == (uint64_t)stockCell, "material lookup hooked and passes calls through");
         }
         // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):

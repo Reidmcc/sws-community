@@ -1668,23 +1668,69 @@ static const GridSite kGridSites[] = {
 };
 static uint8_t g_gridCopy[GW_N][GP_N][64];
 static volatile uint64_t g_gridSub[GW_N][GP_N];   // the private copy in use, 0 = the game's own cell
-static volatile uint64_t g_matGrid;              // the lookup's first argument, seen from any call
+// Everything that touches the grid happens inside the hook, on the game's own call, with the grid it just passed in: the
+// grid belongs to the level and is freed with it (2026-10-22: a scan that kept the first match's grid and looked it up
+// every 2 s crashed the game on the way back to the front end). The main thread only publishes the wanted values and
+// records the stock ones the hook saw.
+static float g_gridWant[GW_N][GP_N];              // the profile's multiplier, or -1 = leave the game's cell
+static volatile LONG g_gridReady;                 // g_gridWant is filled in (main thread, after the targets are built)
+static float g_gridStock[GW_N][GP_N];             // the stock multiplier the hook read
+static volatile LONG g_gridStockKnown;            // 1 = g_gridStock filled; -1 = the cells were not damage relations
+static SRWLOCK g_gridLock = SRWLOCK_INIT;
 static bool grid_target_ok(int part, uint32_t pb) {
     uint32_t prop = (pb & 0x80) ? pb >> 20 : 0;
     if (part == GP_SHIELDS) return prop == 6;
     if (part == GP_TURRETS) return prop == 11 || prop == 0;
     return prop == 11 || prop == 0 || prop == 18;   // hull: capital, default (corvettes), capital part (SD/MC75)
 }
+// the stock capital cell for (weapon, part) in this grid, if it is a damage relation (MaterialRelationDamageData)
+static uint64_t grid_stock_cell(uint64_t grid, int w, int p) {
+    uint32_t a = (kGridWeaponProp[w] << 20) | 0x80, b = kGridStockTarget[p];
+    uint64_t cell = o_matlookup(grid, &a, &b);
+    uint64_t ci = cell ? rd<uint64_t>(cell, 8) : 0;
+    uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0, lo = rd<uint16_t>(0x1449f9290, 0x48), hi = rd<uint16_t>(0x1449f9290, 0x4a);
+    return ci && (uint16_t)(id - lo) <= (uint16_t)(hi - lo) ? cell : 0;
+}
 static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const uint32_t* b) {
-    if (!g_matGrid && grid) g_matGrid = grid;
     uint64_t r = o_matlookup(grid, a, b);
+    if (grid && !g_gridStockKnown) {   // first lookup with a grid: read the stock multipliers once
+        AcquireSRWLockExclusive(&g_gridLock);
+        if (!g_gridStockKnown) {
+            LONG ok = 1;
+            for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+                uint64_t cell = grid_stock_cell(grid, w, p);
+                if (cell) g_gridStock[w][p] = rd<float>(cell, 0x20); else ok = -1;
+            }
+            InterlockedExchange(&g_gridStockKnown, ok);
+        }
+        ReleaseSRWLockExclusive(&g_gridLock);
+    }
     uint64_t ret = (uint64_t)_ReturnAddress();
     for (const GridSite& s : kGridSites) {
         if (s.ret != ret) continue;
+        if (!g_gridReady || g_gridStockKnown != 1) break;
         uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
         uint32_t aprop = (pa & 0x80) ? pa >> 20 : 0;
-        for (int w = 0; w < GW_N; w++)
-            if (aprop == kGridWeaponProp[w] && g_gridSub[w][s.part] && grid_target_ok(s.part, pb)) r = g_gridSub[w][s.part];
+        for (int w = 0; w < GW_N; w++) {
+            if (aprop != kGridWeaponProp[w] || g_gridWant[w][s.part] < 0 || !grid_target_ok(s.part, pb)) continue;
+            if (!g_gridSub[w][s.part]) {   // first such hit: copy this grid's stock capital cell (a private 56 bytes)
+                AcquireSRWLockExclusive(&g_gridLock);
+                if (!g_gridSub[w][s.part]) {
+                    uint64_t cell = grid_stock_cell(grid, w, s.part);
+                    if (cell) {
+                        uint8_t* c = g_gridCopy[w][s.part];
+                        memcpy(c, (const void*)cell, 56);
+                        float stock = rd<float>(cell, 0x20), now = (float)(stock * g_gridWant[w][s.part]);
+                        *(float*)(c + 0x20) = now;
+                        InterlockedExchange64((volatile LONG64*)&g_gridSub[w][s.part], (LONG64)(uint64_t)c);
+                        status("values: materialgrid.%s.%s %.9g -> %.9g (a private copy of the grid cell, for capital-ship damage only)",
+                               kGridWeapon[w], kGridPart[s.part], (double)stock, (double)now);
+                    }
+                }
+                ReleaseSRWLockExclusive(&g_gridLock);
+            }
+            if (g_gridSub[w][s.part]) r = g_gridSub[w][s.part];
+        }
         break;
     }
     if (!g_materialLog) return r;
@@ -1703,44 +1749,33 @@ static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const u
     return r;
 }
 
-// The grid settings: once the lookup has been seen, record the stock multipliers as the pseudo-config "materialgrid"
-// (defaults.ini, for the app and the limits) and build the private copies for the profile's values (main thread).
+// The grid settings, main thread: publish the profile's values for the hook (once the targets exist), and record the
+// stock multipliers the hook read as the pseudo-config "materialgrid" (defaults.ini, for the app and the limits).
+// It never looks anything up itself.
 static bool g_gridRecorded;
 static void grid_apply() {
-    uint64_t grid = g_matGrid; if (!grid || !o_matlookup) return;
-    uint16_t lo = rd<uint16_t>(0x1449f9290, 0x48), hi = rd<uint16_t>(0x1449f9290, 0x4a);   // MaterialRelationDamageData
+    if (!g_gridReady && g_targetCount >= 0) {
+        for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+            g_gridWant[w][p] = -1;
+            char want[64]; sprintf_s(want, "%s.%s", kGridWeapon[w], kGridPart[p]);
+            for (int t = 0; t < g_targetCount; t++)
+                if (!strcmp(g_targets[t].asset, "materialgrid") && !strcmp(g_targets[t].key, want)) {
+                    g_gridWant[w][p] = (float)g_targets[t].value; g_targets[t].hit = true; }
+        }
+        InterlockedExchange(&g_gridReady, 1);
+    }
+    if (g_gridRecorded || !g_gridStockKnown) return;
+    g_gridRecorded = true;
+    if (g_gridStockKnown < 0) { status("materialgrid: the grid's laser/ion capital cells are not damage relations; grid settings off"); return; }
     for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
-        uint32_t a = (kGridWeaponProp[w] << 20) | 0x80, b = kGridStockTarget[p];
-        uint64_t cell = o_matlookup(grid, &a, &b);
-        uint64_t ci = cell ? rd<uint64_t>(cell, 8) : 0;
-        uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0;
-        if (!cell || !ci || (uint16_t)(id - lo) > (uint16_t)(hi - lo)) {
-            static bool told;
-            if (!told) { told = true; status("materialgrid: the %s/%s cell is not a damage relation (%p); grid settings off", kGridWeapon[w], kGridPart[p], (void*)cell); }
-            return;
-        }
-        char want[64]; sprintf_s(want, "%s.%s", kGridWeapon[w], kGridPart[p]);
-        char key[96]; sprintf_s(key, "materialgrid.%s", want);
-        float stock = rd<float>(cell, 0x20);
-        if (!g_gridRecorded) { DefaultSlot* d = default_slot(key, true); if (d) d->value = stock; }
-        if (g_gridSub[w][p]) continue;
-        for (int t = 0; t < g_targetCount; t++) {
-            ValueTarget& v = g_targets[t];
-            if (strcmp(v.asset, "materialgrid") || strcmp(v.key, want)) continue;
-            memcpy(g_gridCopy[w][p], (const void*)cell, 56);
-            *(float*)(g_gridCopy[w][p] + 0x20) = (float)(stock * v.value);
-            g_gridSub[w][p] = (uint64_t)g_gridCopy[w][p];
-            v.hit = true;
-            status("values: %s %.9g -> %.9g (a private copy of the grid cell, for capital-ship damage only)", key, (double)stock, (double)(float)(stock * v.value));
-        }
+        char key[96]; sprintf_s(key, "materialgrid.%s.%s", kGridWeapon[w], kGridPart[p]);
+        DefaultSlot* d = default_slot(key, true); if (d) d->value = g_gridStock[w][p];
     }
-    if (!g_gridRecorded) {
-        g_gridRecorded = true;
-        if (!asset_seen("materialgrid") && g_seenCount < 4096) {
-            if (g_seenNames) strcpy_s(g_seenNames[g_seenCount], "MaterialGrid");
-            strcpy_s(g_seenAssets[g_seenCount++], "materialgrid"); g_defaultsDirty = true;
-        }
+    if (!asset_seen("materialgrid") && g_seenCount < 4096) {
+        if (g_seenNames) strcpy_s(g_seenNames[g_seenCount], "MaterialGrid");
+        strcpy_s(g_seenAssets[g_seenCount++], "materialgrid");
     }
+    g_defaultsDirty = true;
 }
 
 typedef uint64_t(__fastcall* lvlstep2_t)(uint64_t mgr, uint64_t server, uint64_t state);
