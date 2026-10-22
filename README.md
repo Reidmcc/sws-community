@@ -4,8 +4,7 @@ A way to keep playing STAR WARS: Squadrons together without EA's servers. One pl
 others join it directly. The game's own server and client code run the match; the mod replaces only how their network
 traffic travels, plus a few switches the community wanted.
 
-Status: **early and experimental.** On 2026-10-20 two players finished a Fleet Battles match on a self-hosted server
-over Tailscale. Co-op vs AI also runs. Expect rough edges.
+Status: **early and experimental.**. Expect rough edges.
 
 ## Download
 
