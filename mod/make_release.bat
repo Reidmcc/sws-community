@@ -22,6 +22,7 @@ mkdir "%OUT%\profiles" || exit /b 1
 copy /y "%HERE%build\sws_launch.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\sws_server.dll" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\sws_settings.exe" "%OUT%\" >nul || exit /b 1
+copy /y "%HERE%build\sws_check.exe" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\unlock_ids.txt" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%build\limits.ini" "%OUT%\" >nul || exit /b 1
 copy /y "%HERE%release\server.ini" "%OUT%\" >nul || exit /b 1

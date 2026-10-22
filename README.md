@@ -141,7 +141,10 @@ Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
 - `make_release.bat <version>` builds and assembles a player release in `dist/` (the folder and its zip), from the
   templates in `mod/release/`. It needs `build/unlock_ids.txt`, generated from the game's data.
 
-- `build_server.bat` builds `sws_server.dll`, `sws_launch.exe`, the server test DLL and the stand-in test target.
+- `build_server.bat` builds `sws_server.dll`, `sws_launch.exe`, `sws_check.exe`, the server test DLL and the stand-in
+  test target. `sws_check.exe` (issue #17) checks whether a copy of the game is the build the mod targets: it reads the
+  exe only, compares its SHA-256 and the 16 bytes at each game address the mod uses (`mod/check_sites.h`, from
+  `tools/gen_check_sites.py`, stored as hashes), and writes `sws_check_report.txt` beside itself.
 - `build_app.bat` builds the settings app, `sws_settings.exe` (C#, the .NET Framework that ships with Windows), and
   `sws_settings_test.exe`, which prints the fingerprint the app computes for a profile, to check against the DLL's log.
   `sws_settings.exe --shot <png> [values]` renders the window to an image and exits.

@@ -9,7 +9,9 @@ This is early and experimental. Two-player Fleet Battles and co-op vs AI have be
 
 Before you start (please read)
 ------------------------------
-- You need your own copy of the game, installed through Steam.
+- You need your own copy of the game, installed through Steam. Have it from the EA app or Epic instead? Run
+  sws_check.exe (it only reads the game's exe) and attach its report to issue #17 on the project page: that tells us
+  whether your copy is the same build, the first step to supporting it.
 - The game runs without EasyAntiCheat (started directly, not through EA's launcher), so EA's official online modes are
   not available in that session. The launcher refuses to start if EasyAntiCheat is running.
 - The game still signs in to EA's account services. Loading a mod into it carries some risk to your EA account. We think
