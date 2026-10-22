@@ -124,6 +124,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // StarshipWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // StarshipWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // StarshipWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // StarshipWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // StarshipWeaponFiringData
     {"enginepowerdata", 0x60, 6, 12},   // StarshipPowerManagement
     {"weaponpowerdata", 0x68, 6, 12},   // StarshipPowerManagement
     {"shieldpowerdata", 0x70, 6, 12},   // StarshipPowerManagement
@@ -153,6 +155,9 @@ static const VeField kVeFields[] = {
     {"losetargetbreakdistance", 0xe0, 3, -1},   // IncomMissileConfig
     {"evadescorenearmissmissileevaded", 0xe8, 3, -1},   // IncomMissileConfig
     {"losetargetgracetime", 0xf0, 3, -1},   // IncomMissileConfig
+    {"passthroughcapitalshipshields", 0xf8, 11, -1},   // IncomMissileConfig
+    {"canbeevaded", 0xf9, 11, -1},   // IncomMissileConfig
+    {"losetargetafternearmiss", 0xfa, 11, -1},   // IncomMissileConfig
     {"innerblastradius", 0x60, 3, -1},   // IncomExplosionData
     {"blastdamage", 0x68, 3, -1},   // IncomExplosionData
     {"blastradius", 0x70, 3, -1},   // IncomExplosionData
@@ -162,6 +167,7 @@ static const VeField kVeFields[] = {
     {"shockwaveimpulse", 0x90, 3, -1},   // IncomExplosionData
     {"shockwavetime", 0x98, 3, -1},   // IncomExplosionData
     {"maxocclusionraycastradius", 0xa0, 3, -1},   // IncomExplosionData
+    {"allowdamagetoowner", 0xa8, 12, -1},   // IncomExplosionData
     {"attributemodifier", 0x60, 10, 16},   // StarshipEngineCustomConfig
     {"value", 0x30, 0, -1},   // IncomAttributeModifierFloat
     {"attributemodifier", 0x60, 10, 16},   // StarshipHullCustomConfig
@@ -181,6 +187,7 @@ static const VeField kVeFields[] = {
     {"allweakpointsexposedmaxspawndelay", 0x88, 3, -1},   // CapitalShipWeakPointsSettings
     {"healthratiothresholdtospawnweakpointattribute", 0x90, 3, -1},   // CapitalShipWeakPointsSettings
     {"damagedealtondestructionattribute", 0x98, 3, -1},   // CapitalShipWeakPointsSettings
+    {"disablefiringattribute", 0x60, 12, -1},   // CapitalShipWeaponSubsystemSettings
     {"damagemultiplierattribute", 0x68, 3, -1},   // CapitalShipWeaponSubsystemSettings
     {"maxaccuracyanglemultiplierattribute", 0x70, 3, -1},   // CapitalShipWeaponSubsystemSettings
     {"rateoffiremultiplierattribute", 0x78, 3, -1},   // CapitalShipWeaponSubsystemSettings
@@ -201,15 +208,19 @@ static const VeField kVeFields[] = {
     {"maxhealth", 0x60, 3, -1},   // ShieldHealthSettings
     {"shieldregenrate", 0x68, 3, -1},   // ShieldHealthSettings
     {"shieldregendelay", 0x70, 3, -1},   // ShieldHealthSettings
+    {"allowregenwhendestroyed", 0x78, 12, -1},   // ShieldHealthSettings
     {"destroyedshieldregendelay", 0x80, 3, -1},   // ShieldHealthSettings
     {"destroyedshieldregenbonushealth", 0x88, 3, -1},   // ShieldHealthSettings
     {"resupplyrangeattribute", 0x60, 3, -1},   // CapitalShipResupplySubsystemSettings
     {"resupplyangleattribute", 0x68, 3, -1},   // CapitalShipResupplySubsystemSettings
     {"resupplydelayattribute", 0x70, 3, -1},   // CapitalShipResupplySubsystemSettings
     {"resupplydelayondamagedattribute", 0x78, 3, -1},   // CapitalShipResupplySubsystemSettings
+    {"hassubsystemattribute", 0x60, 12, -1},   // TurretHealthSettings
     {"maxsubsytemhealthattribute", 0x68, 3, -1},   // TurretHealthSettings
     {"subsystemregenrateattribute", 0x70, 3, -1},   // TurretHealthSettings
     {"maxhealthattribute", 0x78, 3, -1},   // TurretHealthSettings
+    {"destroyoncollisionwithcapitalship", 0x80, 11, -1},   // TurretHealthSettings
+    {"hasaimingconstraintsattribute", 0x60, 12, -1},   // TurretAimingSettings
     {"minaimingangleattribute", 0x68, 3, -1},   // TurretAimingSettings
     {"maxaimingangleattribute", 0x70, 3, -1},   // TurretAimingSettings
     {"angularvelocityattribute", 0x78, 3, -1},   // TurretAimingSettings
@@ -218,6 +229,11 @@ static const VeField kVeFields[] = {
     {"targetingrangemin", 0x54, 0, -1},   // TurretTargetComputerSettings
     {"maxaccuracyangle", 0x58, 0, -1},   // TurretTargetComputerSettings
     {"angletotargetaimpointtolerance", 0x5c, 0, -1},   // TurretTargetComputerSettings
+    {"checktargetvisibility", 0x64, 11, -1},   // TurretTargetComputerSettings
+    {"checkweaponrange", 0x65, 11, -1},   // TurretTargetComputerSettings
+    {"useturretbalance", 0x67, 11, -1},   // TurretTargetComputerSettings
+    {"useturrettargetcoordination", 0x68, 11, -1},   // TurretTargetComputerSettings
+    {"useturretmissiletokens", 0x69, 11, -1},   // TurretTargetComputerSettings
     {"mindelaybetweenbursts", 0x20, 0, -1},   // TurretFirePatternSettings
     {"patternburstlist", 0x28, 9, 32},   // TurretFirePatternSettings
     {"maxdelaybetweenbursts", 0x30, 0, -1},   // TurretFirePatternSettings
@@ -231,6 +247,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // ActivationWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // ActivationWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // ActivationWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // ActivationWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // ActivationWeaponFiringData
     {"durationattribute", 0x80, 3, -1},   // ActivationWeaponFiringData
     {"prefiredelayattribute", 0x18, 3, -1},   // AutoLockWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // AutoLockWeaponFiringData
@@ -238,6 +256,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // AutoLockWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // AutoLockWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // AutoLockWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // AutoLockWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // AutoLockWeaponFiringData
     {"autolockweaponfiringradiusattribute", 0x80, 3, -1},   // AutoLockWeaponFiringData
     {"autolockweaponconeangleattribute", 0x88, 3, -1},   // AutoLockWeaponFiringData
     {"maxnumberofautolockspertargetattribute", 0x90, 4, -1},   // AutoLockWeaponFiringData
@@ -249,6 +269,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // LaserChargeWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // LaserChargeWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // LaserChargeWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // LaserChargeWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // LaserChargeWeaponFiringData
     {"initiallaserenergyattribute", 0x80, 3, -1},   // LaserChargeWeaponFiringData
     {"maxlaserenergypoolattribute", 0x88, 3, -1},   // LaserChargeWeaponFiringData
     {"superchargedlaserenergypoolattribute", 0x90, 3, -1},   // LaserChargeWeaponFiringData
@@ -273,6 +295,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // LaserRegenWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // LaserRegenWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // LaserRegenWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // LaserRegenWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // LaserRegenWeaponFiringData
     {"initiallaserenergyattribute", 0x80, 3, -1},   // LaserRegenWeaponFiringData
     {"maxlaserenergypoolattribute", 0x88, 3, -1},   // LaserRegenWeaponFiringData
     {"superchargedlaserenergypoolattribute", 0x90, 3, -1},   // LaserRegenWeaponFiringData
@@ -289,6 +313,8 @@ static const VeField kVeFields[] = {
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // MultiTargetAutoLockWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // MultiTargetAutoLockWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // MultiTargetAutoLockWeaponFiringData
     {"autolockweaponfiringradiusattribute", 0x80, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"autolockweaponconeangleattribute", 0x88, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"maxnumberofautolockspertargetattribute", 0x90, 4, -1},   // MultiTargetAutoLockWeaponFiringData
@@ -297,12 +323,16 @@ static const VeField kVeFields[] = {
     {"maximumnumberoftargetstoacquireattribute", 0xd0, 4, -1},   // MultiTargetAutoLockWeaponFiringData
     {"delaybetweentagattribute", 0xd8, 3, -1},   // MultiTargetAutoLockWeaponFiringData
     {"durationattribute", 0xf8, 3, -1},   // MultiTargetAutoLockWeaponFiringData
+    {"autoacquiretargets", 0x104, 11, -1},   // MultiTargetAutoLockWeaponFiringData
+    {"isaffectedbycountermeasures", 0x105, 11, -1},   // MultiTargetAutoLockWeaponFiringData
     {"prefiredelayattribute", 0x18, 3, -1},   // TargetLockWeaponFiringData
     {"cooldownattribute", 0x30, 3, -1},   // TargetLockWeaponFiringData
     {"burstfirenumshotsattribute", 0x38, 4, -1},   // TargetLockWeaponFiringData
     {"timebetweenburstshotsattribute", 0x40, 3, -1},   // TargetLockWeaponFiringData
     {"timebetweenautomaticshotsattribute", 0x48, 3, -1},   // TargetLockWeaponFiringData
     {"maxammoattribute", 0x50, 4, -1},   // TargetLockWeaponFiringData
+    {"canresupply", 0x7a, 11, -1},   // TargetLockWeaponFiringData
+    {"hasinfiniteammo", 0x7c, 11, -1},   // TargetLockWeaponFiringData
     {"getlockconenearangleattribute", 0x80, 3, -1},   // TargetLockWeaponFiringData
     {"getlockconefarangleattribute", 0x88, 3, -1},   // TargetLockWeaponFiringData
     {"keeplockconenearangleattribute", 0x90, 3, -1},   // TargetLockWeaponFiringData
@@ -315,6 +345,12 @@ static const VeField kVeFields[] = {
     {"basetargetlockincreaserateattribute", 0xc8, 3, -1},   // TargetLockWeaponFiringData
     {"basetargetlockdecayrateattribute", 0xd0, 3, -1},   // TargetLockWeaponFiringData
     {"completedlockdecaydelayattribute", 0xd8, 3, -1},   // TargetLockWeaponFiringData
+    {"startlockautomatically", 0xe8, 11, -1},   // TargetLockWeaponFiringData
+    {"candumbfire", 0xe9, 11, -1},   // TargetLockWeaponFiringData
+    {"isaffectedbycountermeasures", 0xea, 11, -1},   // TargetLockWeaponFiringData
+    {"canlockonenemies", 0xeb, 11, -1},   // TargetLockWeaponFiringData
+    {"canlockonfriendlies", 0xec, 11, -1},   // TargetLockWeaponFiringData
+    {"canlockonneutrals", 0xed, 11, -1},   // TargetLockWeaponFiringData
 };
 static const VeType kVeTypes[] = {
     {"StarshipMovementConfig", 0x144ab56a0ull, 848, 0, 65, -1},   // 0
@@ -327,37 +363,37 @@ static const VeType kVeTypes[] = {
     {"StarshipHealthDamageData", 0x144a8ca00ull, 176, 94, 10, -1},   // 7
     {"IncomBulletConfig", 0x144adafa0ull, 160, 104, 8, -1},   // 8
     {"StarshipWeaponConfig", 0x1449fc370ull, 144, 112, 1, -1},   // 9
-    {"StarshipWeaponFiringData", 0x144a029c0ull, 128, 113, 6, 10},   // 10
-    {"StarshipPowerManagement", 0x144ab5620ull, 192, 119, 7, -1},   // 11
-    {"StarshipPowerData", 0x144ade4a0ull, 48, 126, 3, 12},   // 12
-    {"IncomMissileConfig", 0x144adaf20ull, 256, 129, 19, -1},   // 13
-    {"IncomExplosionData", 0x144adb020ull, 176, 148, 9, -1},   // 14
-    {"StarshipEngineCustomConfig", 0x144a02e40ull, 120, 157, 1, -1},   // 15
-    {"IncomAttributeModifierFloat", 0x144a01760ull, 56, 158, 1, -1},   // 16
-    {"StarshipHullCustomConfig", 0x144a02dc0ull, 120, 159, 1, -1},   // 17
-    {"StarshipShieldCustomConfig", 0x144a02d40ull, 120, 160, 1, -1},   // 18
-    {"CapitalShipHealthSettings", 0x144a50cc0ull, 104, 161, 1, -1},   // 19
-    {"DamageSectionSettings", 0x144a4fcc0ull, 144, 162, 5, -1},   // 20
-    {"CapitalShipSubsystemSettings", 0x144a4fdc0ull, 112, 167, 2, -1},   // 21
-    {"CapitalShipWeakPointsSettings", 0x144ab5120ull, 160, 169, 7, -1},   // 22
-    {"CapitalShipWeaponSubsystemSettings", 0x144a4fd40ull, 152, 176, 6, -1},   // 23
-    {"CapitalShipEngineWashDamageAreaSettings", 0x144ab4da0ull, 136, 182, 4, -1},   // 24
-    {"DamageOverTimeSettings", 0x144a37300ull, 168, 186, 7, -1},   // 25
-    {"ShieldHealthSettings", 0x144a4fc40ull, 144, 193, 5, -1},   // 26
-    {"CapitalShipResupplySubsystemSettings", 0x144a8cd00ull, 144, 198, 4, -1},   // 27
-    {"TurretHealthSettings", 0x144a4d7c0ull, 136, 202, 3, -1},   // 28
-    {"TurretAimingSettings", 0x144ab3fa0ull, 128, 205, 3, -1},   // 29
-    {"TurretTargetComputerSettings", 0x144a23d40ull, 112, 208, 5, -1},   // 30
-    {"TurretFirePatternSettings", 0x144ad9aa0ull, 56, 213, 3, -1},   // 31
-    {"IncomTurretFirePatternBurst", 0x0ull, 24, 216, 4, -1},   // 32
-    {"ActivationWeaponFiringData", 0x144a38380ull, 152, 220, 7, 10},   // 33
-    {"AutoLockWeaponFiringData", 0x144a38300ull, 208, 227, 11, 10},   // 34
-    {"LaserChargeWeaponFiringData", 0x144a53940ull, 280, 238, 20, 10},   // 35
-    {"LaserRegenPipData", 0x0ull, 24, 258, 3, -1},   // 36
-    {"BarrelIndexToProjectileIndex", 0x0ull, 8, 261, 0, -1},   // 37
-    {"LaserChargePipData", 0x0ull, 4, 261, 1, -1},   // 38
-    {"LaserRegenWeaponFiringData", 0x144a38400ull, 232, 262, 16, 10},   // 39
-    {"MultiTargetAutoLockWeaponFiringData", 0x144a53840ull, 264, 278, 14, 10},   // 40
-    {"TargetLockWeaponFiringData", 0x144a538c0ull, 240, 292, 18, 10},   // 41
+    {"StarshipWeaponFiringData", 0x144a029c0ull, 128, 113, 8, 10},   // 10
+    {"StarshipPowerManagement", 0x144ab5620ull, 192, 121, 7, -1},   // 11
+    {"StarshipPowerData", 0x144ade4a0ull, 48, 128, 3, 12},   // 12
+    {"IncomMissileConfig", 0x144adaf20ull, 256, 131, 22, -1},   // 13
+    {"IncomExplosionData", 0x144adb020ull, 176, 153, 10, -1},   // 14
+    {"StarshipEngineCustomConfig", 0x144a02e40ull, 120, 163, 1, -1},   // 15
+    {"IncomAttributeModifierFloat", 0x144a01760ull, 56, 164, 1, -1},   // 16
+    {"StarshipHullCustomConfig", 0x144a02dc0ull, 120, 165, 1, -1},   // 17
+    {"StarshipShieldCustomConfig", 0x144a02d40ull, 120, 166, 1, -1},   // 18
+    {"CapitalShipHealthSettings", 0x144a50cc0ull, 104, 167, 1, -1},   // 19
+    {"DamageSectionSettings", 0x144a4fcc0ull, 144, 168, 5, -1},   // 20
+    {"CapitalShipSubsystemSettings", 0x144a4fdc0ull, 112, 173, 2, -1},   // 21
+    {"CapitalShipWeakPointsSettings", 0x144ab5120ull, 160, 175, 7, -1},   // 22
+    {"CapitalShipWeaponSubsystemSettings", 0x144a4fd40ull, 152, 182, 7, -1},   // 23
+    {"CapitalShipEngineWashDamageAreaSettings", 0x144ab4da0ull, 136, 189, 4, -1},   // 24
+    {"DamageOverTimeSettings", 0x144a37300ull, 168, 193, 7, -1},   // 25
+    {"ShieldHealthSettings", 0x144a4fc40ull, 144, 200, 6, -1},   // 26
+    {"CapitalShipResupplySubsystemSettings", 0x144a8cd00ull, 144, 206, 4, -1},   // 27
+    {"TurretHealthSettings", 0x144a4d7c0ull, 136, 210, 5, -1},   // 28
+    {"TurretAimingSettings", 0x144ab3fa0ull, 128, 215, 4, -1},   // 29
+    {"TurretTargetComputerSettings", 0x144a23d40ull, 112, 219, 10, -1},   // 30
+    {"TurretFirePatternSettings", 0x144ad9aa0ull, 56, 229, 3, -1},   // 31
+    {"IncomTurretFirePatternBurst", 0x0ull, 24, 232, 4, -1},   // 32
+    {"ActivationWeaponFiringData", 0x144a38380ull, 152, 236, 9, 10},   // 33
+    {"AutoLockWeaponFiringData", 0x144a38300ull, 208, 245, 13, 10},   // 34
+    {"LaserChargeWeaponFiringData", 0x144a53940ull, 280, 258, 22, 10},   // 35
+    {"LaserRegenPipData", 0x0ull, 24, 280, 3, -1},   // 36
+    {"BarrelIndexToProjectileIndex", 0x0ull, 8, 283, 0, -1},   // 37
+    {"LaserChargePipData", 0x0ull, 4, 283, 1, -1},   // 38
+    {"LaserRegenWeaponFiringData", 0x144a38400ull, 232, 284, 18, 10},   // 39
+    {"MultiTargetAutoLockWeaponFiringData", 0x144a53840ull, 264, 302, 18, 10},   // 40
+    {"TargetLockWeaponFiringData", 0x144a538c0ull, 240, 320, 26, 10},   // 41
 };
 static const int kVeRoots[] = { 0, 4, 7, 8, 9, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };

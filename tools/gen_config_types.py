@@ -52,6 +52,21 @@ ATTR = {"IncomAttributeFloat": 3, "IncomAttributeInt": 4, "IncomAttributeVec3": 
 # so each one is chosen (Pseudo, 2026-10-22: passive damage's two switches first).
 BOOL_ALLOW = {
     "DamageOverTimeSettings": {"DamageStarshipTargetsInOrderAttribute", "SplitDamageBetweenStarshipsAttribute"},
+    # Pseudo, 2026-10-22: the missile, lock, explosion, capital-ship and weapon switches, and the turret ones
+    "IncomMissileConfig": {"PassThroughCapitalShipShields", "CanBeEvaded", "LoseTargetAfterNearMiss"},
+    "TargetLockWeaponFiringData": {"CanDumbFire", "IsAffectedByCountermeasures", "CanLockOnEnemies", "CanLockOnFriendlies",
+                                   "CanLockOnNeutrals", "StartLockAutomatically"},
+    "MultiTargetAutoLockWeaponFiringData": {"IsAffectedByCountermeasures", "AutoAcquireTargets"},
+    "IncomExplosionData": {"AllowDamageToOwner"},
+    "ShieldHealthSettings": {"AllowRegenWhenDestroyed"},
+    "CapitalShipWeaponSubsystemSettings": {"DisableFiringAttribute"},
+    "TurretHealthSettings": {"HasSubsystemAttribute", "DestroyOnCollisionWithCapitalShip"},
+    "StarshipWeaponFiringData": {"HasInfiniteAmmo", "CanResupply"},   # declared on the base: every weapon type
+    "TurretTargetComputerSettings": {"CheckTargetVisibility", "CheckWeaponRange", "UseTurretBalance",
+                                     "UseTurretTargetCoordination", "UseTurretMissileTokens"},
+    "TurretAimingSettings": {"HasAimingConstraintsAttribute"},
+    # not: StarshipPowerManagement SupportEmergencyPowerTransfer (Pseudo: it's the core difference between shielded and
+    # unshielded ships); StarshipMovementConfig's roll switches (on only for capital ships; on a fighter they change feel)
 }
 
 
