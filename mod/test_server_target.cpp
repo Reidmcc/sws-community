@@ -107,6 +107,11 @@ int main() {
     const uint8_t lvlstep2[] = {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20,
                                 0xb8,0x01,0x00,0x00,0x00, 0xc3};
     put(0x140cd6420, lvlstep2, sizeof lvlstep2);
+    // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then an epilogue returning 0
+    if (map(0x140570000, 0x10000) != (void*)0x140570000) { printf("FAIL  could not map the material-lookup region\n"); return 1; }
+    const uint8_t matlookup[] = {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02,
+                                 0x31,0xc0, 0x48,0x83,0xc4,0x20, 0x5b, 0xc3};
+    put(0x14057dd20, matlookup, sizeof matlookup);
     // transport capture sites: real prologues, then matching epilogues
     if (map(0x140cb0000, 0x10000) != (void*)0x140cb0000 || map(0x1412e0000, 0x10000) != (void*)0x1412e0000) { printf("FAIL  could not map capture regions\n"); return 1; }
     const uint8_t cconnect[] = {0x4c,0x8b,0xdc,0x57,0x48,0x81,0xec,0x90,0x00,0x00,0x00,0x49,0xc7,0x43,0x88,0xfe,0xff,0xff,0xff,
@@ -392,6 +397,13 @@ int main() {
         uint32_t got = ((tinit_fn)0x140d7bb70)(0, 0, 0x1111, 0x00a0b0c0);
         printf("      (transport setup returned protocol %08x for stock 00a0b0c0)\n", got);
         check(*(uint8_t*)0x140d7bb70 == 0xFF, "transport setup hooked for ruleset matching");
+        {   // material grid lookup: hooked, and a call goes through to the original (which returns 0 here); with
+            // material_log=1 in server_3b.ini the log gets one "material:" line for this pair, however often it's asked
+            typedef uint64_t(__fastcall* matl_t)(uint64_t, const uint32_t*, const uint32_t*);
+            uint32_t laser = 0x00300480, capital = 0x00b00980;
+            uint64_t r1 = ((matl_t)0x14057dd20)(0, &laser, &capital), r2 = ((matl_t)0x14057dd20)(0, &laser, &capital);
+            check(*(uint8_t*)0x14057dd20 == 0xFF && r1 == 0 && r2 == 0, "material lookup hooked and passes calls through");
+        }
         // profile StandIn (mod/test_profiles/StandIn.ini, copied to build/profiles/ by the test run; server_3b.ini names it):
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.

@@ -497,6 +497,7 @@ static bool g_joinRemote = false;       // [server] join_remote: 1 = a joiner's 
 static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue requests (diagnostic)
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
+static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -536,6 +537,7 @@ static void read_server_ini() {
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
       g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
+      g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
@@ -1620,6 +1622,33 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
 // resource compartment (FUN_1401f9860(server+0x90, LevelData type 0x144a17ea0)) and proceeds even if that is still null, which
 // asserts (0xdeadcccc) or races on. On a dedicated process "job done" can precede the bundle's objects being registered.
 // So: when both jobs are done but LevelData isn't findable yet, report "still loading" (0) and ask again next tick (30 s cap).
+// FUN_14057dd20(grid, MaterialDecl* a, MaterialDecl* b): the material grid's relation lookup (notes/material-grid.md),
+// asked by the health components on every hit. A MaterialDecl packs flags in bits 0-7 (bit 7: set; otherwise the
+// default material), the effect material in bits 8-19 and the property index in bits 20-31, which picks the damage
+// relation. material_log=1 logs each distinct (a, b, caller) once, so a test flight shows which pairs damage asks for.
+typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
+static matlookup_t o_matlookup;
+struct MatSeen { uint32_t a, b; uint64_t ret; };
+static MatSeen g_matSeen[2048]; static int g_matSeenCount; static SRWLOCK g_matLock = SRWLOCK_INIT;
+static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const uint32_t* b) {
+    uint64_t r = o_matlookup(grid, a, b);
+    if (!g_materialLog) return r;
+    uint64_t ret = (uint64_t)_ReturnAddress();
+    uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
+    AcquireSRWLockExclusive(&g_matLock);
+    bool seen = false;
+    for (int i = 0; i < g_matSeenCount && !seen; i++)
+        seen = g_matSeen[i].a == pa && g_matSeen[i].b == pb && g_matSeen[i].ret == ret;
+    if (!seen && g_matSeenCount < 2048) {
+        g_matSeen[g_matSeenCount++] = { pa, pb, ret };
+        status("material: caller %p  a %08x (%s, property %u)  b %08x (%s, property %u)  -> %p", (void*)ret,
+               pa, (pa & 0x80) ? "set" : "default", pa >> 20, pb, (pb & 0x80) ? "set" : "default", pb >> 20, (void*)r);
+        if (g_matSeenCount == 2048) status("material: 2048 distinct pairs logged; no more");
+    }
+    ReleaseSRWLockExclusive(&g_matLock);
+    return r;
+}
+
 typedef uint64_t(__fastcall* lvlstep2_t)(uint64_t mgr, uint64_t server, uint64_t state);
 static lvlstep2_t o_lvlstep2;
 static uint64_t __fastcall h_lvlstep2(uint64_t mgr, uint64_t server, uint64_t state) {
@@ -2217,6 +2246,9 @@ static Site g_sites[] = {
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
+    {"material-lookup 0x14057dd20", 0x14057dd20, 15,
+     {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02},
+     (void*)h_matlookup, (void**)&o_matlookup},
 #endif
 };
 
