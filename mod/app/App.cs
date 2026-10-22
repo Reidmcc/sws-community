@@ -142,7 +142,11 @@ namespace SwsSettings
         // play page
         Button hostToggle, joinToggle; bool joining;
         readonly ComboBox modeBox = Theme.Combo();
-        readonly ComboBox addressBox = Theme.Combo(true);
+        readonly TextBox addressBox = new TextBox { Width = 260, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body, Margin = new Padding(0, 3, 8, 0) };
+        readonly ComboBox serversBox = Theme.Combo();
+        readonly List<KeyValuePair<string, string>> servers = new List<KeyValuePair<string, string>>();
+        readonly Label tsAddress = Theme.Label("", Theme.Big, Theme.Accent), tsNote = Theme.Label("", Theme.Small, Theme.Muted);
+        Button tsCopy;
         readonly Panel hostPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Panel joinPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Label playProfile = Theme.Label("", Theme.Body), playWarn = Theme.Label("", Theme.Small, Theme.Warn);
@@ -594,14 +598,25 @@ namespace SwsSettings
             modeBox.Width = 260; foreach (var m in ModeNames) modeBox.Items.Add(m);
             hostCol.Controls.Add(modeBox);
             hostCol.Controls.Add(Theme.Label("In the game, start a solo custom match vs AI: the mod makes it this type, and your friends join it.", Theme.Small, Theme.Muted));
+            var tsTitle = Theme.Label("Your Tailscale address: give it to the players joining you", Theme.Bold); tsTitle.Margin = new Padding(0, 18, 8, 0);
+            hostCol.Controls.Add(tsTitle);
+            var tsRow = Theme.Row(); tsAddress.Margin = new Padding(0, 4, 12, 0);
+            tsCopy = Theme.Button("Copy", (s, e) => { if (tsAddress.Text.Length > 0) { try { Clipboard.SetText(tsAddress.Text); tsNote.Text = "Copied " + tsAddress.Text + " to the clipboard."; } catch { } } });
+            tsRow.Controls.Add(tsAddress); tsRow.Controls.Add(tsCopy);
+            hostCol.Controls.Add(tsRow); hostCol.Controls.Add(tsNote);
             hostPanel.Controls.Add(hostCol); hostPanel.Margin = new Padding(0, 14, 0, 0);
             col.Controls.Add(hostPanel);
 
             var joinCol = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Panel, Dock = DockStyle.Fill };
-            joinCol.Controls.Add(Theme.Label("Host's address", Theme.Bold));
-            var addrRow = Theme.Row(); addressBox.Width = 260; addrRow.Controls.Add(addressBox);
-            addrRow.Controls.Add(Theme.Button("Save as favorite", (s, e) => SaveFavorite(true)));
-            addrRow.Controls.Add(Theme.Button("Remove favorite", (s, e) => SaveFavorite(false)));
+            joinCol.Controls.Add(Theme.Label("Saved servers", Theme.Bold));
+            var savedRow = Theme.Row(); serversBox.Width = 320; savedRow.Controls.Add(serversBox);
+            serversBox.SelectedIndexChanged += (s, e) => { int i = serversBox.SelectedIndex; if (i >= 0 && i < servers.Count) addressBox.Text = servers[i].Value; };
+            savedRow.Controls.Add(Theme.Button("Remove", (s, e) => RemoveFavorite()));
+            joinCol.Controls.Add(savedRow);
+            var addrTitle = Theme.Label("Host's address", Theme.Bold); addrTitle.Margin = new Padding(0, 14, 8, 0);
+            joinCol.Controls.Add(addrTitle);
+            var addrRow = Theme.Row(); addrRow.Controls.Add(addressBox);
+            addrRow.Controls.Add(Theme.Button("Save as favorite...", (s, e) => SaveFavorite()));
             joinCol.Controls.Add(addrRow);
             joinCol.Controls.Add(Theme.Label("For example the host's Tailscale address (100.x.y.z). The port is added for you.", Theme.Small, Theme.Muted));
             joinCol.Controls.Add(Theme.Label("In the game, start a solo custom match vs AI: your game joins the host's match instead.", Theme.Small, Theme.Muted));
@@ -627,8 +642,12 @@ namespace SwsSettings
             string join = server.Join;
             SetJoining(join.Length > 0);
             int mi = Array.IndexOf(Modes, server.MatchMode.ToLowerInvariant()); modeBox.SelectedIndex = mi >= 0 ? mi : 0;
-            addressBox.Items.Clear(); foreach (var f in Favorites()) addressBox.Items.Add(f);
             addressBox.Text = join;
+            RefreshServers(join);
+            string ts = TailscaleAddress();
+            tsAddress.Text = ts ?? ""; tsCopy.Visible = ts != null;
+            tsNote.Text = ts != null ? "Port 25200 is added for them. Everyone needs Tailscale, with this PC shared to them in Tailscale's admin page."
+                : "Tailscale isn't running on this PC, or isn't installed (tailscale.com). Without it, players need another way to reach this PC: UDP port 25200.";
             playProfile.Text = "Profile: " + profile.Name + "    fingerprint " + Effective.Show(effective != null ? effective.Fingerprint : 0);
             playWarn.Text = server.Listen != 1 ? "server.ini has listen=" + server.Listen + ": hosting needs listen=1 (the release's server.ini has it)." : "";
         }
@@ -639,15 +658,80 @@ namespace SwsSettings
             Theme.SetActive(hostToggle, !join); Theme.SetActive(joinToggle, join);
         }
         string AppIni { get { return Path.Combine(dir, "sws_settings.ini"); } }
-        List<string> Favorites() { return Ini.Get(AppIni, "join", "favorites", "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct().ToList(); }
-        void SaveFavorite(bool add)
+        // saved servers: [servers] name=address in sws_settings.ini. Unnamed favorites from the first version
+        // ([join] favorites=a;b) are carried over, named by their address.
+        List<KeyValuePair<string, string>> LoadServers()
         {
-            string a = addressBox.Text.Trim(); if (a.Length == 0) return;
-            var f = Favorites(); f.Remove(a); if (add) f.Insert(0, a);
-            Ini.Set(AppIni, "join", "favorites", string.Join(";", f));
-            RefreshFavorites(a);
+            var legacy = Ini.Get(AppIni, "join", "favorites", "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+            if (legacy.Count > 0)
+            {
+                foreach (var a in legacy) if (Ini.Get(AppIni, "servers", a, "").Length == 0) Ini.Set(AppIni, "servers", a, a);
+                Ini.Set(AppIni, "join", "favorites", null);
+            }
+            var list = new List<KeyValuePair<string, string>>();
+            foreach (var line in Ini.Section(AppIni, "servers"))
+            {
+                int eq = line.IndexOf('='); if (eq <= 0 || line[0] == ';') continue;
+                string name = line.Substring(0, eq).Trim(), addr = line.Substring(eq + 1).Trim();
+                if (name.Length > 0 && addr.Length > 0) list.Add(new KeyValuePair<string, string>(name, addr));
+            }
+            return list.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToList();
         }
-        void RefreshFavorites(string keep) { addressBox.Items.Clear(); foreach (var f in Favorites()) addressBox.Items.Add(f); addressBox.Text = keep; }
+        void RefreshServers(string selectAddress)
+        {
+            servers.Clear(); servers.AddRange(LoadServers());
+            serversBox.Items.Clear();
+            foreach (var kv in servers) serversBox.Items.Add(kv.Key == kv.Value ? kv.Key : kv.Key + "   (" + kv.Value + ")");
+            serversBox.Enabled = servers.Count > 0;
+            if (servers.Count == 0) { serversBox.Items.Add("No saved servers yet"); serversBox.SelectedIndex = 0; return; }
+            int i = servers.FindIndex(kv => kv.Value == selectAddress);
+            serversBox.SelectedIndex = i;   // -1 leaves the address box as it is
+        }
+        void SaveFavorite()
+        {
+            string addr = addressBox.Text.Trim();
+            if (addr.Length == 0) { Theme.Tell(this, "Save a server", "Type the host's address first."); return; }
+            var existing = LoadServers().FirstOrDefault(kv => kv.Value == addr);
+            string name = Theme.Ask(this, "Save a server", "A name for " + addr + ", for example \"Pseudo's server\":", existing.Key ?? "");
+            if (name == null) return;
+            name = name.Trim();
+            if (name.Length == 0 || name.IndexOfAny(new[] { '=', ';', '[', ']' }) >= 0) { Theme.Tell(this, "Save a server", "Names can't be empty or contain = ; [ ]"); return; }
+            foreach (var kv in LoadServers()) if (kv.Value == addr || string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase)) Ini.Set(AppIni, "servers", kv.Key, null);
+            Ini.Set(AppIni, "servers", name, addr);
+            RefreshServers(addr);
+        }
+        void RemoveFavorite()
+        {
+            int i = serversBox.SelectedIndex;
+            if (i < 0 || i >= servers.Count) return;
+            var kv = servers[i];
+            if (Theme.Ask(this, "Remove server", "Remove \"" + kv.Key + "\" (" + kv.Value + ") from your saved servers?", null, false) == null) return;
+            Ini.Set(AppIni, "servers", kv.Key, null);
+            RefreshServers(addressBox.Text.Trim());
+        }
+        // this PC's Tailscale address: Tailscale gives every device one in 100.64.0.0/10, on its own network adapter
+        static string TailscaleAddress()
+        {
+            try
+            {
+                string best = null;
+                foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    bool named = (ni.Name + " " + ni.Description).IndexOf("tailscale", StringComparison.OrdinalIgnoreCase) >= 0;
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                        var b = ua.Address.GetAddressBytes();
+                        if (b[0] != 100 || b[1] < 64 || b[1] > 127) continue;
+                        if (named) return ua.Address.ToString();
+                        if (best == null) best = ua.Address.ToString();
+                    }
+                }
+                return best;
+            }
+            catch { return null; }
+        }
         void Launch()
         {
             if (!server.Exists) { Theme.Tell(this, "Launch", "There's no server.ini beside this app."); return; }
