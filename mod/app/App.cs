@@ -162,6 +162,34 @@ namespace SwsSettings
             Load += (s, e) => { Theme.DarkTitle(this); Theme.DarkScroll(tree); Theme.DarkScroll(grid); Reload(); ShowPage(true); };
         }
 
+        // --test-edit: type <text> into a value cell and press Enter, the way the grid handles it, then report what stuck
+        public string TestEdit(string asset, string field, string text)
+        {
+            ShowPage(false);
+            TreeNode target = null; Action<TreeNode> find = null;
+            find = n => { if (target == null && (n.Tag as string) == asset) target = n; foreach (TreeNode c in n.Nodes) find(c); };
+            foreach (TreeNode n in tree.Nodes) find(n);
+            if (target == null) return "no tree node for " + asset;
+            tree.SelectedNode = target;
+            DataGridViewRow row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as string) == asset + "." + field);
+            if (row == null) return "no row for " + asset + "." + field;
+            var sw = Stopwatch.StartNew();
+            grid.Focus();
+            grid.CurrentCell = row.Cells["value"];
+            bool began = grid.BeginEdit(true);
+            if (grid.EditingControl != null) grid.EditingControl.Text = text;
+            var enter = typeof(DataGridView).GetMethod("ProcessEnterKey", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            object handled = enter != null ? enter.Invoke(grid, new object[] { Keys.Enter }) : (object)grid.EndEdit();
+            for (int i = 0; i < 20; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
+            long ms = sw.ElapsedMilliseconds;
+            DataGridViewRow after = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as string) == asset + "." + field);
+            double v; bool inProfile = profile.Values.TryGetValue(asset + "." + field, out v);
+            string file = File.Exists(Profile.PathOf(dir, profile.Name)) ? File.ReadAllText(Profile.PathOf(dir, profile.Name)) : "";
+            return "began edit " + began + ", enter handled " + handled + ", " + ms + " ms\r\n" +
+                   "cell now '" + (after != null ? after.Cells["value"].Value : "(row gone)") + "', in edit mode " + grid.IsCurrentCellInEditMode + "\r\n" +
+                   "profile value " + (inProfile ? Num.G9(v) : "(none)") + ", in file " + file.Contains(asset + "." + field + "=") + "\r\n" +
+                   "status '" + status.Text + "'";
+        }
         public void ShowValuesForShot()
         {
             ShowPage(false);
@@ -343,7 +371,9 @@ namespace SwsSettings
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "reset", HeaderText = "", ReadOnly = true, FillWeight = 32 });
             grid.Columns["value"].DefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Panel, ForeColor = Theme.Text, Font = Theme.Bold };
             grid.Columns["reset"].DefaultCellStyle = new DataGridViewCellStyle { ForeColor = Theme.Accent, Font = Theme.Small, Alignment = DataGridViewContentAlignment.MiddleCenter };
+            grid.CellBeginEdit += (s2, e2) => { editing = true; };
             grid.CellValidating += GridValidating;
+            grid.CellEndEdit += GridEndEdit;
             grid.CellClick += (s, e) => { if (e.RowIndex >= 0 && grid.Columns[e.ColumnIndex].Name == "reset" && (string)grid.Rows[e.RowIndex].Cells["reset"].Value == "reset") ResetRow(e.RowIndex); };
             grid.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete && grid.CurrentCell != null && !grid.IsCurrentCellInEditMode) { ResetRow(grid.CurrentCell.RowIndex); e.Handled = true; } };
             grid.CellToolTipTextNeeded += (s, e) =>
@@ -394,56 +424,75 @@ namespace SwsSettings
                 }
             }
         }
+        // An edit only changes the profile; the cell is redrawn from the profile when the edit ends (GridEndEdit), so what
+        // the grid shows is always what is saved. Invalid input is never refused in place (that kept the cell from letting
+        // go, which froze the window): the edit ends and the cell shows the profile's value again, with a note.
+        bool editing; string pendingNote;
         void GridValidating(object sender, DataGridViewCellValidatingEventArgs e)
         {
-            if (grid.Columns[e.ColumnIndex].Name != "value" || grid.Rows[e.RowIndex].Cells["value"].ReadOnly) return;
+            if (!editing || grid.Columns[e.ColumnIndex].Name != "value" || grid.Rows[e.RowIndex].Cells["value"].ReadOnly) return;
             string key = grid.Rows[e.RowIndex].Tag as string; if (key == null) return;
             string text = (e.FormattedValue ?? "").ToString().Trim();
             double old; bool had = profile.Values.TryGetValue(key, out old);
-            if (text.Length == 0) { if (had) { profile.Values.Remove(key); AfterEdit(e.RowIndex, null, null); } return; }
+            if (had && text == Num.Show(old)) return;   // unchanged (the cell shows a rounded form of the saved value)
+            if (text.Length == 0) { if (had) { profile.Values.Remove(key); Changed(key + " is back to its default."); } return; }
             double v;
-            if (!Num.TryParse(text, out v)) { status.Text = "'" + text + "' isn't a number."; e.Cancel = true; return; }
+            if (!Num.TryParse(text, out v)) { pendingNote = "'" + text + "' isn't a number; " + key + " is unchanged."; return; }
             int dot = key.IndexOf('.'); var l = limits.Find(key.Substring(0, dot), key.Substring(dot + 1));
             double c = Limits.Clamp(l, v);
             if (had && old == c) return;
             profile.Values[key] = c;
-            AfterEdit(e.RowIndex, c, c != v ? "outside its allowed range: set to " + Num.Show(c) : null);
+            Changed(c != v ? key + " = " + Num.Show(v) + " is outside its allowed range: set to " + Num.Show(c) + "." : null);
         }
-        void AfterEdit(int row, double? value, string note)
+        void GridEndEdit(object sender, DataGridViewCellEventArgs e)
         {
-            SaveProfile();
-            BeginInvoke((Action)(() =>
-            {
-                if (row < grid.Rows.Count)
-                {
-                    var r = grid.Rows[row];
-                    r.Cells["value"].Value = value.HasValue ? Num.Show(value.Value) : "";
-                    r.Cells["value"].Style.ForeColor = value.HasValue ? Theme.Changed : Theme.Text;
-                    r.Cells["reset"].Value = value.HasValue ? "reset" : "";
-                }
-                RefreshTreeCounts();
-                if (note != null) status.Text = (string)grid.Rows[row].Tag + " " + note + ".";
-            }));
+            editing = false;
+            if (e.RowIndex >= 0 && e.RowIndex < grid.Rows.Count) RenderRow(grid.Rows[e.RowIndex]);
+            if (pendingNote != null) { status.Text = pendingNote; pendingNote = null; }
+        }
+        void RenderRow(DataGridViewRow r)
+        {
+            string key = r.Tag as string; if (key == null) return;
+            double v; bool changed = profile.Values.TryGetValue(key, out v);
+            r.Cells["value"].Value = changed ? Num.Show(v) : "";
+            r.Cells["value"].Style.ForeColor = changed ? Theme.Changed : Theme.Text;
+            r.Cells["reset"].Value = changed ? "reset" : "";
+        }
+        void Changed(string note)
+        {
+            SaveProfile();                              // also recomputes the fingerprint and the status line
+            if (note != null) pendingNote = note;
+            BeginInvoke((Action)RefreshTreeCounts);
         }
         void ResetRow(int row)
         {
-            if (profile.BuiltIn || row < 0) return;
+            if (profile.BuiltIn || row < 0 || row >= grid.Rows.Count) return;
             string key = grid.Rows[row].Tag as string;
-            if (key != null && profile.Values.Remove(key)) AfterEdit(row, null, null);
+            if (key == null || !profile.Values.Remove(key)) return;
+            SaveProfile(); RenderRow(grid.Rows[row]); RefreshTreeCounts();
+            status.Text = key + " is back to its default.";
         }
+        // the changed-value counts on the tree's nodes: counted once, and only nodes whose count changes are touched
         void RefreshTreeCounts()
         {
-            Action<TreeNode> walk = null;
-            walk = n =>
+            var perAsset = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var k in profile.Values.Keys) { string a = k.Split('.')[0]; int n; perAsset.TryGetValue(a, out n); perAsset[a] = n + 1; }
+            Func<TreeNode, int> walk = null;
+            walk = node =>
             {
-                foreach (TreeNode c in n.Nodes) walk(c);
-                var assets = new List<string>(); Action<TreeNode> collect = null;
-                collect = x => { if (x.Tag is string) assets.Add((string)x.Tag); foreach (TreeNode c in x.Nodes) collect(c); }; collect(n);
-                int cnt = assets.Sum(a => profile.Values.Keys.Count(k => k.StartsWith(a + ".", StringComparison.Ordinal)));
-                string baseText = n.Text; int p = baseText.IndexOf("  ("); if (p > 0) baseText = baseText.Substring(0, p);
-                n.Text = baseText + (cnt > 0 ? "  (" + cnt + ")" : ""); n.ForeColor = cnt > 0 ? Theme.Changed : Theme.Text;
+                int cnt = 0, own;
+                if (node.Tag is string && perAsset.TryGetValue((string)node.Tag, out own)) cnt += own;
+                foreach (TreeNode c in node.Nodes) cnt += walk(c);
+                string baseText = node.Text; int p = baseText.IndexOf("  ("); if (p > 0) baseText = baseText.Substring(0, p);
+                string text = baseText + (cnt > 0 ? "  (" + cnt + ")" : "");
+                Color color = cnt > 0 ? Theme.Changed : Theme.Text;
+                if (node.Text != text) node.Text = text;
+                if (node.ForeColor != color) node.ForeColor = color;
+                return cnt;
             };
-            foreach (TreeNode n in tree.Nodes) if (n.Text != "Not in defaults.ini") walk(n);
+            tree.BeginUpdate();
+            try { foreach (TreeNode n in tree.Nodes) if (!n.Text.StartsWith("Not in defaults.ini")) walk(n); }
+            finally { tree.EndUpdate(); }
         }
         void ResetAll()
         {
@@ -617,6 +666,12 @@ namespace SwsSettings
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();
                 };
+            }
+            // --test-edit <report> <asset> <field> <text>: one cell edit as the grid does it, reported to a file
+            if (args.Length >= 5 && args[0] == "--test-edit")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestEdit(args[2], args[3], args[4]); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             Application.Run(form);
         }
