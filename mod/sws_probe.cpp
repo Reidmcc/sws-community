@@ -193,9 +193,12 @@ static bool profile_name_ok(const wchar_t* n) {
 // every changeable field a range: <type>.<field path without indices> = min,max,flags (i = integer, n = -1 allowed).
 // A profile value is clamped to it before anything else sees it, so the log, the fingerprint and every config write
 // (the vs-AI bots' scaled values included) use the clamped value; two players asking 320 and 300 for a speed capped
-// at 300 match. A value whose field has no limit is not applied. Without limits.ini nothing is clamped (logged).
-struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1; };
+// at 300 match. A value whose field has no limit is not applied, nor is one whose field is locked (flag x: power
+// levels, and fields every config ships as 0). Weapons are limited as primaries or aux: limits.ini's [primary] section
+// names the primary weapon configs. Without limits.ini nothing is clamped (logged).
+struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
 static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
+static char (*g_primaryWeapons)[96]; static int g_primaryCount;
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
     "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig" };
 static void load_limits(const wchar_t* dir) {
@@ -210,12 +213,20 @@ static void load_limits(const wchar_t* dir) {
         for (wchar_t* c = e; c < eq && k < 159; c++) if (!iswspace(*c)) L.key[k++] = (char)towlower(*c);
         L.key[k] = 0;
         wchar_t flags[8] = L"";
-        if (swscanf_s(eq + 1, L"%lf,%lf,%7[in]", &L.lo, &L.hi, flags, (unsigned)_countof(flags)) < 2 || !k) continue;
-        L.isInt = wcschr(flags, L'i') != nullptr; L.neg1 = wcschr(flags, L'n') != nullptr;
+        if (swscanf_s(eq + 1, L"%lf,%lf,%7[inx]", &L.lo, &L.hi, flags, (unsigned)_countof(flags)) < 2 || !k) continue;
+        L.isInt = wcschr(flags, L'i') != nullptr; L.neg1 = wcschr(flags, L'n') != nullptr; L.locked = wcschr(flags, L'x') != nullptr;
         g_limitCount++;
     }
+    n = sec ? GetPrivateProfileSectionW(L"primary", sec, cap, li) : 0;
+    g_primaryWeapons = (char(*)[96])calloc(1024, 96);
+    for (wchar_t* e = sec; g_primaryWeapons && n && *e && g_primaryCount < 1024; e += wcslen(e) + 1) {
+        if (e[0] == L';') continue;
+        int k = 0; char* d = g_primaryWeapons[g_primaryCount];   // the name is everything before '='
+        for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
+        d[k] = 0; if (k) g_primaryCount++;
+    }
     free(sec);
-    status("limits: %d field limits from %ls", g_limitCount, li);
+    status("limits: %d field limits, %d primary weapon configs from %ls", g_limitCount, g_primaryCount, li);
 }
 // the limit for asset.field: <type of the asset>.<field without [n]>
 static const ValueLimit* find_limit(const char* asset, const char* field) {
@@ -224,6 +235,11 @@ static const ValueLimit* find_limit(const char* asset, const char* field) {
     for (const char* t : kLimitTypes) if (!strncmp(asset, t, strlen(t))) { type = t; break; }
     if (!type) return nullptr;
     char key[160]; int k = sprintf_s(key, "%s.", type);
+    if (!strcmp(type, "starshipweaponconfig")) {
+        bool primary = false;
+        for (int i = 0; i < g_primaryCount && !primary; i++) primary = !strcmp(g_primaryWeapons[i], asset);
+        k = sprintf_s(key, "%s_%s.", type, primary ? "primary" : "aux");
+    }
     for (const char* c = field; *c && k < 159; c++) {
         if (*c == '[') { while (*c && *c != ']') c++; if (!*c) break; continue; }
         key[k++] = *c;
@@ -249,6 +265,7 @@ static void clamp_overrides() {
         if (dot && dot - o.key < 96) strncpy_s(asset, o.key, dot - o.key);
         const ValueLimit* L = dot ? find_limit(asset, dot + 1) : nullptr;
         if (!L) { status("limits: %s has no limit (unknown field, or not in limits.ini); not applied", o.key); continue; }
+        if (L->locked) { status("limits: %s is locked (power levels, and fields the game always ships as 0); not applied", o.key); continue; }
         double c = clamp_to(L, o.value);
         if (c != o.value) status("limits: %s = %.9g is outside %.9g..%.9g; clamped to %.9g", o.key, o.value, L->lo, L->hi, c);
         o.value = c;
