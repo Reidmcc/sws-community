@@ -36,6 +36,8 @@ TYPES_H = os.path.join(PROJECT, "mod", "config_types.h")
 OUT = os.path.join(BUILD, "limits.ini")
 
 COMPONENTS = ["enginecustom", "hullcustom", "shieldcustom"]   # engine / hull / shield components: one category
+# laser and ion damage against capital ships: multipliers on material-grid cells (the DLL's grid settings, stock 1)
+GRID = ["materialgrid"]
 # capital ships and their turrets (each its own category; the same list is in sws_probe.cpp and app/Core.cs)
 CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
            "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
@@ -43,7 +45,7 @@ CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsub
            "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
            "turretfirepatternsettingsasset"]
 CATEGORIES = ["starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata", "starshippowermanagement",
-              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL
+              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL + GRID
 # Capital ships and turrets have their own movement, weapon, bullet, missile and explosion configs, of the same types
 # as the starfighters'. Pooled together, a Star Destroyer's turn torque would set the X-wing's ceiling, so those configs
 # are limited on their own: <type>_capital.<field>, and listed under [capital] for the DLL and the app.
@@ -132,6 +134,10 @@ def limit(key, vals, is_int):
         # min -0.9, so the result never drops below 10% of the base; where the game ships lower (-1), that is allowed.
         hi, lo = max(0.0, 5 * mx), min(-0.9, mn)
         src = ["5x highest stock %" if mx > 0 else "0 (stock never raises it)", "-0.9 (10% of base)" if mn >= -0.9 else "lowest stock %"]
+    elif key.startswith("materialgrid."):
+        # Pseudo, 2026-10-22: starfighter lasers should be able to do trivial damage to capital ships, so the floor is 0
+        # (no damage at all); the ceiling is the usual 5x
+        lo, src[1] = 0.0, "0 (no damage)"
     elif key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
         hi = SPEED_CAP; src[0] = "speed cap 300 (measured)"
     elif ANGLE.search(name):

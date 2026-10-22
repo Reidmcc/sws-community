@@ -207,7 +207,8 @@ static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshieldda
     "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
     "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
     "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
-    "turretfirepatternsettingsasset" };   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+    "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+    "materialgrid" };   // laser and ion damage against capital ships (grid_apply)
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -1414,6 +1415,7 @@ static void write_defaults_file() {
     static int lastCarried = -1;
     if (carried != lastCarried) { lastCarried = carried; status("values: defaults.ini keeps %d config(s) from earlier launches", carried); }
 }
+static void grid_apply();
 static void value_engine_scan() {
     if (!g_valuesOn) return;
     if (g_targetCount < 0) build_targets();
@@ -1456,6 +1458,7 @@ static void value_engine_scan() {
         }
         leave(dom + 0x70);
     }
+    grid_apply();
     static int reports; ULONGLONG ms = GetTickCount64() - t0;
     if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
     write_defaults_file();
@@ -1641,10 +1644,50 @@ typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, cons
 static matlookup_t o_matlookup;
 struct MatSeen { uint32_t a, b; uint64_t ret; };
 static MatSeen g_matSeen[2048]; static int g_matSeenCount; static SRWLOCK g_matLock = SRWLOCK_INIT;
+// Laser and ion damage against capital ships (profile keys materialgrid.<weapon>damage.<part>, a multiplier on the cell's
+// DamageProtectionMultiplier, stock 1). The damage code asks this lookup for the cell of (projectile material, hit-part
+// material) and multiplies a direct hit's damage by the cell's +0x20; explosions (torpedoes, bombs, missiles) don't use
+// it. The grid's cells are shared objects (laser vs capital hull is also laser vs the weak-point decal; laser vs capital
+// shield is also beam vs shield), so nothing in the grid is edited: when one of the damage functions below asks for a
+// laser or ion cell on its part, it gets a private copy of the stock capital cell with the multiplier changed. Which
+// function is asking is its return address (fixed: no ASLR). Corvettes (Raider, CR90) have hulls on the default material
+// (3,0), which is also laser vs missiles in flight; the hull site maps default and capital-part targets to the capital
+// copy too, so every capital hull takes the same setting and missiles keep theirs. At stock all of these cells are 1.
+enum { GW_LASER, GW_ION, GW_N };
+enum { GP_HULL, GP_SHIELDS, GP_TURRETS, GP_N };
+static const char* kGridWeapon[GW_N] = { "laserdamage", "iondamage" };
+static const char* kGridPart[GP_N] = { "capitalhull", "capitalshields", "capitalturrets" };
+static const uint32_t kGridWeaponProp[GW_N] = { 3, 10 };   // MaterialDecl property index (bits 20-31): laser, ion
+static const uint32_t kGridStockTarget[GP_N] = { 0x00b00980, 0x00600580, 0x00b00980 };   // capital ship, capital shield
+struct GridSite { uint64_t ret; int part; };
+static const GridSite kGridSites[] = {
+    { 0x1417db400, GP_HULL },      // ServerCapitalShipHealthComponent, direct hit (FUN_1417db200)
+    { 0x140582ba0, GP_SHIELDS },   // ServerIncomShieldHealthComponent, direct hit (FUN_140582ab0)
+    { 0x140546f7e, GP_SHIELDS },   // ClientShieldHealthComponent slot 41 (FUN_140546e90): the client's own figure
+    { 0x1416edef6, GP_TURRETS },   // ServerTurretHealthComponent, direct hit (FUN_1416edb50)
+};
+static uint8_t g_gridCopy[GW_N][GP_N][64];
+static volatile uint64_t g_gridSub[GW_N][GP_N];   // the private copy in use, 0 = the game's own cell
+static volatile uint64_t g_matGrid;              // the lookup's first argument, seen from any call
+static bool grid_target_ok(int part, uint32_t pb) {
+    uint32_t prop = (pb & 0x80) ? pb >> 20 : 0;
+    if (part == GP_SHIELDS) return prop == 6;
+    if (part == GP_TURRETS) return prop == 11 || prop == 0;
+    return prop == 11 || prop == 0 || prop == 18;   // hull: capital, default (corvettes), capital part (SD/MC75)
+}
 static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const uint32_t* b) {
+    if (!g_matGrid && grid) g_matGrid = grid;
     uint64_t r = o_matlookup(grid, a, b);
-    if (!g_materialLog) return r;
     uint64_t ret = (uint64_t)_ReturnAddress();
+    for (const GridSite& s : kGridSites) {
+        if (s.ret != ret) continue;
+        uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
+        uint32_t aprop = (pa & 0x80) ? pa >> 20 : 0;
+        for (int w = 0; w < GW_N; w++)
+            if (aprop == kGridWeaponProp[w] && g_gridSub[w][s.part] && grid_target_ok(s.part, pb)) r = g_gridSub[w][s.part];
+        break;
+    }
+    if (!g_materialLog) return r;
     uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
     AcquireSRWLockExclusive(&g_matLock);
     bool seen = false;
@@ -1658,6 +1701,46 @@ static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const u
     }
     ReleaseSRWLockExclusive(&g_matLock);
     return r;
+}
+
+// The grid settings: once the lookup has been seen, record the stock multipliers as the pseudo-config "materialgrid"
+// (defaults.ini, for the app and the limits) and build the private copies for the profile's values (main thread).
+static bool g_gridRecorded;
+static void grid_apply() {
+    uint64_t grid = g_matGrid; if (!grid || !o_matlookup) return;
+    uint16_t lo = rd<uint16_t>(0x1449f9290, 0x48), hi = rd<uint16_t>(0x1449f9290, 0x4a);   // MaterialRelationDamageData
+    for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+        uint32_t a = (kGridWeaponProp[w] << 20) | 0x80, b = kGridStockTarget[p];
+        uint64_t cell = o_matlookup(grid, &a, &b);
+        uint64_t ci = cell ? rd<uint64_t>(cell, 8) : 0;
+        uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0;
+        if (!cell || !ci || (uint16_t)(id - lo) > (uint16_t)(hi - lo)) {
+            static bool told;
+            if (!told) { told = true; status("materialgrid: the %s/%s cell is not a damage relation (%p); grid settings off", kGridWeapon[w], kGridPart[p], (void*)cell); }
+            return;
+        }
+        char want[64]; sprintf_s(want, "%s.%s", kGridWeapon[w], kGridPart[p]);
+        char key[96]; sprintf_s(key, "materialgrid.%s", want);
+        float stock = rd<float>(cell, 0x20);
+        if (!g_gridRecorded) { DefaultSlot* d = default_slot(key, true); if (d) d->value = stock; }
+        if (g_gridSub[w][p]) continue;
+        for (int t = 0; t < g_targetCount; t++) {
+            ValueTarget& v = g_targets[t];
+            if (strcmp(v.asset, "materialgrid") || strcmp(v.key, want)) continue;
+            memcpy(g_gridCopy[w][p], (const void*)cell, 56);
+            *(float*)(g_gridCopy[w][p] + 0x20) = (float)(stock * v.value);
+            g_gridSub[w][p] = (uint64_t)g_gridCopy[w][p];
+            v.hit = true;
+            status("values: %s %.9g -> %.9g (a private copy of the grid cell, for capital-ship damage only)", key, (double)stock, (double)(float)(stock * v.value));
+        }
+    }
+    if (!g_gridRecorded) {
+        g_gridRecorded = true;
+        if (!asset_seen("materialgrid") && g_seenCount < 4096) {
+            if (g_seenNames) strcpy_s(g_seenNames[g_seenCount], "MaterialGrid");
+            strcpy_s(g_seenAssets[g_seenCount++], "materialgrid"); g_defaultsDirty = true;
+        }
+    }
 }
 
 typedef uint64_t(__fastcall* lvlstep2_t)(uint64_t mgr, uint64_t server, uint64_t state);

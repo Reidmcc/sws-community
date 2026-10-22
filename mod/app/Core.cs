@@ -75,7 +75,8 @@ namespace SwsSettings
             "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
             "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
             "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
-            "turretfirepatternsettingsasset" };   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+            "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+            "materialgrid" };   // laser and ion damage against capital ships
 
         public static Limits Load(string dir)
         {
@@ -325,12 +326,13 @@ namespace SwsSettings
             if (asset.StartsWith("turret")) return "Turrets";
             if (asset.StartsWith("capitalshipenginewashdamageareasettings")) return "Engine wash";
             if (asset.StartsWith("damageovertimesettings")) return "Damage over time";
+            if (asset == "materialgrid") return "Damage to capital ships";
             return "Other";
         }
         public static readonly string[] SystemOrder = { "Movement", "Power", "Shields", "Hull", "Primary weapons",
             "Aux and countermeasures", "Turret weapons", "Laser projectiles", "Missiles and explosions", "Engine components",
             "Hull components", "Shield components", "Damage sections", "Subsystems", "Weak points", "Turrets", "Engine wash",
-            "Damage over time", "Other" };
+            "Damage over time", "Damage to capital ships", "Other" };
     }
 
     // server.ini beside the launcher (mod/release/server.ini): the active profile and host/join settings
