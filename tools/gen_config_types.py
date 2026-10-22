@@ -32,7 +32,14 @@ OUT = os.path.join(PROJECT, "mod", "config_types.h")
 
 ROOTS = ["StarshipMovementConfig", "StarshipShieldData", "StarshipHealthDamageData", "IncomBulletConfig",
          "StarshipWeaponConfig", "StarshipPowerManagement", "IncomMissileConfig", "IncomExplosionData",
-         "StarshipEngineCustomConfig", "StarshipHullCustomConfig", "StarshipShieldCustomConfig"]
+         "StarshipEngineCustomConfig", "StarshipHullCustomConfig", "StarshipShieldCustomConfig",
+         # capital ships: health, damage sections, subsystems, weak points, shields, engine wash, damage over time
+         "CapitalShipHealthSettings", "DamageSectionSettings", "CapitalShipSubsystemSettings",
+         "CapitalShipWeakPointsSettings", "CapitalShipWeaponSubsystemSettings", "CapitalShipEngineWashDamageAreaSettings",
+         "DamageOverTimeSettings", "ShieldHealthSettings", "CapitalShipResupplySubsystemSettings",
+         # turrets: health, aiming, targeting computers, fire patterns. The last two are plain policy assets with no
+         # attribute registration lists; their fields are plain floats, which the engine writes without list sync.
+         "TurretHealthSettings", "TurretAimingSettings", "TurretTargetComputerSettings", "TurretFirePatternSettings"]
 # The component configs' parent (StarshipCustomConfig, which holds the AttributeModifier list) is missing from the
 # decoded type records; the runtime types give all three the same 120-byte StarshipCustomConfig layout.
 SUPER_FIX = {"StarshipEngineCustomConfig": "StarshipCustomConfig", "StarshipHullCustomConfig": "StarshipCustomConfig",

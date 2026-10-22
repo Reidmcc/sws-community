@@ -199,9 +199,16 @@ static bool profile_name_ok(const wchar_t* n) {
 struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
 static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
 static char (*g_primaryWeapons)[96]; static int g_primaryCount;
+static char (*g_capitalConfigs)[96]; static int g_capitalCount;   // [capital]: limited as <type>_capital
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
     "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
-    "enginecustom", "hullcustom", "shieldcustom" };   // the components share one category: starshipcustomconfig
+    "enginecustom", "hullcustom", "shieldcustom",   // the components share one category: starshipcustomconfig
+    "capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
+    "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
+    "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
+    "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
+    "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
+    "materialgrid" };   // laser and ion damage against capital ships (grid_apply)
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -218,16 +225,21 @@ static void load_limits(const wchar_t* dir) {
         L.isInt = wcschr(flags, L'i') != nullptr; L.neg1 = wcschr(flags, L'n') != nullptr; L.locked = wcschr(flags, L'x') != nullptr;
         g_limitCount++;
     }
-    n = sec ? GetPrivateProfileSectionW(L"primary", sec, cap, li) : 0;
-    g_primaryWeapons = (char(*)[96])calloc(1024, 96);
-    for (wchar_t* e = sec; g_primaryWeapons && n && *e && g_primaryCount < 1024; e += wcslen(e) + 1) {
-        if (e[0] == L';') continue;
-        int k = 0; char* d = g_primaryWeapons[g_primaryCount];   // the name is everything before '='
-        for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
-        d[k] = 0; if (k) g_primaryCount++;
-    }
+    auto read_names = [&](const wchar_t* section, char (*&out)[96], int& count) {   // the name is everything before '='
+        n = sec ? GetPrivateProfileSectionW(section, sec, cap, li) : 0;
+        out = (char(*)[96])calloc(1024, 96);
+        for (wchar_t* e = sec; out && n && *e && count < 1024; e += wcslen(e) + 1) {
+            if (e[0] == L';') continue;
+            int k = 0; char* d = out[count];
+            for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
+            d[k] = 0; if (k) count++;
+        }
+    };
+    read_names(L"primary", g_primaryWeapons, g_primaryCount);
+    read_names(L"capital", g_capitalConfigs, g_capitalCount);
     free(sec);
-    status("limits: %d field limits, %d primary weapon configs from %ls", g_limitCount, g_primaryCount, li);
+    status("limits: %d field limits, %d primary weapon configs, %d capital-ship configs from %ls", g_limitCount,
+           g_primaryCount, g_capitalCount, li);
 }
 // the limit for asset.field: <type of the asset>.<field without [n]>
 static const ValueLimit* find_limit(const char* asset, const char* field) {
@@ -237,7 +249,10 @@ static const ValueLimit* find_limit(const char* asset, const char* field) {
     if (!type) return nullptr;
     if (!strcmp(type, "enginecustom") || !strcmp(type, "hullcustom") || !strcmp(type, "shieldcustom")) type = "starshipcustomconfig";
     char key[160]; int k = sprintf_s(key, "%s.", type);
-    if (!strcmp(type, "starshipweaponconfig")) {
+    bool capital = false;
+    for (int i = 0; i < g_capitalCount && !capital; i++) capital = !strcmp(g_capitalConfigs[i], asset);
+    if (capital) k = sprintf_s(key, "%s_capital.", type);
+    else if (!strcmp(type, "starshipweaponconfig")) {
         bool primary = false;
         for (int i = 0; i < g_primaryCount && !primary; i++) primary = !strcmp(g_primaryWeapons[i], asset);
         k = sprintf_s(key, "%s_%s.", type, primary ? "primary" : "aux");
@@ -493,6 +508,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -532,6 +548,7 @@ static void read_server_ini() {
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
       g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
+      g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1398,6 +1415,7 @@ static void write_defaults_file() {
     static int lastCarried = -1;
     if (carried != lastCarried) { lastCarried = carried; status("values: defaults.ini keeps %d config(s) from earlier launches", carried); }
 }
+static void grid_apply();
 static void value_engine_scan() {
     if (!g_valuesOn) return;
     if (g_targetCount < 0) build_targets();
@@ -1406,8 +1424,9 @@ static void value_engine_scan() {
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
     if (!enter || !leave) return;
-    uint16_t lo[16], hi[16];
-    for (int k = 0; k < kVeRootCount && k < 16; k++) {
+    static_assert(sizeof kVeRoots / sizeof kVeRoots[0] <= 64, "raise kMaxRoots");
+    const int kMaxRoots = 64; uint16_t lo[kMaxRoots], hi[kMaxRoots];
+    for (int k = 0; k < kVeRootCount; k++) {
         lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
@@ -1425,7 +1444,7 @@ static void value_engine_scan() {
                 uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
                 uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
                 uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
-                for (int k = 0; k < kVeRootCount && k < 16; k++) {
+                for (int k = 0; k < kVeRootCount; k++) {
                     if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
                     const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
                     char asset[96]; int j = 0;
@@ -1439,6 +1458,7 @@ static void value_engine_scan() {
         }
         leave(dom + 0x70);
     }
+    grid_apply();
     static int reports; ULONGLONG ms = GetTickCount64() - t0;
     if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
     write_defaults_file();
@@ -1616,6 +1636,148 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
 // resource compartment (FUN_1401f9860(server+0x90, LevelData type 0x144a17ea0)) and proceeds even if that is still null, which
 // asserts (0xdeadcccc) or races on. On a dedicated process "job done" can precede the bundle's objects being registered.
 // So: when both jobs are done but LevelData isn't findable yet, report "still loading" (0) and ask again next tick (30 s cap).
+// FUN_14057dd20(grid, MaterialDecl* a, MaterialDecl* b): the material grid's relation lookup (notes/material-grid.md),
+// asked by the health components on every hit. A MaterialDecl packs flags in bits 0-7 (bit 7: set; otherwise the
+// default material), the effect material in bits 8-19 and the property index in bits 20-31, which picks the damage
+// relation. material_log=1 logs each distinct (a, b, caller) once, so a test flight shows which pairs damage asks for.
+typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
+static matlookup_t o_matlookup;
+struct MatSeen { uint32_t a, b; uint64_t ret; };
+static MatSeen g_matSeen[2048]; static int g_matSeenCount; static SRWLOCK g_matLock = SRWLOCK_INIT;
+// Laser and ion damage against capital ships (profile keys materialgrid.<weapon>damage.<part>, a multiplier on the cell's
+// DamageProtectionMultiplier, stock 1). The damage code asks this lookup for the cell of (projectile material, hit-part
+// material) and multiplies a direct hit's damage by the cell's +0x20; explosions (torpedoes, bombs, missiles) don't use
+// it. The grid's cells are shared objects (laser vs capital hull is also laser vs the weak-point decal; laser vs capital
+// shield is also beam vs shield), so nothing in the grid is edited: when one of the damage functions below asks for a
+// laser or ion cell on its part, it gets a private copy of the stock capital cell with the multiplier changed. Which
+// function is asking is its return address (fixed: no ASLR). Corvettes (Raider, CR90) have hulls on the default material
+// (3,0), which is also laser vs missiles in flight; the hull site maps default and capital-part targets to the capital
+// copy too, so every capital hull takes the same setting and missiles keep theirs. At stock all of these cells are 1.
+enum { GW_LASER, GW_ION, GW_N };
+enum { GP_HULL, GP_SHIELDS, GP_TURRETS, GP_N };
+static const char* kGridWeapon[GW_N] = { "laserdamage", "iondamage" };
+static const char* kGridPart[GP_N] = { "capitalhull", "capitalshields", "capitalturrets" };
+static const uint32_t kGridWeaponProp[GW_N] = { 3, 10 };   // MaterialDecl property index (bits 20-31): laser, ion
+static const uint32_t kGridStockTarget[GP_N] = { 0x00b00980, 0x00600580, 0x00b00980 };   // capital ship, capital shield
+struct GridSite { uint64_t ret; int part; };
+static const GridSite kGridSites[] = {
+    { 0x1417db400, GP_HULL },      // ServerCapitalShipHealthComponent, direct hit (FUN_1417db200)
+    { 0x140582ba0, GP_SHIELDS },   // ServerIncomShieldHealthComponent, direct hit (FUN_140582ab0)
+    { 0x140546f7e, GP_SHIELDS },   // ClientShieldHealthComponent slot 41 (FUN_140546e90): the client's own figure
+    { 0x1416edef6, GP_TURRETS },   // ServerTurretHealthComponent, direct hit (FUN_1416edb50)
+};
+static uint8_t g_gridCopy[GW_N][GP_N][64];
+static volatile uint64_t g_gridSub[GW_N][GP_N];   // the private copy in use, 0 = the game's own cell
+// Everything that touches the grid happens inside the hook, on the game's own call, with the grid it just passed in: the
+// grid belongs to the level and is freed with it (2026-10-22: a scan that kept the first match's grid and looked it up
+// every 2 s crashed the game on the way back to the front end). The main thread only publishes the wanted values and
+// records the stock ones the hook saw.
+static float g_gridWant[GW_N][GP_N];              // the profile's multiplier, or -1 = leave the game's cell
+static volatile LONG g_gridReady;                 // g_gridWant is filled in (main thread, after the targets are built)
+static float g_gridStock[GW_N][GP_N];             // the stock multiplier the hook read
+static volatile LONG g_gridStockKnown;            // 1 = g_gridStock filled; -1 = the cells were not damage relations
+static SRWLOCK g_gridLock = SRWLOCK_INIT;
+static bool grid_target_ok(int part, uint32_t pb) {
+    uint32_t prop = (pb & 0x80) ? pb >> 20 : 0;
+    if (part == GP_SHIELDS) return prop == 6;
+    if (part == GP_TURRETS) return prop == 11 || prop == 0;
+    return prop == 11 || prop == 0 || prop == 18;   // hull: capital, default (corvettes), capital part (SD/MC75)
+}
+// the stock capital cell for (weapon, part) in this grid, if it is a damage relation (MaterialRelationDamageData)
+static uint64_t grid_stock_cell(uint64_t grid, int w, int p) {
+    uint32_t a = (kGridWeaponProp[w] << 20) | 0x80, b = kGridStockTarget[p];
+    uint64_t cell = o_matlookup(grid, &a, &b);
+    uint64_t ci = cell ? rd<uint64_t>(cell, 8) : 0;
+    uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0, lo = rd<uint16_t>(0x1449f9290, 0x48), hi = rd<uint16_t>(0x1449f9290, 0x4a);
+    return ci && (uint16_t)(id - lo) <= (uint16_t)(hi - lo) ? cell : 0;
+}
+static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const uint32_t* b) {
+    uint64_t r = o_matlookup(grid, a, b);
+    if (grid && !g_gridStockKnown) {   // first lookup with a grid: read the stock multipliers once
+        AcquireSRWLockExclusive(&g_gridLock);
+        if (!g_gridStockKnown) {
+            LONG ok = 1;
+            for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+                uint64_t cell = grid_stock_cell(grid, w, p);
+                if (cell) g_gridStock[w][p] = rd<float>(cell, 0x20); else ok = -1;
+            }
+            InterlockedExchange(&g_gridStockKnown, ok);
+        }
+        ReleaseSRWLockExclusive(&g_gridLock);
+    }
+    uint64_t ret = (uint64_t)_ReturnAddress();
+    for (const GridSite& s : kGridSites) {
+        if (s.ret != ret) continue;
+        if (!g_gridReady || g_gridStockKnown != 1) break;
+        uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
+        uint32_t aprop = (pa & 0x80) ? pa >> 20 : 0;
+        for (int w = 0; w < GW_N; w++) {
+            if (aprop != kGridWeaponProp[w] || g_gridWant[w][s.part] < 0 || !grid_target_ok(s.part, pb)) continue;
+            if (!g_gridSub[w][s.part]) {   // first such hit: copy this grid's stock capital cell (a private 56 bytes)
+                AcquireSRWLockExclusive(&g_gridLock);
+                if (!g_gridSub[w][s.part]) {
+                    uint64_t cell = grid_stock_cell(grid, w, s.part);
+                    if (cell) {
+                        uint8_t* c = g_gridCopy[w][s.part];
+                        memcpy(c, (const void*)cell, 56);
+                        float stock = rd<float>(cell, 0x20), now = (float)(stock * g_gridWant[w][s.part]);
+                        *(float*)(c + 0x20) = now;
+                        InterlockedExchange64((volatile LONG64*)&g_gridSub[w][s.part], (LONG64)(uint64_t)c);
+                        status("values: materialgrid.%s.%s %.9g -> %.9g (a private copy of the grid cell, for capital-ship damage only)",
+                               kGridWeapon[w], kGridPart[s.part], (double)stock, (double)now);
+                    }
+                }
+                ReleaseSRWLockExclusive(&g_gridLock);
+            }
+            if (g_gridSub[w][s.part]) r = g_gridSub[w][s.part];
+        }
+        break;
+    }
+    if (!g_materialLog) return r;
+    uint32_t pa = a ? rd<uint32_t>((uint64_t)a, 0) : 0, pb = b ? rd<uint32_t>((uint64_t)b, 0) : 0;
+    AcquireSRWLockExclusive(&g_matLock);
+    bool seen = false;
+    for (int i = 0; i < g_matSeenCount && !seen; i++)
+        seen = g_matSeen[i].a == pa && g_matSeen[i].b == pb && g_matSeen[i].ret == ret;
+    if (!seen && g_matSeenCount < 2048) {
+        g_matSeen[g_matSeenCount++] = { pa, pb, ret };
+        status("material: caller %p  a %08x (%s, property %u)  b %08x (%s, property %u)  -> %p", (void*)ret,
+               pa, (pa & 0x80) ? "set" : "default", pa >> 20, pb, (pb & 0x80) ? "set" : "default", pb >> 20, (void*)r);
+        if (g_matSeenCount == 2048) status("material: 2048 distinct pairs logged; no more");
+    }
+    ReleaseSRWLockExclusive(&g_matLock);
+    return r;
+}
+
+// The grid settings, main thread: publish the profile's values for the hook (once the targets exist), and record the
+// stock multipliers the hook read as the pseudo-config "materialgrid" (defaults.ini, for the app and the limits).
+// It never looks anything up itself.
+static bool g_gridRecorded;
+static void grid_apply() {
+    if (!g_gridReady && g_targetCount >= 0) {
+        for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+            g_gridWant[w][p] = -1;
+            char want[64]; sprintf_s(want, "%s.%s", kGridWeapon[w], kGridPart[p]);
+            for (int t = 0; t < g_targetCount; t++)
+                if (!strcmp(g_targets[t].asset, "materialgrid") && !strcmp(g_targets[t].key, want)) {
+                    g_gridWant[w][p] = (float)g_targets[t].value; g_targets[t].hit = true; }
+        }
+        InterlockedExchange(&g_gridReady, 1);
+    }
+    if (g_gridRecorded || !g_gridStockKnown) return;
+    g_gridRecorded = true;
+    if (g_gridStockKnown < 0) { status("materialgrid: the grid's laser/ion capital cells are not damage relations; grid settings off"); return; }
+    for (int w = 0; w < GW_N; w++) for (int p = 0; p < GP_N; p++) {
+        char key[96]; sprintf_s(key, "materialgrid.%s.%s", kGridWeapon[w], kGridPart[p]);
+        DefaultSlot* d = default_slot(key, true); if (d) d->value = g_gridStock[w][p];
+    }
+    if (!asset_seen("materialgrid") && g_seenCount < 4096) {
+        if (g_seenNames) strcpy_s(g_seenNames[g_seenCount], "MaterialGrid");
+        strcpy_s(g_seenAssets[g_seenCount++], "materialgrid");
+    }
+    g_defaultsDirty = true;
+}
+
 typedef uint64_t(__fastcall* lvlstep2_t)(uint64_t mgr, uint64_t server, uint64_t state);
 static lvlstep2_t o_lvlstep2;
 static uint64_t __fastcall h_lvlstep2(uint64_t mgr, uint64_t server, uint64_t state) {
@@ -2216,6 +2378,9 @@ static Site g_sites[] = {
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
+    {"material-lookup 0x14057dd20", 0x14057dd20, 15,
+     {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02},
+     (void*)h_matlookup, (void**)&o_matlookup},
 #endif
 };
 
