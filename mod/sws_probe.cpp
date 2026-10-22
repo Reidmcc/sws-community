@@ -492,6 +492,7 @@ static bool g_joinRemote = false;       // [server] join_remote: 1 = a joiner's 
 static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue requests (diagnostic)
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
+static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -531,6 +532,7 @@ static void read_server_ini() {
       g_bundleLog = GetPrivateProfileIntW(L"server", L"bundle_log", 1, ini) != 0;
       g_valuesOn = GetPrivateProfileIntW(L"server", L"values", 1, ini) != 0;
       g_observe = GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;
+      g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
@@ -2059,7 +2061,9 @@ static LONG CALLBACK crash_catcher(PEXCEPTION_POINTERS ep) {
 
 // Stack sampler (diagnostics): every 2 s for the first 3 minutes, briefly suspends each other thread and logs its
 // instruction pointer plus the first return addresses into the game's code found on its stack, so we can see what the
-// engine is waiting on. Only reads; threads are resumed immediately.
+// engine is waiting on. Only reads; threads are resumed immediately. Only in dedicated mode or with stack_sample=1: in
+// normal play a round can stall (2026-10-22 18:08:20, one round took 1.7 s and the simulation froze 0.52 s; Pseudo
+// felt two stutters), and since 10-20 it had run for the first 3 minutes of every launch.
 static void sample_threads(int round) {
     DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
     HANDLE snapH = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -2101,7 +2105,8 @@ static DWORD WINAPI sampler(LPVOID) {
         Sleep(round == 0 ? 500 : 2000);
         if (!g_netWrapped && round < 10) install_socket_wrappers();
         if (g_sockLog && !g_sockPatched && round < 10) install_socket_passthrough();
-        sample_threads(round);
+        if (g_dedicated || g_stackSample) sample_threads(round);
+        else if (round >= 10) break;
     }
     return 0;
 }
