@@ -35,8 +35,9 @@ DEFAULTS = os.path.join(BUILD, "defaults.ini")
 TYPES_H = os.path.join(PROJECT, "mod", "config_types.h")
 OUT = os.path.join(BUILD, "limits.ini")
 
+COMPONENTS = ["enginecustom", "hullcustom", "shieldcustom"]   # engine / hull / shield components: one category
 CATEGORIES = ["starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata", "starshippowermanagement",
-              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"]
+              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS
 SPEED_CAP = 300.0
 SPEED_FIELDS = {"starshipmovementconfig.maxspeeds", "starshipmovementconfig.afterburnermaxspeed",
                 "starshipmovementconfig.minspeed"}
@@ -50,6 +51,8 @@ def category(asset, keys=()):
     separately from aux weapons"). A primary (lasers, ion cannons, burst, autocannon, charge cannon) is a weapon config
     with laser regen pips; no aux weapon has them."""
     c = next((c for c in CATEGORIES if asset.startswith(c)), None)
+    if c in COMPONENTS:
+        return "starshipcustomconfig"
     if c == "starshipweaponconfig":
         c += "_primary" if any(k.startswith("weaponfiring.laserregenpips") for k in keys) else "_aux"
     return c
@@ -88,8 +91,9 @@ def int_fields():
 
 
 def limit(key, vals, is_int):
-    sentinel = -1.0 in vals
-    v = [x for x in vals if x != -1.0] or [0.0]
+    # -1 is ammo's "unlimited" marker; on a component it is a real -100%, so components pool it like any value
+    sentinel = -1.0 in vals and not key.startswith("starshipcustomconfig.")
+    v = ([x for x in vals if x != -1.0] if sentinel else list(vals)) or [0.0]
     mn, mx = min(v), max(v)
     src = []
     hi = 5 * mx if mx > 0 else (0.0 if mx == 0 else 0.1 * mx)
@@ -97,7 +101,12 @@ def limit(key, vals, is_int):
     src.append("5x highest stock" if mx > 0 else ("stock max 0" if mx == 0 else "0.1x nearest-zero stock"))
     src.append("0.1x lowest stock" if mn > 0 else ("stock has 0" if mn == 0 else "5x most negative stock"))
     name = key.rsplit(".", 1)[-1]
-    if key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
+    if key.startswith("starshipcustomconfig."):
+        # components are percentage modifiers (0.3 = +30%). Pseudo, 2026-10-21: max 5x the highest stock percentage,
+        # min -0.9, so the result never drops below 10% of the base; where the game ships lower (-1), that is allowed.
+        hi, lo = max(0.0, 5 * mx), min(-0.9, mn)
+        src = ["5x highest stock %" if mx > 0 else "0 (stock never raises it)", "-0.9 (10% of base)" if mn >= -0.9 else "lowest stock %"]
+    elif key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
         hi = SPEED_CAP; src[0] = "speed cap 300 (measured)"
     elif ANGLE.search(name) and hi > 180 and mx <= 180:
         hi = 180.0; src[0] = "angle, 180"

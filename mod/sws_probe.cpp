@@ -200,7 +200,8 @@ struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
 static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
 static char (*g_primaryWeapons)[96]; static int g_primaryCount;
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
-    "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig" };
+    "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
+    "enginecustom", "hullcustom", "shieldcustom" };   // the components share one category: starshipcustomconfig
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -234,6 +235,7 @@ static const ValueLimit* find_limit(const char* asset, const char* field) {
     const char* type = nullptr;
     for (const char* t : kLimitTypes) if (!strncmp(asset, t, strlen(t))) { type = t; break; }
     if (!type) return nullptr;
+    if (!strcmp(type, "enginecustom") || !strcmp(type, "hullcustom") || !strcmp(type, "shieldcustom")) type = "starshipcustomconfig";
     char key[160]; int k = sprintf_s(key, "%s.", type);
     if (!strcmp(type, "starshipweaponconfig")) {
         bool primary = false;
@@ -1201,6 +1203,16 @@ static int ve_resolve(uint64_t obj, int declared) {
     }
     return best;
 }
+// an attribute's key name from its IncomAttributeId asset (name at +0x18): ".../AttributeId_HealthMax" -> "healthmax"
+static void attr_name(uint64_t idObj, char* out, size_t cap) {
+    out[0] = 0; if (!idObj) return;
+    char full[160]; safe_copy(rd<uint64_t>(idObj, 0x18), full, sizeof full);
+    const char* s = strrchr(full, '/'); s = s ? s + 1 : full;
+    if (!_strnicmp(s, "attributeid_", 12)) s += 12;
+    size_t k = 0;
+    for (; *s && k + 1 < cap; s++) if (isalnum((unsigned char)*s) || *s == '_') out[k++] = (char)tolower((unsigned char)*s);
+    out[k] = 0;
+}
 static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve_fn fn, void* ctx) {
     if (!obj || depth > 5) return;
     const VeType& T = kVeTypes[type];
@@ -1233,6 +1245,25 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
                 size_t m = strlen(key); sprintf_s(key + m, cap - m, "[%d]", j);
                 if (f.kind == 8) { VeLeaf l{ key, arr + 4ull * j, false, 0, 0, 0 }; fn(ctx, l); }
                 else ve_walk(arr + (uint64_t)stride * j, f.type, key, cap, depth + 1, fn, ctx);
+                key[m] = 0;
+            }
+            break; }
+        case 10: {   // a component's AttributeModifier list: each Float modifier, named by its attribute
+            key[n] = 0;
+            uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 64) cnt = 0;
+            char names[64][64]; uint64_t mods[64];
+            for (int j = 0; j < cnt; j++) {
+                mods[j] = rd<uint64_t>(arr, 8 * j); names[j][0] = 0;
+                if (mods[j] && rd<uint64_t>(mods[j], 8) == kVeTypes[f.type].classInfo) attr_name(rd<uint64_t>(mods[j], 0x18), names[j], 64);
+            }
+            for (int j = 0; j < cnt; j++) {
+                if (!names[j][0]) continue;
+                int total = 0, k = 0;
+                for (int q = 0; q < cnt; q++) if (!strcmp(names[q], names[j])) { if (q < j) k++; total++; }
+                size_t m = strlen(key);
+                if (m + strlen(names[j]) + 8 >= cap) continue;
+                if (total > 1) sprintf_s(key + m, cap - m, ".%s[%d]", names[j], k); else sprintf_s(key + m, cap - m, ".%s", names[j]);
+                VeLeaf l{ key, mods[j] + 0x30, false, 0, 0, 0 }; fn(ctx, l);
                 key[m] = 0;
             }
             break; }
@@ -1311,10 +1342,26 @@ static void process_config(uint64_t inst, int type, const char* asset) {
             v.warned = true; status("values: %s.%s: no such value in this config (see defaults.ini for the names)", asset, v.key); }
     }
 }
+// defaults.ini accumulates across launches: each session loads only some configs (some weapons only in a match), and
+// the limits (tools/gen_limits.py) must come from every config ever seen, not from whichever launch wrote last. The
+// file as it was when this session started is kept, and its sections for configs this session hasn't seen are carried
+// over after the ones it has; a config seen again is rewritten whole.
+static char* g_prevDefaults; static bool g_prevLoaded;
 static void write_defaults_file() {
     if (!g_defaultsDirty || !g_dllDir[0]) return;
     g_defaultsDirty = false;
     wchar_t path[MAX_PATH]; swprintf_s(path, L"%ls\\defaults.ini", g_dllDir);
+    if (!g_prevLoaded) {
+        g_prevLoaded = true;
+        FILE* p = nullptr;
+        if (!_wfopen_s(&p, path, L"rb") && p) {
+            fseek(p, 0, SEEK_END); long len = ftell(p); fseek(p, 0, SEEK_SET);
+            if (len > 0 && len < (64 << 20) && (g_prevDefaults = (char*)malloc(len + 1)) != nullptr) {
+                size_t got = fread(g_prevDefaults, 1, len, p); g_prevDefaults[got] = 0;
+            }
+            fclose(p);
+        }
+    }
     FILE* f = nullptr; if (_wfopen_s(&f, path, L"w") || !f) return;
     fprintf(f, "; Values as the game loaded them (written by the value engine, issue #3). Sections are assets, keys are fields.\n");
     for (int a = 0; a < g_seenCount; a++) {
@@ -1325,7 +1372,23 @@ static void write_defaults_file() {
             if (d.hash && !strncmp(d.key, g_seenAssets[a], al) && d.key[al] == '.') fprintf(f, "%s=%.9g\n", d.key + al + 1, d.value);
         }
     }
+    int carried = 0; bool keep = false;   // earlier launches' configs this session hasn't seen
+    for (const char* line = g_prevDefaults; line && *line; ) {
+        const char* end = strchr(line, '\n'); size_t len = end ? (size_t)(end - line) : strlen(line);
+        char name[96];
+        if (line[0] == '[') {
+            const char* close = (const char*)memchr(line, ']', len);
+            size_t nl = close ? (size_t)(close - line - 1) : 0;
+            keep = close && nl > 0 && nl < sizeof name;
+            if (keep) { memcpy(name, line + 1, nl); name[nl] = 0; keep = !asset_seen(name); }
+            if (keep) { fprintf(f, "\n"); carried++; }
+        }
+        if (keep && len && line[0] != '\r' && line[0] != '\n') fprintf(f, "%.*s\n", (int)(len && line[len - 1] == '\r' ? len - 1 : len), line);
+        line = end ? end + 1 : nullptr;
+    }
     fclose(f);
+    static int lastCarried = -1;
+    if (carried != lastCarried) { lastCarried = carried; status("values: defaults.ini keeps %d config(s) from earlier launches", carried); }
 }
 static void value_engine_scan() {
     if (!g_valuesOn) return;

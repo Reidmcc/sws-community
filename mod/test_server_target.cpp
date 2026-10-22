@@ -190,6 +190,24 @@ int main() {
     FakeAttr* maxShield = fake_attr(0x5EED0001, 800.0f); *(uint64_t*)(shield + 0x68) = (uint64_t)maxShield;
     { uint32_t ids[1] = { 0x5EED0001 }; float vals[1] = { 800.0f }; *(uint64_t*)(shield + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* other = fake_alloc(0x100); *(uint64_t*)(other + 8) = (uint64_t)otherCls;   // a type the engine must skip
+    // a hull component: its AttributeModifier list (+0x60) of IncomAttributeModifierFloat objects (ClassInfo at +8,
+    // attribute id at +0x18 named at its own +0x18, Value at +0x30); afterburnerchargerate appears twice
+    uint8_t* hull = fake_alloc(0x100); *(uint64_t*)(hull + 8) = (uint64_t)fake_class(700);
+    *(const char**)(hull + 0x18) = "Game/Gameplay/Starships/Xwing/Config/HullCustom_Heavy_Xwing";
+    const char* modAttr[4] = { "Game/Gameplay/Starships/Common/Attribute/Ids/Health/AttributeId_HealthMax",
+                               "Game/Gameplay/Starships/Common/Attribute/Ids/Movement/AttributeId_AxisTurnRatesFactor",
+                               "Game/Gameplay/Starships/Common/Attribute/Ids/Movement/AttributeId_AfterburnerChargeRate",
+                               "Game/Gameplay/Starships/Common/Attribute/Ids/Movement/AttributeId_AfterburnerChargeRate" };
+    const float modVal[4] = { 0.6f, -0.25f, 0.5f, -0.5f };
+    float* mods[4];
+    uint8_t* modArr = fake_alloc(16 + 4 * 8); *(uint32_t*)(modArr + 12) = 4;
+    for (int i = 0; i < 4; i++) {
+        uint8_t* id = fake_alloc(0x40); *(const char**)(id + 0x18) = modAttr[i];
+        uint8_t* m = fake_alloc(0x40); *(uint64_t*)(m + 8) = 0x144a01760; *(uint64_t*)(m + 0x18) = (uint64_t)id;
+        *(float*)(m + 0x30) = modVal[i]; mods[i] = (float*)(m + 0x30);
+        *(uint64_t*)(modArr + 16 + 8 * i) = (uint64_t)m;
+    }
+    *(uint64_t*)(hull + 0x60) = (uint64_t)(modArr + 16);
     uint8_t* blast = fake_alloc(0x100); *(uint64_t*)(blast + 8) = (uint64_t)fake_class(450);   // the piercing torpedo's explosion
     *(const char**)(blast + 0x18) = "LiveService/Gameplay/Starships/Common/Projectiles/Config/Tuning/ExplosionConfigLS_Missile_PiercingTorpedo";
     FakeAttr* blastDmg = fake_attr(0x5EED0002, 2000.0f); *(uint64_t*)(blast + 0x68) = (uint64_t)blastDmg;
@@ -199,6 +217,7 @@ int main() {
     *(uint16_t*)(0x1449fc370 + 0x48) = 500; *(uint16_t*)(0x1449fc370 + 0x4a) = 500;   // StarshipWeaponConfig
     *(uint16_t*)(0x144a029c0 + 0x48) = 600; *(uint16_t*)(0x144a029c0 + 0x4a) = 699;   // StarshipWeaponFiringData family
     *(uint16_t*)(0x144a38400 + 0x48) = 610; *(uint16_t*)(0x144a38400 + 0x4a) = 610;   // LaserRegenWeaponFiringData
+    *(uint16_t*)(0x144a02dc0 + 0x48) = 700; *(uint16_t*)(0x144a02dc0 + 0x4a) = 700;   // StarshipHullCustomConfig
     uint8_t* weapon = fake_alloc(0x100); *(uint64_t*)(weapon + 8) = (uint64_t)fake_class(500);
     *(const char**)(weapon + 0x18) = "Game/Gameplay/Starships/XWing/Config/StarshipWeaponConfig_Las_Reb_XWing";
     uint8_t* firing = fake_alloc(0x100); *(uint64_t*)(firing + 8) = (uint64_t)fake_class(610);
@@ -211,9 +230,9 @@ int main() {
     { uint32_t ids[1] = { 0x77770001 }; float vals[1] = { 0.1333f }; *(uint64_t*)(weapon + 0x40) = (uint64_t)fake_reglist(1, ids, vals); }
     uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
     *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
-    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast;
+    uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast; insts1[4] = hull;
     uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon;
-    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 4;
+    uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 5;
     uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 3;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
@@ -221,7 +240,16 @@ int main() {
     uint8_t* centry = fake_alloc(0x80); *(uint8_t**)(centry + 0x68) = domain;
     *(uint8_t**)(0x1442d18c8 + 4 * 8) = centry;   // compartment 4 ("Game")
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
-    wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini"); DeleteFileW(defaultsPath);
+    wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini");
+    {   // an earlier launch's file: a config this run never loads (must be carried over) and a stale section for one it
+        // does (must be rewritten whole, so its stale key goes)
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, defaultsPath, L"wb") == 0 && f) {
+            fputs("; earlier launch" "\r\n" "\r\n" "[oldconfig_from_earlier]" "\r\n" "foo=1" "\r\n" "bar[2]=-0.5" "\r\n" "\r\n"
+                  "[starshipmovementconfig_xwing]" "\r\n" "stalefield=9" "\r\n", f);
+            fclose(f);
+        }
+    }
     check(GetModuleHandleW(L"sws_server_test.dll") != nullptr, "DLL was loaded at startup by the launcher's APC");
     for (int i = 0; i < 300 && *(uint8_t*)0x1401ae7d0 != 0xFF; i++) Sleep(50);
     check(*(uint8_t*)0x1401ae7d0 == 0xFF && *(uint8_t*)0x1401aac90 == 0xFF && *(uint8_t*)0x1401bf4d0 == 0xFF, "server hooks installed");
@@ -261,6 +289,10 @@ int main() {
     check(maxShield->value == 900.0f, "value engine: shield config written");
     check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
+    printf("      (hull component modifiers: health %g, turn %g, boost charge [0] %g [1] %g)\n", *mods[0], *mods[1], *mods[2], *mods[3]);
+    check(*mods[0] == 0.8f, "components: a modifier named by its attribute written (hull healthmax 0.6 -> 0.8)");
+    check(*mods[1] == -0.9f, "components: a modifier below the floor clamped (turn -2 -> -0.9)");
+    check(*mods[2] == 0.5f && *mods[3] == -0.2f, "components: a repeated attribute addressed by index ([1] -0.5 -> -0.2, [0] untouched)");
     printf("      (turn rate %g %g %g, list %g %g %g; fire interval %g list %g; burst %d list %d; pip cost [2] %g [3] %g [4] %g)\n",
            player.turn->x, player.turn->y, player.turn->z, player.v3[0], player.v3[1], player.v3[2], rof->value,
            *(float*)(*(uint64_t*)(weapon + 0x40) + 4), burst->value, *(int32_t*)(ilist + 20),
@@ -279,8 +311,13 @@ int main() {
               strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800") &&
               strstr(buf, "afterburneraxisturnrate.y=5") && strstr(buf, "weaponfiring.laserregenpips[3].costpershot=3.25") &&
               strstr(buf, "weaponfiring.burstfirenumshotsattribute=3") &&
-              strstr(buf, "[explosionconfigls_missile_piercingtorpedo]") && strstr(buf, "blastdamage=2000"),
+              strstr(buf, "[explosionconfigls_missile_piercingtorpedo]") && strstr(buf, "blastdamage=2000") &&
+              strstr(buf, "[hullcustom_heavy_xwing]") && strstr(buf, "healthmax=0.6") &&
+              strstr(buf, "afterburnerchargerate[0]=0.5") && strstr(buf, "afterburnerchargerate[1]=-0.5"),
               "value engine: defaults.ini records the values as loaded");
+        check(n && strstr(buf, "[oldconfig_from_earlier]") && strstr(buf, "foo=1") && strstr(buf, "bar[2]=-0.5") &&
+              !strstr(buf, "stalefield") && !strstr(buf, "earlier launch"),
+              "value engine: defaults.ini keeps configs from earlier launches; a config seen again is rewritten whole");
     }
 
     // socket pass-through: stand-in vtables at the real addresses, then calls through them as the engine makes them
@@ -351,6 +388,8 @@ int main() {
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
         const char* canon[] = { "pinball=0;multidrift=1;", "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
+                                "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
+                                "hullcustom_heavy_xwing.healthmax=0.8;",
                                 "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
                                 "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
                                 "starshipmovementconfig_xwing.drifttransitiontime=5;", "starshipmovementconfig_xwing.maxspeeds[8]=150;",
