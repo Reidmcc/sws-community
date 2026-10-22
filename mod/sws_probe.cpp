@@ -199,6 +199,7 @@ static bool profile_name_ok(const wchar_t* n) {
 struct ValueLimit { char key[160]; double lo, hi; bool isInt, neg1, locked; };
 static ValueLimit* g_limits; static int g_limitCount = -1;   // -1: limits.ini not loaded
 static char (*g_primaryWeapons)[96]; static int g_primaryCount;
+static char (*g_capitalConfigs)[96]; static int g_capitalCount;   // [capital]: limited as <type>_capital
 static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
     "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
     "enginecustom", "hullcustom", "shieldcustom",   // the components share one category: starshipcustomconfig
@@ -223,16 +224,21 @@ static void load_limits(const wchar_t* dir) {
         L.isInt = wcschr(flags, L'i') != nullptr; L.neg1 = wcschr(flags, L'n') != nullptr; L.locked = wcschr(flags, L'x') != nullptr;
         g_limitCount++;
     }
-    n = sec ? GetPrivateProfileSectionW(L"primary", sec, cap, li) : 0;
-    g_primaryWeapons = (char(*)[96])calloc(1024, 96);
-    for (wchar_t* e = sec; g_primaryWeapons && n && *e && g_primaryCount < 1024; e += wcslen(e) + 1) {
-        if (e[0] == L';') continue;
-        int k = 0; char* d = g_primaryWeapons[g_primaryCount];   // the name is everything before '='
-        for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
-        d[k] = 0; if (k) g_primaryCount++;
-    }
+    auto read_names = [&](const wchar_t* section, char (*&out)[96], int& count) {   // the name is everything before '='
+        n = sec ? GetPrivateProfileSectionW(section, sec, cap, li) : 0;
+        out = (char(*)[96])calloc(1024, 96);
+        for (wchar_t* e = sec; out && n && *e && count < 1024; e += wcslen(e) + 1) {
+            if (e[0] == L';') continue;
+            int k = 0; char* d = out[count];
+            for (wchar_t* c = e; *c && *c != L'=' && k < 95; c++) if (!iswspace(*c)) d[k++] = (char)towlower(*c);
+            d[k] = 0; if (k) count++;
+        }
+    };
+    read_names(L"primary", g_primaryWeapons, g_primaryCount);
+    read_names(L"capital", g_capitalConfigs, g_capitalCount);
     free(sec);
-    status("limits: %d field limits, %d primary weapon configs from %ls", g_limitCount, g_primaryCount, li);
+    status("limits: %d field limits, %d primary weapon configs, %d capital-ship configs from %ls", g_limitCount,
+           g_primaryCount, g_capitalCount, li);
 }
 // the limit for asset.field: <type of the asset>.<field without [n]>
 static const ValueLimit* find_limit(const char* asset, const char* field) {
@@ -242,7 +248,10 @@ static const ValueLimit* find_limit(const char* asset, const char* field) {
     if (!type) return nullptr;
     if (!strcmp(type, "enginecustom") || !strcmp(type, "hullcustom") || !strcmp(type, "shieldcustom")) type = "starshipcustomconfig";
     char key[160]; int k = sprintf_s(key, "%s.", type);
-    if (!strcmp(type, "starshipweaponconfig")) {
+    bool capital = false;
+    for (int i = 0; i < g_capitalCount && !capital; i++) capital = !strcmp(g_capitalConfigs[i], asset);
+    if (capital) k = sprintf_s(key, "%s_capital.", type);
+    else if (!strcmp(type, "starshipweaponconfig")) {
         bool primary = false;
         for (int i = 0; i < g_primaryCount && !primary; i++) primary = !strcmp(g_primaryWeapons[i], asset);
         k = sprintf_s(key, "%s_%s.", type, primary ? "primary" : "aux");

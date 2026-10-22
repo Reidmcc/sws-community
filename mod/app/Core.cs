@@ -67,6 +67,7 @@ namespace SwsSettings
         public bool Loaded;
         public readonly Dictionary<string, Limit> ByKey = new Dictionary<string, Limit>(StringComparer.Ordinal);
         public readonly HashSet<string> Primary = new HashSet<string>(StringComparer.Ordinal);
+        public readonly HashSet<string> Capital = new HashSet<string>(StringComparer.Ordinal);   // [capital]: <type>_capital
         public static readonly string[] Types = { "starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata",
             "starshippowermanagement", "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig",
             "enginecustom", "hullcustom", "shieldcustom",
@@ -92,13 +93,14 @@ namespace SwsSettings
                 L.ByKey[key] = new Limit { Key = key, Lo = lo, Hi = hi, IsInt = flags.Contains('i'), Neg1 = flags.Contains('n'),
                     Locked = flags.Contains('x'), Source = semi > 0 ? line.Substring(semi + 1).Trim() : "" };
             }
-            foreach (var line in Ini.Section(file, "primary"))
-            {
-                if (line.Length == 0 || line[0] == ';') continue;
-                int eq = line.IndexOf('='); string name = eq >= 0 ? line.Substring(0, eq) : line;
-                name = new string(name.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
-                if (name.Length > 0) L.Primary.Add(name);
-            }
+            foreach (var section in new[] { "primary", "capital" })
+                foreach (var line in Ini.Section(file, section))
+                {
+                    if (line.Length == 0 || line[0] == ';') continue;
+                    int eq = line.IndexOf('='); string name = eq >= 0 ? line.Substring(0, eq) : line;
+                    name = new string(name.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
+                    if (name.Length > 0) (section == "primary" ? L.Primary : L.Capital).Add(name);
+                }
             return L;
         }
         // the DLL's find_limit: <type of the asset>.<field without [n]>
@@ -108,6 +110,7 @@ namespace SwsSettings
             string type = Types.FirstOrDefault(t => asset.StartsWith(t, StringComparison.Ordinal));
             if (type == null) return null;
             if (type == "enginecustom" || type == "hullcustom" || type == "shieldcustom") type = "starshipcustomconfig";
+            else if (Capital.Contains(asset)) type += "_capital";
             else if (type == "starshipweaponconfig") type += Primary.Contains(asset) ? "_primary" : "_aux";
             string key = type + "." + Regex.Replace(field, @"\[[^\]]*\]", "");
             Limit l; return ByKey.TryGetValue(key, out l) ? l : null;
