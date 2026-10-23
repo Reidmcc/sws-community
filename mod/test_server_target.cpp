@@ -108,6 +108,12 @@ int main() {
     const uint8_t lvlstep2[] = {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20,
                                 0xb8,0x01,0x00,0x00,0x00, 0xc3};
     put(0x140cd6420, lvlstep2, sizeof lvlstep2);
+    // the data store's partition creator (FUN_140273060): its real 15-byte prologue, then a body that returns its third
+    // argument as the new partition (mov rax, r8) and the real epilogue
+    if (map(0x140270000, 0x10000) != (void*)0x140270000) { printf("FAIL  could not map the partition-creator region\n"); return 1; }
+    const uint8_t partnew[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20,
+                               0x4c,0x89,0xc0, 0x48,0x83,0xc4,0x20, 0x5f, 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x74,0x24,0x18, 0xc3};
+    put(0x140273060, partnew, sizeof partnew);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -283,6 +289,22 @@ int main() {
     check(GetModuleHandleW(L"sws_server_test.dll") != nullptr, "DLL was loaded at startup by the launcher's APC");
     for (int i = 0; i < 300 && *(uint8_t*)0x1401ae7d0 != 0xFF; i++) Sleep(50);
     check(*(uint8_t*)0x1401ae7d0 == 0xFF && *(uint8_t*)0x1401aac90 == 0xFF && *(uint8_t*)0x1401bf4d0 == 0xFF, "server hooks installed");
+
+    {   // Configs get the profile as their partition is created (capital ships are built from them as the map loads, before
+        // any scan): a passive-damage config in a partition the store never lists, handed over by the partition creator.
+        uint8_t* medcap = fake_alloc(0x100); *(uint64_t*)(medcap + 8) = (uint64_t)fake_class(950);
+        *(const char**)(medcap + 0x18) = "Game/Gameplay/Starships/CapitalShips/Common/DamageOverTime_Settings/DamageOverTimeSettings_Medcap";
+        FakeAttr* stop = fake_attr(0x5EED0C01, 0.15f); *(uint64_t*)(medcap + 0x98) = (uint64_t)stop;
+        uint32_t ids[1] = { 0x5EED0C01 }; float vals[1] = { 0.15f }; float* reg = fake_reglist(1, ids, vals);
+        *(uint64_t*)(medcap + 0x40) = (uint64_t)reg;
+        uint8_t** insts3 = (uint8_t**)fake_alloc(16); insts3[0] = medcap;
+        uint8_t* part3 = fake_alloc(0x40); *(uint8_t***)(part3 + 0x20) = insts3; *(uint16_t*)(part3 + 0x28) = 1;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        uint64_t got = ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part3, 0);
+        check(*(uint8_t*)0x140273060 == 0xFF && got == (uint64_t)part3, "partition creator hooked and passes the partition through");
+        check(stop->value == 0.5f && reg[1] == 0.5f,
+              "value engine: a config gets the profile as its partition is created, before any scan (passive damage floor 0.15 -> 0.5)");
+    }
 
     alignas(16) static uint8_t obj[0x700];
     uint64_t r = ((uint64_t(__fastcall*)(void*, char, uint64_t, uint64_t))0x1401ae7d0)(obj, 0, 0, 0);
@@ -464,6 +486,7 @@ int main() {
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
         const char* canon[] = { "pinball=0;multidrift=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+                                "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
                                 "hullcustom_heavy_xwing.healthmax=0.8;",
