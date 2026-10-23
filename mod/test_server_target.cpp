@@ -127,6 +127,11 @@ int main() {
     const uint8_t hkload[] = {0x40,0x55,0x57,0x41,0x54,0x41,0x57,0x48,0x8d,0x6c,0x24,0xc1,0x48,0x81,0xec,0x88,0x00,0x00,0x00,
                               0x48,0x89,0xc8, 0x48,0x8d,0x65,0x3f, 0x41,0x5f,0x41,0x5c,0x5f,0x5d,0xc3};
     put(0x142706d60, hkload, sizeof hkload);
+    // the second in-place loader (FUN_142706770): its real 18-byte prologue, then mov rax, rcx, add rsp, 0x40, the pops,
+    // and rbx/rbp back from their home slots
+    const uint8_t hkload2[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40,
+                               0x48,0x89,0xc8, 0x48,0x83,0xc4,0x40, 0x41,0x5e,0x5f,0x5e, 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x6c,0x24,0x10, 0xc3};
+    put(0x142706770, hkload2, sizeof hkload2);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -374,6 +379,14 @@ int main() {
         check(ok, "ship scale: a Y-wing mesh in a loading packfile is scaled 0.5 (domain, sections' domains, codecs), once");
         check(!memcmp(tm + 0x20, tdom, 32) && !memcmp(plain + 0x100, plainBefore, 0x300),
               "ship scale: a TIE fighter mesh (not asked for) and a buffer without the packfile magic are left alone");
+        // the second loader: a fresh packfile with the same Y-wing mesh, loaded through FUN_142706770
+        uint8_t* pk2 = fake_alloc(0x100 + ysz); *(uint32_t*)pk2 = 0x57e0e057; *(uint32_t*)(pk2 + 4) = 0x10c0c010;
+        put_mesh(pk2 + 0x100, *yw);
+        typedef uint64_t(__fastcall* hkload2_t)(uint64_t, uint32_t, uint64_t);
+        uint64_t r4 = ((hkload2_t)0x142706770)((uint64_t)pk2, 0x100 + ysz, 0);
+        const float* d2 = (const float*)(pk2 + 0x100 + 0x20);
+        check(*(uint8_t*)0x142706770 == 0xFF && r4 == (uint64_t)pk2 && d2[0] == ydom[0] * 0.5f && d2[4] == ydom[4] * 0.5f,
+              "ship scale: the second packfile loader is hooked too, and scales the same way");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)

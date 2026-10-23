@@ -1692,12 +1692,30 @@ static int hitbox_scale_packfile(uint64_t buf, uint32_t size) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: a packfile at %llx couldn't be read whole; left as it was", buf); }
     return scaled;
 }
+// Two in-place loaders take a packfile (and its size): FUN_142706d60, called by Frostbite's Havok resource loading
+// (FUN_141cad6d0), and FUN_142706770, reached through Havok's general load (FUN_1429c5d00, FUN_1429c7a60). Both are hooked;
+// the first flight with only the first hooked scaled nothing. Each one's packfiles are counted and the first few logged,
+// so a flight shows which path the starships' physics takes.
+static volatile LONG g_hkSeen[2], g_hkScaled[2];
+static void hitbox_on_load(int which, uint64_t packfile, uint32_t size) {
+    if (!g_hitboxScaleCount || !packfile || size < 0x100 || size >= (64u << 20) || rd<uint32_t>(packfile, 0) != 0x57e0e057) return;
+    int n = hitbox_scale_packfile(packfile, size);
+    LONG seen = InterlockedIncrement(&g_hkSeen[which]);
+    LONG scaled = n ? InterlockedExchangeAdd(&g_hkScaled[which], n) + n : g_hkScaled[which];
+    if (seen <= 3 || n || seen % 200 == 0)
+        status("hitbox: loader %d: packfile %llx (%u bytes), %d mesh(es) scaled; %ld packfiles and %ld meshes so far", which + 1, packfile, size, n, seen, scaled);
+}
 typedef uint64_t(__fastcall* hkload_t)(uint64_t packfile, uint32_t size, uint64_t a3, uint64_t a4);
 static hkload_t o_hkload;
 static uint64_t __fastcall h_hkload(uint64_t packfile, uint32_t size, uint64_t a3, uint64_t a4) {
-    if (g_hitboxScaleCount && packfile && size >= 0x100 && size < (64u << 20) && rd<uint32_t>(packfile, 0) == 0x57e0e057)
-        hitbox_scale_packfile(packfile, size);
+    hitbox_on_load(0, packfile, size);
     return o_hkload(packfile, size, a3, a4);
+}
+typedef uint64_t(__fastcall* hkload2_t)(uint64_t packfile, uint32_t size, uint64_t a3);
+static hkload2_t o_hkload2;
+static uint64_t __fastcall h_hkload2(uint64_t packfile, uint32_t size, uint64_t a3) {
+    hitbox_on_load(1, packfile, size);
+    return o_hkload2(packfile, size, a3);
 }
 static DWORD WINAPI observe_thread(LPVOID) {
     uint64_t seen[OBS_SLOTS] = {};   // the component each slot's history belongs to
@@ -2578,6 +2596,9 @@ static Site g_sites[] = {
     {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
      (void*)h_sspawn, (void**)&o_sspawn},
+    {"havok-packfile-load2 0x142706770", 0x142706770, 18,
+     {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40},
+     (void*)h_hkload2, (void**)&o_hkload2},
     {"havok-packfile-load 0x142706d60", 0x142706d60, 19,
      {0x40,0x55,0x57,0x41,0x54,0x41,0x57,0x48,0x8d,0x6c,0x24,0xc1,0x48,0x81,0xec,0x88,0x00,0x00,0x00},
      (void*)h_hkload, (void**)&o_hkload},
