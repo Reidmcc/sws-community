@@ -40,6 +40,9 @@ for /f %%r in ('git -C "%HERE%.." rev-parse --short HEAD') do set "REV=%%r"
 )
 
 pushd "%DIST%" || exit /b 1
-tar -a -c -f "sws-community-v%VER%.zip" "sws-community-v%VER%" || (popd & exit /b 1)
+rem Windows' own tar (bsdtar) writes a real zip for a .zip name. Named by its full path: in a Git Bash session Git's GNU
+rem tar comes first on the PATH, and it quietly writes a tar archive under the .zip name (v0.1.0 to v0.2.1 shipped that way).
+"%SystemRoot%\System32\tar.exe" -a -c -f "sws-community-v%VER%.zip" "sws-community-v%VER%" || (popd & exit /b 1)
 popd
+powershell -NoProfile -Command "$s=[IO.File]::OpenRead('%DIST%\sws-community-v%VER%.zip'); $b=New-Object byte[] 2; [void]$s.Read($b,0,2); $s.Close(); if ($b[0] -ne 0x50 -or $b[1] -ne 0x4B) { exit 1 }" || (echo NOT A ZIP: dist\sws-community-v%VER%.zip & exit /b 1)
 echo RELEASE OK: dist\sws-community-v%VER%.zip
