@@ -121,6 +121,12 @@ int main() {
     const uint8_t sspawn[] = {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00,
                               0x48,0x8b,0x41,0x10, 0x48,0x8d,0x65,0x50, 0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
     put(0x1416bcab0, sspawn, sizeof sspawn);
+    // Havok's in-place packfile loader (FUN_142706d60): its real 19-byte prologue, then mov rax, rcx (the packfile) and
+    // lea rsp, [rbp+0x3f] and the pops
+    if (map(0x142700000, 0x10000) != (void*)0x142700000) { printf("FAIL  could not map the packfile-loader region\n"); return 1; }
+    const uint8_t hkload[] = {0x40,0x55,0x57,0x41,0x54,0x41,0x57,0x48,0x8d,0x6c,0x24,0xc1,0x48,0x81,0xec,0x88,0x00,0x00,0x00,
+                              0x48,0x89,0xc8, 0x48,0x8d,0x65,0x3f, 0x41,0x5f,0x41,0x5c,0x5f,0x5d,0xc3};
+    put(0x142706d60, hkload, sizeof hkload);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -327,51 +333,47 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
-    {   // ship scale experiment (#20). The Y-wing's raycast compound is found by its box (+0x80) but its instance scale is
-        // no longer written (lasers ignore it). What's scaled is mesh geometry: a compressed mesh's data, found by its domain
-        // box (+0x20), with its sections (0x60 apart: domain +0x10/+0x20, codec offset and scale +0x30) where the table says
-        // and the first section's codec as loaded. [hitbox] ywing=0.5: a Y-wing mesh is scaled; a TIE fighter mesh isn't.
-        static const uint8_t ray[32] = {0x7b,0xef,0xc4,0xc0,0x02,0x50,0x89,0xbf,0x61,0xce,0x3e,0xc1,0xd4,0x49,0x5d,0xc0,
-                                        0x7b,0xef,0xc4,0x40,0xbd,0xf2,0xbe,0x3f,0x6a,0xf6,0x3c,0x41,0x00,0x43,0x02,0x41};
-        uint8_t* rc = fake_alloc(0xb0 + 9 * 0x80);
-        for (int k = 0; k < 9; k++) {
-            uint8_t* i = rc + 0xb0 + 0x80 * k;
-            *(float*)(i + 0x20) = 1; *(float*)(i + 0x34) = 1; *(float*)(i + 0x48) = 1; *(uint16_t*)(i + 0x2c) = 0x40; *(float*)(i + 0x60) = 1;
+    {   // ship scale (#20): the Havok packfile loader (FUN_142706d60) is hooked at its entry; a packfile holding a Y-wing
+        // mesh (its domain box at +0x20, its sections 0x60 apart where the table says, the first codec as shipped) has the
+        // mesh scaled 0.5 before the loader runs; a TIE fighter mesh (not asked for) and a buffer without the packfile magic
+        // are left alone. [hitbox] ywing=0.5.
+        const HitboxMesh* yw = nullptr; const HitboxMesh* tf = nullptr;
+        for (const HitboxMesh& m : kHitboxMeshes) {
+            if (!yw && !strcmp(m.ship, "ywing") && m.count > 1) yw = &m;
+            if (!tf && !strcmp(m.ship, "tiefighter")) tf = &m;
         }
-        memcpy(rc + 0x80, ray, 32); *(uint32_t*)(rc + 0x68) = 9;
-        auto fake_mesh = [](const HitboxMesh& m) {
-            uint8_t* d = fake_alloc(m.sections + m.count * 0x60 + 0x40);
+        auto put_mesh = [](uint8_t* d, const HitboxMesh& m) {
             memcpy(d + 0x20, m.domain, 32); *(uint32_t*)(d + 0x58) = m.count;
             for (uint32_t j = 0; j < m.count; j++) {
                 float* sec = (float*)(d + m.sections + 0x60 * j);
                 for (int c = 0; c < 3; c++) { sec[4 + c] = -1.0f - j; sec[8 + c] = 1.0f + j; sec[12 + c] = 0.25f * j; sec[15 + c] = 0.001f; }
             }
             memcpy(d + m.sections + 0x30, m.codec, 24);
-            return d;
         };
-        const HitboxMesh* yw = nullptr; const HitboxMesh* tf = nullptr;
-        for (const HitboxMesh& m : kHitboxMeshes) {
-            if (!yw && !strcmp(m.ship, "ywing") && m.count > 1) yw = &m;
-            if (!tf && !strcmp(m.ship, "tiefighter")) tf = &m;
-        }
-        uint8_t* ym = fake_mesh(*yw); uint8_t* tm = fake_mesh(*tf);
-        float ydom[8], ysec1[6], ycodec0[6], tdom[8];
+        uint32_t ysz = (yw->sections + yw->count * 0x60 + 0x100 + 0xff) & ~0xffu, tsz = (tf->sections + tf->count * 0x60 + 0x100 + 0xff) & ~0xffu;
+        uint8_t* pk = fake_alloc(0x100 + ysz + tsz);
+        *(uint32_t*)pk = 0x57e0e057; *(uint32_t*)(pk + 4) = 0x10c0c010;
+        uint8_t* ym = pk + 0x100; uint8_t* tm = pk + 0x100 + ysz;
+        put_mesh(ym, *yw); put_mesh(tm, *tf);
+        float ydom[8], ysec1[6], ycodec0[6]; uint8_t tdom[32];
         memcpy(ydom, ym + 0x20, 32); memcpy(ysec1, ym + yw->sections + 0x60 + 0x30, 24); memcpy(ycodec0, yw->codec, 24); memcpy(tdom, tm + 0x20, 32);
-        auto mesh_scaled = [&]() {
-            const float* d = (const float*)(ym + 0x20); const float* s1 = (const float*)(ym + yw->sections + 0x60 + 0x30);
-            const float* c0 = (const float*)(ym + yw->sections + 0x30);
-            for (int c = 0; c < 3; c++)
-                if (d[c] != ydom[c] * 0.5f || d[4 + c] != ydom[4 + c] * 0.5f) return false;
-            if (d[3] != ydom[3] || d[7] != ydom[7]) return false;   // the w lanes stay
-            for (int c = 0; c < 6; c++) if (s1[c] != ysec1[c] * 0.5f || c0[c] != ycodec0[c] * 0.5f) return false;
-            return true;
-        };
-        for (int t = 0; t < 60 && !mesh_scaled(); t++) Sleep(100);
-        Sleep(1200);   // another scan or two: a scaled mesh must not be scaled again
-        check(mesh_scaled(), "ship scale: a Y-wing mesh found by its domain box; its domain, sections' domains and codecs scaled 0.5, once");
-        check(!memcmp(tm + 0x20, tdom, 32), "ship scale: a TIE fighter mesh (not asked for) is left alone");
-        check(*(uint16_t*)(rc + 0xb0 + 0x2c) == 0x40 && *(float*)(rc + 0xb0 + 0x60) == 1.0f,
-              "ship scale: the compound is found but its instance scale is no longer written");
+        uint8_t* plain = fake_alloc(0x400); put_mesh(plain + 0x100, *yw);   // no packfile magic: not a packfile
+        uint8_t plainBefore[0x300]; memcpy(plainBefore, plain + 0x100, 0x300);
+        typedef uint64_t(__fastcall* hkload_t)(uint64_t, uint32_t, uint64_t, uint64_t);
+        uint64_t r1 = ((hkload_t)0x142706d60)((uint64_t)pk, 0x100 + ysz + tsz, 0, 0);
+        uint64_t r2 = ((hkload_t)0x142706d60)((uint64_t)plain, 0x400, 0, 0);
+        uint64_t r3 = ((hkload_t)0x142706d60)((uint64_t)pk, 0x100 + ysz + tsz, 0, 0);   // a second load of the same bytes
+        bool ok = true;
+        const float* d = (const float*)(ym + 0x20); const float* s1 = (const float*)(ym + yw->sections + 0x60 + 0x30);
+        const float* c0 = (const float*)(ym + yw->sections + 0x30);
+        for (int c = 0; c < 3; c++) if (d[c] != ydom[c] * 0.5f || d[4 + c] != ydom[4 + c] * 0.5f) ok = false;
+        if (d[3] != ydom[3] || d[7] != ydom[7]) ok = false;
+        for (int c = 0; c < 6; c++) if (s1[c] != ysec1[c] * 0.5f || c0[c] != ycodec0[c] * 0.5f) ok = false;
+        check(*(uint8_t*)0x142706d60 == 0xFF && r1 == (uint64_t)pk && r2 == (uint64_t)plain && r3 == (uint64_t)pk,
+              "ship scale: the Havok packfile loader is hooked and passes its packfile through");
+        check(ok, "ship scale: a Y-wing mesh in a loading packfile is scaled 0.5 (domain, sections' domains, codecs), once");
+        check(!memcmp(tm + 0x20, tdom, 32) && !memcmp(plain + 0x100, plainBefore, 0x300),
+              "ship scale: a TIE fighter mesh (not asked for) and a buffer without the packfile magic are left alone");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)

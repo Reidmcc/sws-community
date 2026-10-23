@@ -1627,180 +1627,77 @@ static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data
     for (int i = 0; i < n; i++) memcpy(&r->f[1 + i], &w[i], 4);
     commit();
 }
-// ---- Ship scale experiment (issue #20) ----------------------------------------------------------------------------
-// A starfighter's physics (starship_<ship>_physics_win32, Havok 2013.3 hknp) holds hknpStaticCompoundShapes: for most,
-// a collision shape and the raycast shape lasers hit. Each instance (128 bytes) has its rotation rows at +0x20/+0x30/
-// +0x40, translation at +0x50 and a scale vector at +0x60; the low 16 bits of row 0's w lane are its flags. The ships'
-// are all identity, zero and scale 1 with flags 0x40 (enabled), with the geometry in ship space, so scaling an instance
-// about its origin scales it about the ship's. Across the game's ~82,500 compound instances every scaled one has flag
-// 0x08 and no unscaled one does (Havok's "has scale"); scenery uses 0x20 with it (scale the surface, the convex radius).
-// In the 64-bit layout a compound's instance count is at +0x68 (the array at +0x60, or inline at +0xb0) and its bounding
-// box at +0x80. hitbox_shapes.h (local/tools/gen_hitbox_shapes.py) lists every starfighter's compounds by those 32 box
-// bytes and their counts. With [hitbox] <ship>=<scale> lines (ywing, xwing_ai, ...), a thread searches writable memory
-// every 10 s for those boxes, checks the instances, and gives each flags |= 0x28 and scale (s, s, s). Player and AI
-// physics are separate resources but some of their shapes are identical (the same box and count): those can't be told
-// apart, and are scaled if either is asked for (logged). Shrinking keeps a compound's own bounding tree conservative.
-// Experiment only: not in profiles or the fingerprint.
-#ifdef PROBE_TEST
-#define PROBE_TEST_HITBOX_WAIT 500
-#else
-#define PROBE_TEST_HITBOX_WAIT 10000
-#endif
+// ---- Ship scale (issue #20) ---------------------------------------------------------------------------------------
+// A starfighter's laser hitbox is the compressed triangle meshes in its physics (starship_<ship>_physics_win32, Havok
+// 2013.3 hknp). A mesh's data (hknpCompressedMeshShapeData, 64-bit layout) keeps its vertices quantized per section,
+// decoded as offset + q * scale with the section's six codec floats (+0x30), its shared vertices relative to the mesh's
+// domain box (+0x20/+0x30), and each section has a domain box (+0x10/+0x20) that its culling tree decodes against.
+// Multiplying those by s scales the mesh about the ship's origin, whatever reads it (2026-10-23: at 0.05, Rebel ships
+// couldn't be hit). The compounds' instance scale (flag 0x08) is ignored by the laser path.
+// The scale is applied as the packfile loads: Havok's in-place loader FUN_142706d60(packfile, size, 0, 0), called by
+// Frostbite's Havok resource loading (FUN_141cad6d0), is hooked at its entry, before its pointer fixups and finish
+// constructors, so everything Havok derives at load, and every body built later, starts from the scaled geometry.
+// (Scaling meshes found by searching memory mid-match stuttered and crashed: geometry changed under live bodies.)
+// hitbox_shapes.h (local/tools/gen_hitbox_shapes.py) lists every starfighter's meshes: their domain bytes, where their
+// sections start and how many, and the first section's codec as shipped. A mesh is scaled only if its count and first
+// codec are as shipped. [hitbox] <ship>=<scale> (ywing, xwing_ai, ...) says which; player and AI physics are separate
+// resources, but some meshes are identical in both, and those are scaled if either is asked for.
 #include "hitbox_shapes.h"
-static const int kHitboxShapeCount = (int)(sizeof kHitboxShapes / sizeof kHitboxShapes[0]);
 static const int kHitboxMeshCount = (int)(sizeof kHitboxMeshes / sizeof kHitboxMeshes[0]);
 static float hitbox_scale_for(const char* ship) {
     for (int i = 0; i < g_hitboxScaleCount; i++) if (!strcmp(g_hitboxScales[i].ship, ship)) return g_hitboxScales[i].scale;
     return 0;
 }
-// instances as the file has them (identity, no translation, enabled), allowing our own scale and flags
-static bool hb_instances_ok(uint64_t arr, uint32_t n) {
-    for (uint32_t k = 0; k < n; k++) {
-        uint64_t i = arr + 0x80ull * k;
-        if (rd<float>(i, 0x20) != 1.0f || rd<float>(i, 0x34) != 1.0f || rd<float>(i, 0x48) != 1.0f) return false;
-        if (rd<float>(i, 0x24) != 0 || rd<float>(i, 0x28) != 0 || rd<float>(i, 0x30) != 0 || rd<float>(i, 0x38) != 0 ||
-            rd<float>(i, 0x40) != 0 || rd<float>(i, 0x44) != 0) return false;
-        if (rd<float>(i, 0x50) != 0 || rd<float>(i, 0x54) != 0 || rd<float>(i, 0x58) != 0) return false;
-        if (!(rd<uint16_t>(i, 0x2c) & 0x40)) return false;
-    }
-    return true;
-}
-static void hitbox_found(uint64_t comp, int first) {
-    static uint64_t seen[256]; static int nseen;
-    uint32_t n = rd<uint32_t>(comp, 0x68);
-    // the table entries this compound could be: the same box and the same count
-    char who[160] = ""; float s = 0; int matches = 0;
-    for (int e = first; e < kHitboxShapeCount; e++) {
-        if (memcmp(kHitboxShapes[e].aabb, kHitboxShapes[first].aabb, 32) || kHitboxShapes[e].count != n) continue;
-        matches++;
-        if (strlen(who) + strlen(kHitboxShapes[e].ship) + 12 < sizeof who)
-            sprintf_s(who + strlen(who), sizeof who - strlen(who), "%s%s %d", who[0] ? " / " : "", kHitboxShapes[e].ship, kHitboxShapes[e].index);
-        float f = hitbox_scale_for(kHitboxShapes[e].ship); if (f > 0 && s == 0) s = f;
-    }
-    int k = 0; while (k < nseen && seen[k] != comp) k++;
-    bool fresh = k == nseen;
-    if (fresh && nseen < 256) seen[nseen++] = comp;
-    if (!matches) { if (fresh) status("hitbox: a known box at %llx, but its count (%u) matches no shape; left alone", comp, n); return; }
-    uint64_t arr = rd<uint64_t>(comp, 0x60); const char* where = "array pointer";
-    bool ok = arr && hb_instances_ok(arr, n);
-    if (!ok && hb_instances_ok(comp + 0xb0, n)) { arr = comp + 0xb0; where = "inline"; ok = true; }
-    if (!ok) { if (fresh) status("hitbox: %s at %llx, but its instances don't look right; left alone", who, comp); return; }
-    bool scale = false;   // the instance scale is ignored by the laser path (2026-10-23, 0.05 flight); meshes are scaled instead
-    (void)s;
-    int changed = 0;
-    for (uint32_t j = 0; scale && j < n; j++) {
-        uint64_t i = arr + 0x80ull * j;
-        bool done = (rd<uint16_t>(i, 0x2c) & 0x28) == 0x28 && rd<float>(i, 0x60) == s && rd<float>(i, 0x64) == s && rd<float>(i, 0x68) == s;
-        if (done) continue;
-        __try {
-            *(float*)(i + 0x60) = s; *(float*)(i + 0x64) = s; *(float*)(i + 0x68) = s;
-            *(uint16_t*)(i + 0x2c) |= 0x28;
-            changed++;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
-    if (fresh || changed)
-        status("hitbox: %s at %llx, %u instances (%s)%s%s", who, comp, n, where,
-               ", found (its meshes are what's scaled)", matches > 1 ? " [identical shapes: can't tell apart]" : "");
-    if (changed) status("hitbox:   %d instance(s) given scale %.3g and flags |= 0x28", changed, s);
-}
-// The geometry itself. A compressed mesh's data (hknpCompressedMeshShapeData) keeps its vertices quantized per section,
-// decoded as offset + q * scale with the section's six codec floats (+0x30), and its shared vertices relative to the mesh's
-// domain box (+0x20/+0x30); each section also has a domain box (+0x10/+0x20) that its culling tree decodes against.
-// Multiplying all of them by s scales the mesh about the ship's origin, whatever reads it. The table (kHitboxMeshes) has
-// each mesh's domain bytes, where its sections start, how many, and the first section's codec as loaded: a mesh is scaled
-// only if that codec is still as loaded (so never twice), and identical meshes in player and AI physics are scaled if
-// either is asked for.
-static void hitbox_mesh_found(uint64_t data, int first) {
-    static uint64_t seen[1024]; static int nseen;
-    const HitboxMesh& m = kHitboxMeshes[first];
-    float s = 0; char who[160] = ""; int matches = 0;
+// the scale for a mesh that matches table entry `first` (any identical entry asked for), and who it is, for the log
+static float hitbox_mesh_scale(int first, char* who, size_t cap, int* matches) {
+    const HitboxMesh& m = kHitboxMeshes[first]; float s = 0; *matches = 0; who[0] = 0;
     for (int e = 0; e < kHitboxMeshCount; e++) {
         const HitboxMesh& x = kHitboxMeshes[e];
         if (memcmp(x.domain, m.domain, 32) || x.count != m.count || x.sections != m.sections || memcmp(x.codec, m.codec, 24)) continue;
-        matches++;
-        if (strlen(who) + strlen(x.ship) + 12 < sizeof who)
-            sprintf_s(who + strlen(who), sizeof who - strlen(who), "%s%s mesh %d", who[0] ? " / " : "", x.ship, x.index);
+        (*matches)++;
+        if (strlen(who) + strlen(x.ship) + 12 < cap) sprintf_s(who + strlen(who), cap - strlen(who), "%s%s mesh %d", who[0] ? " / " : "", x.ship, x.index);
         float f = hitbox_scale_for(x.ship); if (f > 0 && s == 0) s = f;
     }
-    int k = 0; while (k < nseen && seen[k] != data) k++;
-    bool fresh = k == nseen;
-    if (fresh && nseen < 1024) seen[nseen++] = data;
-    uint8_t now[24]; for (int i = 0; i < 24; i++) now[i] = rd<uint8_t>(data + m.sections + 0x30, i);
-    if (rd<uint32_t>(data, 0x58) != m.count || memcmp(now, m.codec, 24)) {
-        if (fresh) status("hitbox: %s at %llx doesn't match its loaded form; left alone", who, data);
-        return;
-    }
-    if (!(s > 0 && s != 1.0f)) { if (fresh) status("hitbox: %s at %llx, %u sections, not asked to scale", who, data, m.count); return; }
+    return s;
+}
+// scale every known mesh found in [buf, buf + size) whose ship is asked for; returns how many
+static int hitbox_scale_packfile(uint64_t buf, uint32_t size) {
+    int scaled = 0;
     __try {
-        for (uint32_t j = 0; j < m.count; j++) {
-            float* sec = (float*)(data + m.sections + 0x60ull * j);
-            for (int c = 0; c < 3; c++) { sec[4 + c] *= s; sec[8 + c] *= s; }   // the section's domain min (+0x10) and max (+0x20)
-            for (int c = 0; c < 6; c++) sec[12 + c] *= s;                      // its codec: offset xyz, scale xyz (+0x30)
-        }
-        float* dom = (float*)(data + 0x20);
-        for (int c = 0; c < 3; c++) { dom[c] *= s; dom[4 + c] *= s; }          // the mesh's domain min (+0x20) and max (+0x30)
-    } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: %s at %llx: write failed", who, data); return; }
-    status("hitbox: %s at %llx, %u sections, geometry scaled %.3g%s", who, data, m.count, s, matches > 1 ? " [identical meshes: can't tell apart]" : "");
-}
-// One pass over memory per round, however many shapes are known: every 16-byte-aligned position's first 8 bytes are
-// looked up in a small open-addressing hash of the keys (the compounds' boxes, and the domains of the meshes of ships
-// asked for). The first build searched once per key, ~100 passes over the game's memory a round, which outlasted a match.
-struct HitboxKey { uint64_t first; int kind, index; };   // kind 0 = compound box, 1 = mesh domain
-static const int kHitboxKeySlots = 1024;                  // a power of two, well above the ~170 keys
-static HitboxKey g_hbKeys[kHitboxKeySlots]; static bool g_hbUsed[kHitboxKeySlots];
-static inline uint32_t hb_slot(uint64_t k) { return (uint32_t)((k * 0x9E3779B97F4A7C15ull) >> 54) & (kHitboxKeySlots - 1); }
-static void hb_add(const uint8_t* bytes, int kind, int index) {
-    uint64_t k; memcpy(&k, bytes, 8);
-    for (uint32_t i = hb_slot(k);; i = (i + 1) & (kHitboxKeySlots - 1)) {
-        if (!g_hbUsed[i]) { g_hbUsed[i] = true; g_hbKeys[i] = { k, kind, index }; return; }
-        const uint8_t* other = g_hbKeys[i].kind ? kHitboxMeshes[g_hbKeys[i].index].domain : kHitboxShapes[g_hbKeys[i].index].aabb;
-        if (g_hbKeys[i].first == k && g_hbKeys[i].kind == kind && !memcmp(other, bytes, 32)) return;   // the same 32 bytes: once
-    }
-}
-static void hitbox_scan() {
-    memset(g_hbUsed, 0, sizeof g_hbUsed);
-    for (int h = 0; h < kHitboxShapeCount; h++) hb_add(kHitboxShapes[h].aabb, 0, h);
-    for (int h = 0; h < kHitboxMeshCount; h++) {
-        float want = hitbox_scale_for(kHitboxMeshes[h].ship);
-        if (want > 0 && want != 1.0f) hb_add(kHitboxMeshes[h].domain, 1, h);   // only the meshes of ships asked for
-    }
-    uint64_t a = 0x10000; MEMORY_BASIC_INFORMATION mbi;
-    while (a < 0x7FFFFFFF0000ull && VirtualQuery((void*)a, &mbi, sizeof mbi)) {
-        uint64_t base = (uint64_t)mbi.BaseAddress, size = mbi.RegionSize;
-        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) &&
-            !(mbi.Protect & PAGE_GUARD)) {
-            __try {
-                const uint64_t* p = (const uint64_t*)base; size_t n = size / 8;
-                for (size_t k = 0; k + 4 <= n; k += 2) {   // the boxes are 16-byte aligned
-                    uint64_t v = p[k];
-                    if (!v) continue;
-                    for (uint32_t i = hb_slot(v); g_hbUsed[i]; i = (i + 1) & (kHitboxKeySlots - 1)) {
-                        const HitboxKey& key = g_hbKeys[i];
-                        if (key.first != v) continue;
-                        if (key.kind == 0) {
-                            if (memcmp(p + k, kHitboxShapes[key.index].aabb, 32)) continue;
-                            uint64_t comp = (uint64_t)(p + k) - 0x80;
-                            if (comp >= base) hitbox_found(comp, key.index);
-                        } else {
-                            if (memcmp(p + k, kHitboxMeshes[key.index].domain, 32)) continue;
-                            uint64_t data = (uint64_t)(p + k) - 0x20;
-                            if (data >= base) hitbox_mesh_found(data, key.index);
-                        }
-                    }
+        for (uint64_t p = buf; p + 0x40 <= buf + size; p += 16) {
+            uint64_t v = *(const uint64_t*)p;
+            if (!v) continue;
+            for (int h = 0; h < kHitboxMeshCount; h++) {
+                const HitboxMesh& m = kHitboxMeshes[h];
+                uint64_t first; memcpy(&first, m.domain, 8);
+                if (v != first || memcmp((const void*)p, m.domain, 32)) continue;
+                uint64_t data = p - 0x20;
+                if (data < buf || data + m.sections + 0x60ull * m.count > buf + size) continue;
+                if (*(const uint32_t*)(data + 0x58) != m.count || memcmp((const void*)(data + m.sections + 0x30), m.codec, 24)) continue;
+                char who[160]; int matches;
+                float s = hitbox_mesh_scale(h, who, sizeof who, &matches);
+                if (!(s > 0 && s != 1.0f)) break;
+                for (uint32_t j = 0; j < m.count; j++) {
+                    float* sec = (float*)(data + m.sections + 0x60ull * j);
+                    for (int c = 0; c < 3; c++) { sec[4 + c] *= s; sec[8 + c] *= s; }   // the section's domain min (+0x10) and max (+0x20)
+                    for (int c = 0; c < 6; c++) sec[12 + c] *= s;                      // its codec: offset xyz, scale xyz (+0x30)
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                float* dom = (float*)(data + 0x20);
+                for (int c = 0; c < 3; c++) { dom[c] *= s; dom[4 + c] *= s; }          // the mesh's domain min (+0x20) and max (+0x30)
+                status("hitbox: %s, %u sections, scaled %.3g as it loads%s", who, m.count, s, matches > 1 ? " [identical meshes: can't tell apart]" : "");
+                scaled++;
+                break;
+            }
         }
-        a = base + size;
-    }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: a packfile at %llx couldn't be read whole; left as it was", buf); }
+    return scaled;
 }
-static DWORD WINAPI hitbox_thread(LPVOID) {
-    for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
-    status("hitbox: searching every %.1f s for %d known starfighter shapes and %d meshes", PROBE_TEST_HITBOX_WAIT / 1000.0, kHitboxShapeCount, kHitboxMeshCount);
-    for (int round = 0;; round++) {
-        Sleep(PROBE_TEST_HITBOX_WAIT);
-        ULONGLONG t0 = GetTickCount64(); hitbox_scan(); ULONGLONG ms = GetTickCount64() - t0;
-        if (round < 3 || ms > 3000) status("hitbox: search round %d took %llu ms", round, ms);
-    }
+typedef uint64_t(__fastcall* hkload_t)(uint64_t packfile, uint32_t size, uint64_t a3, uint64_t a4);
+static hkload_t o_hkload;
+static uint64_t __fastcall h_hkload(uint64_t packfile, uint32_t size, uint64_t a3, uint64_t a4) {
+    if (g_hitboxScaleCount && packfile && size >= 0x100 && size < (64u << 20) && rd<uint32_t>(packfile, 0) == 0x57e0e057)
+        hitbox_scale_packfile(packfile, size);
+    return o_hkload(packfile, size, a3, a4);
 }
 static DWORD WINAPI observe_thread(LPVOID) {
     uint64_t seen[OBS_SLOTS] = {};   // the component each slot's history belongs to
@@ -2681,6 +2578,9 @@ static Site g_sites[] = {
     {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
      (void*)h_sspawn, (void**)&o_sspawn},
+    {"havok-packfile-load 0x142706d60", 0x142706d60, 19,
+     {0x40,0x55,0x57,0x41,0x54,0x41,0x57,0x48,0x8d,0x6c,0x24,0xc1,0x48,0x81,0xec,0x88,0x00,0x00,0x00},
+     (void*)h_hkload, (void**)&o_hkload},
     {"partition-new 0x140273060", 0x140273060, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
      (void*)h_partnew, (void**)&o_partnew},
@@ -2911,7 +2811,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 #endif
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
         if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
-        if (g_hitboxScaleCount) { HANDLE h = CreateThread(nullptr, 0, hitbox_thread, nullptr, 0, nullptr); if (h) CloseHandle(h); }
+        for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif
