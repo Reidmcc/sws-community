@@ -121,9 +121,15 @@ namespace SwsSettings
 
         // header
         readonly Label headerProfile = Theme.Label("", Theme.Body), headerFp = Theme.Label("", Theme.Bold, Theme.Accent);
-        readonly Button tabPlay, tabValues;
+        readonly Button tabPlay, tabRules, tabValues;
+        const int PagePlay = 0, PageRules = 1, PageValues = 2;
         readonly Panel playPage = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back, Padding = new Padding(24, 18, 24, 18) };
         readonly Panel valuesPage = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back, Padding = new Padding(16, 12, 16, 12) };
+        readonly Panel rulesPage = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back, Padding = new Padding(24, 18, 24, 18) };
+
+        // rules page: the profile's yes/no rules and fixes, each off by default (the game as shipped)
+        readonly CheckBox ruleZavian = Theme.Check("Zavian Abyss: full middle X-wing creep pack");
+        readonly Label rulesProfile = Theme.Label("", Theme.Big), rulesNote = Theme.Label("", Theme.Small, Theme.Changed);
 
         // values page
         readonly ComboBox profileBox = Theme.Combo();
@@ -167,22 +173,24 @@ namespace SwsSettings
             var header = new Panel { Dock = DockStyle.Top, Height = 58, BackColor = Theme.Panel, Padding = new Padding(16, 12, 16, 8) };
             var left = Theme.Row(); left.Dock = DockStyle.Left;
             left.Controls.Add(new Label { Text = "Squadrons community mod", AutoSize = true, Font = Theme.Title, ForeColor = Theme.Text, Margin = new Padding(0, 2, 28, 0) });
-            tabPlay = Theme.Button("Play", (s, e) => ShowPage(true)); tabValues = Theme.Button("Profile and values", (s, e) => ShowPage(false));
-            left.Controls.Add(tabPlay); left.Controls.Add(tabValues);
+            tabPlay = Theme.Button("Play", (s, e) => ShowPage(PagePlay)); tabRules = Theme.Button("Rules and fixes", (s, e) => ShowPage(PageRules));
+            tabValues = Theme.Button("Profile and values", (s, e) => ShowPage(PageValues));
+            left.Controls.Add(tabPlay); left.Controls.Add(tabRules); left.Controls.Add(tabValues);
             var right = Theme.Row(); right.Dock = DockStyle.Right;
             right.Controls.Add(headerProfile); right.Controls.Add(Theme.Label("fingerprint", Theme.Small, Theme.Muted)); right.Controls.Add(headerFp);
             header.Controls.Add(right); header.Controls.Add(left);
 
             BuildPlayPage();
+            BuildRulesPage();
             BuildValuesPage();
-            Controls.Add(valuesPage); Controls.Add(playPage); Controls.Add(header);
-            Load += (s, e) => { Theme.DarkTitle(this); Theme.DarkScroll(tree); Theme.DarkScroll(grid); Reload(); ShowPage(true); };
+            Controls.Add(valuesPage); Controls.Add(rulesPage); Controls.Add(playPage); Controls.Add(header);
+            Load += (s, e) => { Theme.DarkTitle(this); Theme.DarkScroll(tree); Theme.DarkScroll(grid); Reload(); ShowPage(PagePlay); };
         }
 
         // --test-edit: type <text> into a value cell and press Enter, the way the grid handles it, then report what stuck
         public string TestEdit(string asset, string field, string text)
         {
-            ShowPage(false);
+            ShowPage(PageValues);
             TreeNode target = null; Action<TreeNode> find = null;
             find = n => { if (target == null && (n.Tag as string) == asset) target = n; foreach (TreeNode c in n.Nodes) find(c); };
             foreach (TreeNode n in tree.Nodes) find(n);
@@ -209,18 +217,19 @@ namespace SwsSettings
         }
         public void ShowValuesForShot(string mode)
         {
-            ShowPage(false);
+            ShowPage(PageValues);
             var ship = tree.Nodes.Find("xwing", false).FirstOrDefault() ?? (tree.Nodes.Count > 0 ? tree.Nodes[0] : null);
             if (ship == null) return;
             ship.Expand();
             if (mode == "ship") { tree.SelectedNode = ship; foreach (TreeNode sys in ship.Nodes) if (sys.Text.StartsWith("Engine") || sys.Text.StartsWith("Primary")) sys.Expand(); return; }
             if (ship.Nodes.Count > 0) tree.SelectedNode = ship.Nodes[0];   // Movement: one config, shown directly
         }
-        void ShowPage(bool play)
+        public void ShowRulesForShot() { ShowPage(PageRules); }
+        void ShowPage(int page)
         {
-            playPage.Visible = play; valuesPage.Visible = !play;
-            Theme.SetActive(tabPlay, play); Theme.SetActive(tabValues, !play);
-            if (play) RefreshPlay();
+            playPage.Visible = page == PagePlay; rulesPage.Visible = page == PageRules; valuesPage.Visible = page == PageValues;
+            Theme.SetActive(tabPlay, page == PagePlay); Theme.SetActive(tabRules, page == PageRules); Theme.SetActive(tabValues, page == PageValues);
+            if (page == PagePlay) RefreshPlay();
         }
 
         // ---------------------------------------------------------------------------------------------- data
@@ -247,8 +256,10 @@ namespace SwsSettings
             profile = Profile.Load(dir, name);
             if (makeActive && server.Exists) server.Profile = name;
             loading = true;
-            rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift;
-            rulePinball.Enabled = ruleMultidrift.Enabled = !profile.BuiltIn;
+            rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift; ruleZavian.Checked = profile.FixZavianCreep;
+            rulePinball.Enabled = ruleMultidrift.Enabled = ruleZavian.Enabled = !profile.BuiltIn;
+            rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
+            rulesNote.Text = profile.BuiltIn ? "Default is the game as shipped: every rule and fix off. Duplicate it on Profile and values to make your own." : "";
             loading = false;
             readOnlyNote.Text = profile.BuiltIn ? "Default is the game as shipped and can't be changed. Duplicate it to make your own profile."
                 : "Type in Your value to change a value; clear it, press Delete or click reset to go back to the default. Changes are saved as you go and apply at the next launch.";
@@ -291,10 +302,6 @@ namespace SwsSettings
             r1.Controls.Add(Theme.Button("Import", (s, e) => ImportProfile()));
             r1.Controls.Add(Theme.Button("Open folder", (s, e) => { Directory.CreateDirectory(Path.Combine(dir, "profiles")); Process.Start("explorer.exe", "\"" + Path.Combine(dir, "profiles") + "\""); }));
             var r2 = Theme.Row(6);
-            r2.Controls.Add(Theme.Label("Rules", Theme.Bold));
-            rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
-            ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };
-            r2.Controls.Add(rulePinball); r2.Controls.Add(ruleMultidrift);
             r2.Controls.Add(Theme.Button("Reset all values to default", (s, e) => ResetAll()));
             top.Controls.Add(r1); top.Controls.Add(r2); top.Controls.Add(readOnlyNote);
 
@@ -553,7 +560,7 @@ namespace SwsSettings
             string n = AskName(copy ? "Duplicate profile" : "New profile", copy ? profile.Name + " copy" : "");
             if (n == null) return;
             var p = new Profile { Name = n };
-            if (copy) { p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value; }
+            if (copy) { p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep; foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value; }
             p.Save(dir);
             if (server.Exists) server.Profile = n;
             FillProfiles(n);
@@ -590,6 +597,40 @@ namespace SwsSettings
                 if (server.Exists) server.Profile = n;
                 FillProfiles(n);
             }
+        }
+
+        // ---------------------------------------------------------------------------------------------- rules page
+        // The profile's yes/no rules: fixes for the game's exploits and for mistakes in its maps. Each is off by default, which
+        // keeps the game as it shipped: players are used to its flaws, and keeping one is their choice.
+        void BuildRulesPage()
+        {
+            var col = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, BackColor = Theme.Back };
+            var head = Theme.Row(); head.Controls.Add(rulesProfile);
+            head.Controls.Add(Theme.Button("Change profile", (s, e) => ShowPage(PageValues)));
+            col.Controls.Add(head);
+            col.Controls.Add(Theme.Label("Each is off unless you turn it on, which keeps the game as it shipped. They're saved in the profile, with its values, and apply at the next launch.", Theme.Small, Theme.Muted));
+            col.Controls.Add(rulesNote);
+
+            Action<string, string> section = (title, text) =>
+            {
+                var t = Theme.Label(title, Theme.Bold); t.Margin = new Padding(0, 22, 0, 2); col.Controls.Add(t);
+                if (text != null) col.Controls.Add(Theme.Label(text, Theme.Small, Theme.Muted));
+            };
+            Action<CheckBox, string> rule = (box, text) =>
+            {
+                box.Margin = new Padding(0, 12, 0, 0); col.Controls.Add(box);
+                var d = Theme.Label(text, Theme.Small, Theme.Muted); d.Margin = new Padding(22, 0, 0, 0); d.MaximumSize = new Size(820, 0); col.Controls.Add(d);
+            };
+            section("Exploits", "Everyone in a match needs the same setting for these: they're part of the profile's fingerprint.");
+            rule(rulePinball, "Boosting from below cruise speed (zero-throttle pinballing) ramps up to boost speed, the way it does from full throttle, instead of jumping straight there. Boosting while already above cruise speed is unchanged.");
+            rule(ruleMultidrift, "A drift can start only while the afterburner is on, so each boost allows one drift, as with the combined boost-and-drift input. Releasing and re-pressing drift mid-drift no longer starts a new drift.");
+            section("Map fixes", "These are part of the fingerprint too, so everyone in a match knows the server plays the map the way they expect.");
+            rule(ruleZavian, "In Zavian Abyss's data, one of the middle X-wing creep pack's two spawn points is told to return control instead of to spawn, so the pack has 3 ships instead of 5, at the start and on every respawn. This makes it spawn all 5.");
+
+            rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
+            ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };
+            ruleZavian.CheckedChanged += (s, e) => { if (!loading) { profile.FixZavianCreep = ruleZavian.Checked; SaveProfile(); } };
+            rulesPage.Controls.Add(col);
         }
 
         // ---------------------------------------------------------------------------------------------- play page
@@ -635,7 +676,7 @@ namespace SwsSettings
             var prof = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent, Margin = new Padding(0, 18, 0, 0) };
             prof.Controls.Add(playProfile);
             prof.Controls.Add(Theme.Label("Everyone in a match needs the same fingerprint: the same profile, with the same rules and values.", Theme.Small, Theme.Muted));
-            prof.Controls.Add(Theme.Button("Change profile", (s, e) => ShowPage(false)));
+            prof.Controls.Add(Theme.Button("Change profile", (s, e) => ShowPage(PageValues)));
             col.Controls.Add(prof);
 
             recordCheck.Margin = new Padding(0, 18, 0, 0);
@@ -846,6 +887,7 @@ namespace SwsSettings
                 form.Shown += (s, e) =>
                 {
                     if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : "system");
+                    if (args.Length >= 3 && args[2] == "rules") form.ShowRulesForShot();
                     Application.DoEvents();
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();

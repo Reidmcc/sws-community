@@ -34,7 +34,9 @@ Settings: sws_settings.exe
 --------------------------
 Double-click sws_settings.exe for everything below without editing files:
 - Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch.
-- Profile and values: pick, make, copy, rename, import or delete profiles; turn the movement rules on or off; and change
+- Rules and fixes: turn the profile's exploit rules (zero-throttle pinballing, multidrifting) and map fixes (Zavian
+  Abyss's middle X-wing creep pack spawning 3 ships instead of 5) on or off. Each is off unless you turn it on.
+- Profile and values: pick, make, copy, rename, import or delete profiles; and change
   any of the game's values (speeds, shields, hull, weapons, components...) for every ship, each with its default and the
   range it's allowed. Reset one value or all of them to default. The fingerprint at the top must match everyone else's.
 The values list fills in as you play: the mod records each part of the game the first time it loads it.
@@ -43,7 +45,7 @@ Or by hand (server.ini, open it in Notepad):
 - HOST: leave "join=" empty, and pick the mode on the "match_mode=" line: fleet (Fleet Battles), coop (co-op vs AI),
   solo, or dogfight.
 - JOIN: put the host's address after "join=", for example  join=100.101.102.103
-- PROFILE: "profile=" picks the movement rules. Everyone in a match must use the same profile, or the host's game refuses
+- PROFILE: "profile=" picks the rules, fixes and values. Everyone in a match must use the same profile, or the host's game refuses
   the connection on purpose.
     Default        the game as shipped
     NoMultidrift   pinballing allowed, multidrifting removed

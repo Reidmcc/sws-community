@@ -517,7 +517,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

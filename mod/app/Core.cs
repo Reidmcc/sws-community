@@ -165,6 +165,7 @@ namespace SwsSettings
     {
         public string Name;                 // "Default" is built in
         public bool NoPinball, NoMultidrift;
+        public bool FixZavianCreep;         // in the fingerprint only when on, so profiles without it keep theirs
         public readonly SortedDictionary<string, double> Values = new SortedDictionary<string, double>(StringComparer.Ordinal);
         public bool BuiltIn { get { return Name == "Default"; } }
 
@@ -184,6 +185,7 @@ namespace SwsSettings
             if (!File.Exists(file)) return p;
             p.NoPinball = Ini.GetInt(file, "rules", "no_zero_throttle_pinball", 0) != 0;
             p.NoMultidrift = Ini.GetInt(file, "rules", "no_multidrift", 0) != 0;
+            p.FixZavianCreep = Ini.GetInt(file, "rules", "fix_zavian_creep_pack", 0) != 0;
             foreach (var e in Ini.Section(file, "values"))
             {
                 int eq = e.IndexOf('=');
@@ -204,7 +206,8 @@ namespace SwsSettings
             sb.Append("; Profile '" + Name + "', saved by the settings app (sws_settings.exe). Hand edits are fine too.\r\n");
             sb.Append("[rules]\r\n");
             sb.Append("no_zero_throttle_pinball=" + (NoPinball ? 1 : 0) + "\r\n");
-            sb.Append("no_multidrift=" + (NoMultidrift ? 1 : 0) + "\r\n\r\n[values]\r\n");
+            sb.Append("no_multidrift=" + (NoMultidrift ? 1 : 0) + "\r\n");
+            sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n\r\n[values]\r\n");
             foreach (var kv in Values) sb.Append(kv.Key + "=" + Num.G9(kv.Value) + "\r\n");
             File.WriteAllText(PathOf(dir, Name), sb.ToString(), new UTF8Encoding(false));
         }
@@ -244,16 +247,17 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, e.Values);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
-        public static uint Hash(bool pinball, bool multidrift, SortedDictionary<string, double> values)
+        public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values)
         {
-            if (!pinball && !multidrift && values.Count == 0) return 0;
+            if (!pinball && !multidrift && !zavianCreep && values.Count == 0) return 0;
             uint h = 2166136261u;
             h = Fnv(h, "pinball=" + (pinball ? 1 : 0) + ";multidrift=" + (multidrift ? 1 : 0) + ";");
+            if (zavianCreep) h = Fnv(h, "zaviancreep=1;");
             foreach (var kv in values) h = Fnv(h, kv.Key + "=" + Num.G9(kv.Value) + ";");
             return h == 0 ? 1 : h;
         }
