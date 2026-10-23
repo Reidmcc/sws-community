@@ -114,6 +114,12 @@ int main() {
     const uint8_t partnew[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20,
                                0x4c,0x89,0xc0, 0x48,0x83,0xc4,0x20, 0x5f, 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x74,0x24,0x18, 0xc3};
     put(0x140273060, partnew, sizeof partnew);
+    // the server's starship spawn (FUN_1416bcab0): its real 20-byte prologue, then mov rax, [rcx+0x10] (the test puts the
+    // "ship" there, or 0 for a spawn that fails), lea rsp, [rbp+0x50] and the pops
+    if (map(0x1416b0000, 0x10000) != (void*)0x1416b0000) { printf("FAIL  could not map the starship-spawn region\n"); return 1; }
+    const uint8_t sspawn[] = {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00,
+                              0x48,0x8b,0x41,0x10, 0x48,0x8d,0x65,0x50, 0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
+    put(0x1416bcab0, sspawn, sizeof sspawn);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -304,6 +310,17 @@ int main() {
         check(*(uint8_t*)0x140273060 == 0xFF && got == (uint64_t)part3, "partition creator hooked and passes the partition through");
         check(stop->value == 0.5f && reg[1] == 0.5f,
               "value engine: a config gets the profile as its partition is created, before any scan (passive damage floor 0.15 -> 0.5)");
+    }
+    {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
+        // each (the runner, run_standin.sh, checks the log)
+        uint8_t* ent = fake_alloc(0x400); uint8_t* req = fake_alloc(0x80);
+        *(float*)(req + 0x30) = 259.0f; *(float*)(req + 0x34) = -91.0f; *(float*)(req + 0x38) = 2886.0f;
+        typedef uint64_t(__fastcall* sspawn_t)(uint64_t, uint64_t);
+        *(uint64_t*)(ent + 0x10) = 0x5A5A0001;
+        uint64_t a = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
+        *(uint64_t*)(ent + 0x10) = 0;
+        uint64_t b = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
+        check(*(uint8_t*)0x1416bcab0 == 0xFF && a == 0x5A5A0001 && b == 0, "starship spawn hooked and passes the result through");
     }
 
     alignas(16) static uint8_t obj[0x700];

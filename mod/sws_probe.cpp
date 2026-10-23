@@ -520,6 +520,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, where, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
@@ -562,6 +563,7 @@ static void read_server_ini() {
       g_record = GetPrivateProfileIntW(L"server", L"record", 0, ini) != 0;
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
+      g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1707,6 +1709,20 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
 // asked by the health components on every hit. A MaterialDecl packs flags in bits 0-7 (bit 7: set; otherwise the
 // default material), the effect material in bits 8-19 and the property index in bits 20-31, which picks the damage
 // relation. material_log=1 logs each distinct (a, b, caller) once, so a test flight shows which pairs damage asks for.
+// FUN_1416bcab0(spawn entity, request): ServerStarshipSpawnEntity's spawn (its vtable 0x143618a18, slot 27), for players,
+// creep and capital ships alike. The request starts with the LinearTransform to spawn at (its position at +0x30); the
+// entity's data is at +0x38. It calls the engine's generic spawn FUN_140c0c550 and returns the new ship, or 0 when the spawn
+// didn't happen. spawn_log=1 logs each call (2026-10-23: one of Zavian Abyss's X-wing creep packs spawns 3 ships of 5,
+// every time, possibly at points inside an asteroid).
+typedef uint64_t(__fastcall* sspawn_t)(uint64_t ent, uint64_t req);
+static sspawn_t o_sspawn;
+static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
+    float x = rd<float>(req, 0x30), y = rd<float>(req, 0x34), z = rd<float>(req, 0x38);
+    uint64_t r = o_sspawn(ent, req);
+    if (g_spawnLog) status("spawn: entity %llx (data %llx) at (%.1f, %.1f, %.1f) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), x, y, z,
+                           r ? "ship" : "NOTHING SPAWNED", r);
+    return r;
+}
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
 struct MatSeen { uint32_t a, b; uint64_t ret; };
@@ -2450,6 +2466,9 @@ static Site g_sites[] = {
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
+    {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
+     {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
+     (void*)h_sspawn, (void**)&o_sspawn},
     {"partition-new 0x140273060", 0x140273060, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
      (void*)h_partnew, (void**)&o_partnew},
