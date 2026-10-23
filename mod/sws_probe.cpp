@@ -1742,7 +1742,28 @@ static void hitbox_mesh_found(uint64_t data, int first) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: %s at %llx: write failed", who, data); return; }
     status("hitbox: %s at %llx, %u sections, geometry scaled %.3g%s", who, data, m.count, s, matches > 1 ? " [identical meshes: can't tell apart]" : "");
 }
+// One pass over memory per round, however many shapes are known: every 16-byte-aligned position's first 8 bytes are
+// looked up in a small open-addressing hash of the keys (the compounds' boxes, and the domains of the meshes of ships
+// asked for). The first build searched once per key, ~100 passes over the game's memory a round, which outlasted a match.
+struct HitboxKey { uint64_t first; int kind, index; };   // kind 0 = compound box, 1 = mesh domain
+static const int kHitboxKeySlots = 1024;                  // a power of two, well above the ~170 keys
+static HitboxKey g_hbKeys[kHitboxKeySlots]; static bool g_hbUsed[kHitboxKeySlots];
+static inline uint32_t hb_slot(uint64_t k) { return (uint32_t)((k * 0x9E3779B97F4A7C15ull) >> 54) & (kHitboxKeySlots - 1); }
+static void hb_add(const uint8_t* bytes, int kind, int index) {
+    uint64_t k; memcpy(&k, bytes, 8);
+    for (uint32_t i = hb_slot(k);; i = (i + 1) & (kHitboxKeySlots - 1)) {
+        if (!g_hbUsed[i]) { g_hbUsed[i] = true; g_hbKeys[i] = { k, kind, index }; return; }
+        const uint8_t* other = g_hbKeys[i].kind ? kHitboxMeshes[g_hbKeys[i].index].domain : kHitboxShapes[g_hbKeys[i].index].aabb;
+        if (g_hbKeys[i].first == k && g_hbKeys[i].kind == kind && !memcmp(other, bytes, 32)) return;   // the same 32 bytes: once
+    }
+}
 static void hitbox_scan() {
+    memset(g_hbUsed, 0, sizeof g_hbUsed);
+    for (int h = 0; h < kHitboxShapeCount; h++) hb_add(kHitboxShapes[h].aabb, 0, h);
+    for (int h = 0; h < kHitboxMeshCount; h++) {
+        float want = hitbox_scale_for(kHitboxMeshes[h].ship);
+        if (want > 0 && want != 1.0f) hb_add(kHitboxMeshes[h].domain, 1, h);   // only the meshes of ships asked for
+    }
     uint64_t a = 0x10000; MEMORY_BASIC_INFORMATION mbi;
     while (a < 0x7FFFFFFF0000ull && VirtualQuery((void*)a, &mbi, sizeof mbi)) {
         uint64_t base = (uint64_t)mbi.BaseAddress, size = mbi.RegionSize;
@@ -1750,29 +1771,21 @@ static void hitbox_scan() {
             !(mbi.Protect & PAGE_GUARD)) {
             __try {
                 const uint64_t* p = (const uint64_t*)base; size_t n = size / 8;
-                for (int h = 0; h < kHitboxShapeCount; h++) {
-                    bool dup = false;   // each distinct box is searched once; hitbox_found sorts out which entries it is
-                    for (int g = 0; g < h; g++) if (!memcmp(kHitboxShapes[g].aabb, kHitboxShapes[h].aabb, 32)) dup = true;
-                    if (dup) continue;
-                    uint64_t first; memcpy(&first, kHitboxShapes[h].aabb, 8);
-                    for (size_t k = 0; k + 4 <= n; k += 2) {   // the box is 16-byte aligned
-                        if (p[k] != first || memcmp(p + k, kHitboxShapes[h].aabb, 32)) continue;
-                        uint64_t comp = (uint64_t)(p + k) - 0x80;
-                        if (comp >= base) hitbox_found(comp, h);
-                    }
-                }
-                for (int h = 0; h < kHitboxMeshCount; h++) {
-                    float want = hitbox_scale_for(kHitboxMeshes[h].ship);
-                    if (!(want > 0 && want != 1.0f)) continue;   // only the meshes of ships asked for
-                    bool dup = false;
-                    for (int g = 0; g < h; g++)   // searched once per domain, among the ships asked for
-                        if (!memcmp(kHitboxMeshes[g].domain, kHitboxMeshes[h].domain, 32) && hitbox_scale_for(kHitboxMeshes[g].ship) > 0) dup = true;
-                    if (dup) continue;
-                    uint64_t first; memcpy(&first, kHitboxMeshes[h].domain, 8);
-                    for (size_t k = 0; k + 4 <= n; k += 2) {   // the domain is 16-byte aligned
-                        if (p[k] != first || memcmp(p + k, kHitboxMeshes[h].domain, 32)) continue;
-                        uint64_t data = (uint64_t)(p + k) - 0x20;
-                        if (data >= base) hitbox_mesh_found(data, h);
+                for (size_t k = 0; k + 4 <= n; k += 2) {   // the boxes are 16-byte aligned
+                    uint64_t v = p[k];
+                    if (!v) continue;
+                    for (uint32_t i = hb_slot(v); g_hbUsed[i]; i = (i + 1) & (kHitboxKeySlots - 1)) {
+                        const HitboxKey& key = g_hbKeys[i];
+                        if (key.first != v) continue;
+                        if (key.kind == 0) {
+                            if (memcmp(p + k, kHitboxShapes[key.index].aabb, 32)) continue;
+                            uint64_t comp = (uint64_t)(p + k) - 0x80;
+                            if (comp >= base) hitbox_found(comp, key.index);
+                        } else {
+                            if (memcmp(p + k, kHitboxMeshes[key.index].domain, 32)) continue;
+                            uint64_t data = (uint64_t)(p + k) - 0x20;
+                            if (data >= base) hitbox_mesh_found(data, key.index);
+                        }
                     }
                 }
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -1783,7 +1796,11 @@ static void hitbox_scan() {
 static DWORD WINAPI hitbox_thread(LPVOID) {
     for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
     status("hitbox: searching every %.1f s for %d known starfighter shapes and %d meshes", PROBE_TEST_HITBOX_WAIT / 1000.0, kHitboxShapeCount, kHitboxMeshCount);
-    for (;;) { Sleep(PROBE_TEST_HITBOX_WAIT); hitbox_scan(); }
+    for (int round = 0;; round++) {
+        Sleep(PROBE_TEST_HITBOX_WAIT);
+        ULONGLONG t0 = GetTickCount64(); hitbox_scan(); ULONGLONG ms = GetTickCount64() - t0;
+        if (round < 3 || ms > 3000) status("hitbox: search round %d took %llu ms", round, ms);
+    }
 }
 static DWORD WINAPI observe_thread(LPVOID) {
     uint64_t seen[OBS_SLOTS] = {};   // the component each slot's history belongs to
