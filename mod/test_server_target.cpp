@@ -239,6 +239,15 @@ int main() {
     *(uint16_t*)(0x144a029c0 + 0x48) = 600; *(uint16_t*)(0x144a029c0 + 0x4a) = 699;   // StarshipWeaponFiringData family
     *(uint16_t*)(0x144a38400 + 0x48) = 610; *(uint16_t*)(0x144a38400 + 0x4a) = 610;   // LaserRegenWeaponFiringData
     *(uint16_t*)(0x144a02dc0 + 0x48) = 700; *(uint16_t*)(0x144a02dc0 + 0x4a) = 700;   // StarshipHullCustomConfig
+    *(uint16_t*)(0x144a37300 + 0x48) = 950; *(uint16_t*)(0x144a37300 + 0x4a) = 950;   // DamageOverTimeSettings
+    // passive damage: SplitDamageBetweenStarshipsAttribute (+0x90) is an IncomAttributeBool, its value a byte at +32, and
+    // the root's bool registration list (+0x38) holds {u32 id, byte value at +4}. Stock yes; the StandIn profile says no.
+    uint8_t* dot = fake_alloc(0x100); *(uint64_t*)(dot + 8) = (uint64_t)fake_class(950);
+    *(const char**)(dot + 0x18) = "Game/Gameplay/Starships/CapitalShips/Common/DamageOverTime_Settings/DamageOverTimeSettings_Flagship";
+    uint8_t* splitAttr = fake_alloc(0x40); *(uint64_t*)(splitAttr + 24) = (uint64_t)fake_idobj(0x5EED0B01); splitAttr[32] = 1;
+    *(uint64_t*)(dot + 0x90) = (uint64_t)splitAttr;
+    uint8_t* blist = fake_alloc(16 + 8); *(uint32_t*)(blist + 12) = 1; *(uint32_t*)(blist + 16) = 0x5EED0B01; blist[20] = 1;
+    *(uint64_t*)(dot + 0x38) = (uint64_t)(blist + 16);
     uint8_t* weapon = fake_alloc(0x100); *(uint64_t*)(weapon + 8) = (uint64_t)fake_class(500);
     *(const char**)(weapon + 0x18) = "Game/Gameplay/Starships/XWing/Config/StarshipWeaponConfig_Las_Reb_XWing";
     uint8_t* firing = fake_alloc(0x100); *(uint64_t*)(firing + 8) = (uint64_t)fake_class(610);
@@ -252,9 +261,9 @@ int main() {
     uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
     *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
     uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast; insts1[4] = hull; insts1[5] = firePattern;
-    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon; insts2[3] = sd.inst;
+    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon; insts2[3] = sd.inst; insts2[4] = dot;
     uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 6;
-    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 4;
+    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 5;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
     *(uint8_t***)(domain + 0x138) = parts; *(uint8_t***)(domain + 0x140) = parts + 2;
@@ -343,6 +352,7 @@ int main() {
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
     check(sd.ab->value == 400.0f && sd.reg[3] == 400.0f && player.ab->value == 250.0f,
           "limits: a capital ship's config is limited by its own pool (400 within 0..500; the fighter pool would clamp to 300)");
+    check(splitAttr[32] == 0 && blist[20] == 0, "yes/no: passive damage's split switch turned off, in the attribute and its bool list entry");
     check(*(float*)(firePattern + 0x20) == 0.75f && *(float*)(firePattern + 0x30) == 2.0f,
           "value engine: the last root type (turret fire pattern, a plain policy asset) scanned and written");
     printf("      (hull component modifiers: health %g, turn %g, boost charge [0] %g [1] %g)\n", *mods[0], *mods[1], *mods[2], *mods[3]);
@@ -371,7 +381,8 @@ int main() {
               strstr(buf, "[hullcustom_heavy_xwing]") && strstr(buf, "healthmax=0.6") &&
               strstr(buf, "; name=HullCustom_Heavy_Xwing") &&
               strstr(buf, "afterburnerchargerate[0]=0.5") && strstr(buf, "afterburnerchargerate[1]=-0.5") &&
-              strstr(buf, "[materialgrid]") && strstr(buf, "laserdamage.capitalhull=1") && strstr(buf, "iondamage.capitalshields=1"),
+              strstr(buf, "[materialgrid]") && strstr(buf, "laserdamage.capitalhull=1") && strstr(buf, "iondamage.capitalshields=1") &&
+              strstr(buf, "[damageovertimesettings_flagship]") && strstr(buf, "splitdamagebetweenstarshipsattribute=1"),
               "value engine: defaults.ini records the values as loaded");
         check(n && strstr(buf, "[oldconfig_from_earlier]") && strstr(buf, "foo=1") && strstr(buf, "bar[2]=-0.5") &&
               !strstr(buf, "stalefield") && !strstr(buf, "earlier launch"),
@@ -452,7 +463,8 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;", "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
+        const char* canon[] = { "pinball=0;multidrift=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+                                "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
                                 "hullcustom_heavy_xwing.healthmax=0.8;",
                                 "materialgrid.laserdamage.capitalhull=0.05;",

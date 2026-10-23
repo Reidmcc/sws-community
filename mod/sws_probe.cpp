@@ -1218,7 +1218,7 @@ static void build_targets() {
 }
 
 // a number the walk reached: its full key, address, type, and the attribute it belongs to (if any)
-struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; };
+struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; bool isBool; };
 typedef void (*ve_fn)(void* ctx, const VeLeaf& l);
 
 // the actual class of a followed sub-object: the most specific type of its family whose id range holds its ClassInfo id
@@ -1260,6 +1260,11 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
         case 0: case 1: { VeLeaf l{ key, a, f.kind == 1, 0, 0, 0 }; fn(ctx, l); break; }
         case 2: for (int c = 0; c < 3; c++) { size_t m = strlen(key); sprintf_s(key + m, cap - m, ".%s", xyz[c]);
                     VeLeaf l{ key, a + 4 * c, false, 0, 0, 0 }; fn(ctx, l); key[m] = 0; } break;
+        case 11: { VeLeaf l{ key, a, true, 0, 0, 0, true }; fn(ctx, l); break; }   // a yes/no byte
+        case 12: {   // an IncomAttributeBool: its byte at +32, and the root's bool registration list (+0x38)
+            uint64_t at = rd<uint64_t>(a, 0); if (!at) break;
+            uint64_t idObj = rd<uint64_t>(at, 24); uint32_t id = idObj ? rd<uint32_t>(idObj, 32) : 0;
+            VeLeaf l{ key, at + 32, true, id, 4, 0, true }; fn(ctx, l); break; }
         case 3: case 4: case 5: {
             uint64_t at = rd<uint64_t>(a, 0); if (!at) break;
             uint64_t idObj = rd<uint64_t>(at, 24); uint32_t id = idObj ? rd<uint32_t>(idObj, 32) : 0;
@@ -1304,15 +1309,21 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
         key[n] = 0;
     }
 }
-static double leaf_value(const VeLeaf& l) { return l.isInt ? (double)rd<int32_t>(l.addr, 0) : (double)rd<float>(l.addr, 0); }
-static bool leaf_write(uint64_t addr, bool isInt, double v) {
-    __try { if (isInt) *(int32_t*)addr = (int32_t)llround(v); else *(float*)addr = (float)v; return true; }
+static double read_num(uint64_t addr, bool isInt, bool isBool) {
+    return isBool ? (rd<uint8_t>(addr, 0) ? 1.0 : 0.0) : isInt ? (double)rd<int32_t>(addr, 0) : (double)rd<float>(addr, 0);
+}
+static double leaf_value(const VeLeaf& l) { return read_num(l.addr, l.isInt, l.isBool); }
+static bool leaf_write(uint64_t addr, bool isInt, double v, bool isBool = false) {
+    __try {
+        if (isBool) *(uint8_t*)addr = llround(v) != 0 ? 1 : 0;
+        else if (isInt) *(int32_t*)addr = (int32_t)llround(v); else *(float*)addr = (float)v;
+        return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 // the root config's registration-list slot for an attribute (and Vec3 component)
 static uint64_t register_slot(uint64_t root, int list, uint32_t id, int comp) {
     if (!id || !list) return 0;
-    uint64_t arr = rd<uint64_t>(root, list == 1 ? 0x40 : list == 2 ? 0x48 : 0x50); if (!arr) return 0;
+    uint64_t arr = rd<uint64_t>(root, list == 1 ? 0x40 : list == 2 ? 0x48 : list == 4 ? 0x38 : 0x50); if (!arr) return 0;
     uint32_t n = rd<uint32_t>(arr - 4, 0), stride = list == 3 ? 32 : 8, idOff = list == 3 ? 16 : 0;
     for (uint32_t i = 0; i < n && i < 4096; i++)
         if (rd<uint32_t>(arr, i * stride + idOff) == id) return arr + (uint64_t)i * stride + (list == 3 ? 4ull * comp : 4);
@@ -1344,11 +1355,11 @@ static void apply_leaf(void* c, const VeLeaf& l) {
         }
         double now = leaf_value(l);
         uint64_t reg = register_slot(x->root, l.list, l.attrId, l.comp);
-        double regNow = reg ? (l.isInt ? (double)rd<int32_t>(reg, 0) : (double)rd<float>(reg, 0)) : 0;
+        double regNow = reg ? read_num(reg, l.isInt, l.isBool) : 0;
         bool same = l.isInt ? llround(now) == llround(target) : (float)now == (float)target;
         bool regSame = !reg || (l.isInt ? llround(regNow) == llround(target) : (float)regNow == (float)target);
         if (same && regSame) continue;
-        bool ok = leaf_write(l.addr, l.isInt, target) && (!reg || leaf_write(reg, l.isInt, target));
+        bool ok = leaf_write(l.addr, l.isInt, target, l.isBool) && (!reg || leaf_write(reg, l.isInt, target, l.isBool));
         if (!v.logged) {
             v.logged = true;
             status("values: %s %.9g -> %.9g%s%s%s", l.key, now, l.isInt ? (double)llround(target) : (double)(float)target,
