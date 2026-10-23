@@ -65,8 +65,8 @@ APPFP=$( cd "$B" && ./sws_settings_test.exe "$(cygpath -w "$B")" StandIn | grep 
 if [ -n "$DLLFP" ] && [ "$DLLFP" = "$APPFP" ]; then echo "PASS  the settings app and the DLL agree on the StandIn fingerprint ($APPFP)"
 else echo "FAIL  fingerprints differ: DLL '${DLLFP:-none}', settings app '${APPFP:-none}'"; STATUS=1; fi
 # spawn_log=1 (server_standin.ini): the stand-in's two starship spawns, one that made a ship and one that didn't
-if [ -n "$LOG" ] && grep -q "spawn: .*(259.0, -91.0, 2886.0) -> ship 5a5a0001" "$LOG" && grep -q "spawn: .*(259.0, -91.0, 2886.0) -> NOTHING SPAWNED" "$LOG"; then
-    echo "PASS  spawn_log logged both starship spawns, with their position and outcome"
+if [ -n "$LOG" ] && grep -q "spawn: entity .* -> ship 5a5a0001" "$LOG" && grep -q "spawn: entity .* -> NOTHING SPAWNED" "$LOG"; then
+    echo "PASS  spawn_log logged both starship spawns and their outcome"
 else echo "FAIL  spawn_log lines missing from the log"; STATUS=1; fi
 [ -n "$LOG" ] && echo "log: $LOG"
 exit $STATUS

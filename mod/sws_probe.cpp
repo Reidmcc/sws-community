@@ -524,7 +524,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
-static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, where, and whether it worked
+static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
@@ -1739,17 +1739,15 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
 // default material), the effect material in bits 8-19 and the property index in bits 20-31, which picks the damage
 // relation. material_log=1 logs each distinct (a, b, caller) once, so a test flight shows which pairs damage asks for.
 // FUN_1416bcab0(spawn entity, request): ServerStarshipSpawnEntity's spawn (its vtable 0x143618a18, slot 27), for players,
-// creep and capital ships alike. The request starts with the LinearTransform to spawn at (its position at +0x30); the
-// entity's data is at +0x38. It calls the engine's generic spawn FUN_140c0c550 and returns the new ship, or 0 when the spawn
-// didn't happen. spawn_log=1 logs each call (2026-10-23: one of Zavian Abyss's X-wing creep packs spawns 3 ships of 5,
+// creep and capital ships alike. The entity's data is at +0x38. It calls the engine's generic spawn FUN_140c0c550 and
+// returns the new ship, or 0 when the spawn didn't happen. (Where the request keeps the spawn position isn't known: +0x30,
+// the first guess, read 0 for every spawn in game, so the position isn't logged.) spawn_log=1 logs each call (2026-10-23: one of Zavian Abyss's X-wing creep packs spawns 3 ships of 5,
 // every time, possibly at points inside an asteroid).
 typedef uint64_t(__fastcall* sspawn_t)(uint64_t ent, uint64_t req);
 static sspawn_t o_sspawn;
 static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
-    float x = rd<float>(req, 0x30), y = rd<float>(req, 0x34), z = rd<float>(req, 0x38);
     uint64_t r = o_sspawn(ent, req);
-    if (g_spawnLog) status("spawn: entity %llx (data %llx) at (%.1f, %.1f, %.1f) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), x, y, z,
-                           r ? "ship" : "NOTHING SPAWNED", r);
+    if (g_spawnLog) status("spawn: entity %llx (data %llx) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), r ? "ship" : "NOTHING SPAWNED", r);
     return r;
 }
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
