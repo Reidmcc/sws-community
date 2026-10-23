@@ -19,6 +19,11 @@ Before you start (please read)
   is zero. It's your call.
 - Nothing in your game folder is changed, except a steam_appid.txt you add yourself (below), which you can delete any time.
 - To remove the mod: delete this folder, and delete steam_appid.txt from the game folder.
+- Antivirus: Windows Defender may flag the mod as Trojan:Win32/Wacatac.H!ml and remove sws_server.dll. It's a false
+  positive (a machine-learning guess at what the launcher does: start your game and load the mod's DLL into it), and
+  it's being reported to Microsoft. The source is public, and the release page lists each file's SHA-256 hash. If
+  Defender removes the files, you can choose to allow just this folder (Windows Security > Virus & threat protection >
+  Manage settings > Exclusions). Please don't turn your antivirus off.
 
 
 One-time setup

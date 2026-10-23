@@ -11,6 +11,22 @@ Status: **early and experimental.**. Expect rough edges.
 Get the latest zip from [Releases](https://github.com/Reidmcc/sws-community/releases), unzip it anywhere outside the
 game folder, and follow the `README.txt` inside. Players need only that folder; building from source is for developers.
 
+### Antivirus warnings
+
+Windows Defender currently flags the mod as `Trojan:Win32/Wacatac.H!ml`. Chrome uses Defender's verdict, so it may refuse
+the download outright, and Defender may remove `sws_server.dll` when you unzip. This is a false positive: the `!ml` means
+a machine-learning guess, not a match against known malware. It reacts to what the launcher does, which is start your
+game and load the mod's DLL into it. Some malware does the same, so the pattern alone looks suspicious.
+
+- **It's being reported to Microsoft** as a false positive. Once they clear it, Defender's normal updates fix it for
+  everyone, with nothing for you to do.
+- **You can check what you're running:** the source is all here, and each release lists its files' SHA-256 hashes.
+- **If the download is blocked,** there's no setting we'd suggest changing to get around it. Please wait for Microsoft's
+  review.
+- **If you already have the files** and Defender removes them, you can choose to allow just the mod's folder: Windows
+  Security → Virus & threat protection → Manage settings → Exclusions. That's your call. Please don't turn your
+  antivirus off.
+
 ## What it does
 
 - **Self-hosting, Kyber's way.** The game ships its server half inside the client. The mod makes the host's own match
