@@ -326,6 +326,41 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
+    {   // ship scale experiment (#20): the Y-wing's two compound shapes, found in memory by their bounding boxes (+0x80),
+        // with 128-byte instances (identity rows at +0x20, flags in row 0's w at +0x2c, scale at +0x60). The raycast one
+        // reaches its 9 instances through its array pointer (+0x60, count +0x68), the collision one has its 6 inline at
+        // +0xb0, and a decoy with the raycast box and the wrong count must be left alone. ywing_hitbox_scale=0.5.
+        static const uint8_t col[32] = {0x58,0x2f,0xce,0xc0,0x0a,0xd4,0x29,0xc0,0x27,0x60,0x9a,0xc1,0x9e,0x68,0xeb,0xc0,
+                                        0x00,0x6d,0xcd,0x40,0xe2,0x74,0xa0,0x3f,0x4a,0xf1,0x85,0x40,0xee,0x3a,0x82,0x40};
+        static const uint8_t ray[32] = {0x7b,0xef,0xc4,0xc0,0x02,0x50,0x89,0xbf,0x61,0xce,0x3e,0xc1,0xd4,0x49,0x5d,0xc0,
+                                        0x7b,0xef,0xc4,0x40,0xbd,0xf2,0xbe,0x3f,0x6a,0xf6,0x3c,0x41,0x00,0x43,0x02,0x41};
+        auto instances = [](uint8_t* at, int n) {
+            for (int k = 0; k < n; k++) {
+                uint8_t* i = at + 0x80 * k;
+                *(float*)(i + 0x20) = 1; *(float*)(i + 0x34) = 1; *(float*)(i + 0x48) = 1; *(uint16_t*)(i + 0x2c) = 0x40;
+                *(float*)(i + 0x60) = 1; *(float*)(i + 0x64) = 1; *(float*)(i + 0x68) = 1; *(float*)(i + 0x6c) = 1;
+            }
+        };
+        uint8_t* rc = fake_alloc(0x100); uint8_t* rcArr = fake_alloc(9 * 0x80); instances(rcArr, 9);
+        memcpy(rc + 0x80, ray, 32); *(uint64_t*)(rc + 0x60) = (uint64_t)rcArr; *(uint32_t*)(rc + 0x68) = 9;
+        uint8_t* cc = fake_alloc(0xb0 + 6 * 0x80); instances(cc + 0xb0, 6);
+        memcpy(cc + 0x80, col, 32); *(uint32_t*)(cc + 0x68) = 6;
+        uint8_t* dc = fake_alloc(0x100); uint8_t* dcArr = fake_alloc(9 * 0x80); instances(dcArr, 9);
+        memcpy(dc + 0x80, ray, 32); *(uint64_t*)(dc + 0x60) = (uint64_t)dcArr; *(uint32_t*)(dc + 0x68) = 3;
+        auto scaled = [](uint8_t* at, int n) {
+            for (int k = 0; k < n; k++) {
+                uint8_t* i = at + 0x80 * k;
+                if (*(uint16_t*)(i + 0x2c) != 0x68 || *(float*)(i + 0x60) != 0.5f || *(float*)(i + 0x64) != 0.5f ||
+                    *(float*)(i + 0x68) != 0.5f || *(float*)(i + 0x20) != 1.0f) return false;
+            }
+            return true;
+        };
+        for (int t = 0; t < 60 && !(scaled(rcArr, 9) && scaled(cc + 0xb0, 6)); t++) Sleep(100);
+        check(scaled(rcArr, 9) && scaled(cc + 0xb0, 6),
+              "ship scale: the Y-wing's raycast (array pointer) and collision (inline) shapes found by their boxes and scaled 0.5 with flags 0x68");
+        check(*(uint16_t*)(dcArr + 0x2c) == 0x40 && *(float*)(dcArr + 0x60) == 1.0f,
+              "ship scale: a decoy with the raycast box but the wrong instance count is left alone");
+    }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)
         uint8_t* ent = fake_alloc(0x400); uint8_t* req = fake_alloc(0x80);
