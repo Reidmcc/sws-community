@@ -1,2 +1,4 @@
 # Batch files must keep CRLF line endings: cmd can misread labels and goto in LF-only files.
 *.bat text eol=crlf
+# Shell scripts must keep LF: bash fails on carriage returns (Windows checkouts convert by default).
+*.sh text eol=lf
