@@ -21,9 +21,10 @@ game folder, and follow the `README.txt` inside. Players need only that folder; 
   loads levels itself and needs no local server.
 - **Modes.** The host picks what the match really is, whatever was chosen in the menu: Fleet Battles (PvP), co-op vs
   AI, solo vs AI, or Dogfight.
-- **Rulesets.** Optional "as intended" movement rules: no zero-throttle pinballing, no multidrifting. The chosen rules are
-  folded into the network protocol version, so players with different rules are refused at connect instead of landing
-  in the same match.
+- **Rulesets.** Optional "as intended" movement rules: no zero-throttle pinballing, no multidrifting. Optional map
+  fixes: Zavian Abyss's middle X-wing creep pack spawns all 5 ships (its data tells one of the pack's two spawn points
+  to return control instead of to spawn). Each is off unless chosen. The chosen rules are folded into the network
+  protocol version, so players with different rules are refused at connect instead of landing in the same match.
 - **Unlocks.** Every ship component and cosmetic counts as owned, for everyone.
 - **No EA error 327.** The "lost connection to EA servers" event, which also locked the loadout screen, is suppressed.
 
@@ -54,7 +55,8 @@ Everyone needs the same build of the mod, the same profile, and a network path b
 **The settings app, `sws_settings.exe`** (beside the launcher), does all of this without editing files:
 - **Play:** host (pick the match type) or join (the host's address, with favorites), then Launch, which runs
   `sws_launch.exe` and its YES prompt.
-- **Profile and values:** profiles (new, duplicate, rename, delete, import), the movement rules, and every changeable
+- **Rules and fixes:** the profile's exploit rules and map fixes, a checkbox each, with what each one does.
+- **Profile and values:** profiles (new, duplicate, rename, delete, import) and every changeable
   value by ship and system, each with its default (from `defaults.ini`) and its allowed range (from `limits.ini`).
   Values are clamped to their range as you type, locked fields are read-only, and changes are saved as you go. The
   header shows the profile's fingerprint, computed the way the DLL does (`mod/app/Core.cs`).
@@ -93,7 +95,7 @@ Then, with Steam running and the game closed, everyone runs `sws_launch.exe` and
 starts a **solo custom match vs AI**: on the host that becomes the real match (per `match_mode`); on a joiner it
 connects to the host instead. Joiners should start once the host's match lobby is up.
 
-**Profiles** hold the movement rules and changed game values. Name one in
+**Profiles** hold the rules and fixes, and changed game values. Name one in
 `server.ini` with `profile=<name>`; the mod reads `profiles\<name>.ini` beside the DLL (see
 `mod/examples/profiles/Example.ini`):
 
@@ -102,6 +104,8 @@ connects to the host instead. Joiners should start once the host's match lobby i
 ; 1 = the exploit is removed
 no_zero_throttle_pinball=0
 no_multidrift=1
+; 1 = Zavian Abyss's middle X-wing creep pack spawns all 5 ships (a mistake in the map's data)
+fix_zavian_creep_pack=0
 
 [values]
 ; <asset>.<field>=<number>

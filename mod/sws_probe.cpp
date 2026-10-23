@@ -169,9 +169,11 @@ static float flagbits(uint64_t s) {
 // server. (v1 kept a latch outside the game state and the client diverged; see rules_hold.)
 enum : uint32_t { R_RULE = 9 };
 static bool g_rulePinball, g_ruleMultidrift;
+static bool g_ruleZavianCreep;   // fix_zavian_creep_pack (see map_fix_partition); in the fingerprint when on
 
 // Profiles (issue #2). server.ini [server] profile=<name> selects profiles\<name>.ini beside the DLL:
-//   [rules]   no_zero_throttle_pinball, no_multidrift (missing = off)
+//   [rules]   no_zero_throttle_pinball, no_multidrift, fix_zavian_creep_pack (missing = off; the map fix is in the
+//             fingerprint only when on, so profiles without it keep theirs)
 //   [values]  <asset>.<field>=<number> overrides (applied by the runtime value engine, issue #3)
 // "Default" is built in: no rules, no overrides, never read from disk. With no profile set, rules.ini is read as before
 // (missing = on), so older setups keep working. The fingerprint is FNV-1a over a canonical text of the rules and the
@@ -184,7 +186,7 @@ static char g_profileName[64] = "(rules.ini)";
 static uint32_t g_profileFp;
 static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
 static uint32_t profile_fingerprint() {
-    if (!g_rulePinball && !g_ruleMultidrift && !g_overrideCount) return 0;
+    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount) return 0;
     int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
     for (int i = 0; i < g_overrideCount; i++) order[i] = i;
     for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
@@ -192,6 +194,7 @@ static uint32_t profile_fingerprint() {
             int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t; }
     char b[192]; uint32_t h = 2166136261u;
     sprintf_s(b, "pinball=%d;multidrift=%d;", (int)g_rulePinball, (int)g_ruleMultidrift); h = fnv1a(h, b);
+    if (g_ruleZavianCreep) h = fnv1a(h, "zaviancreep=1;");   // only when on, so profiles without it keep their fingerprint
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
     return h ? h : 1;
 }
@@ -325,6 +328,7 @@ static void load_profile(const wchar_t* dir) {
         } else {
             g_rulePinball = GetPrivateProfileIntW(L"rules", L"no_zero_throttle_pinball", 0, pf) != 0;
             g_ruleMultidrift = GetPrivateProfileIntW(L"rules", L"no_multidrift", 0, pf) != 0;
+            g_ruleZavianCreep = GetPrivateProfileIntW(L"rules", L"fix_zavian_creep_pack", 0, pf) != 0;
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
             g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
@@ -348,8 +352,8 @@ static void load_profile(const wchar_t* dir) {
     load_limits(dir);
     clamp_overrides();
     g_profileFp = profile_fingerprint();
-    status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d, %d value override(s), fingerprint %08x%s",
-           g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, g_overrideCount, g_profileFp,
+    status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d fix_zavian_creep_pack=%d, %d value override(s), fingerprint %08x%s",
+           g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, (int)g_ruleZavianCreep, g_overrideCount, g_profileFp,
            g_profileFp ? "" : " (stock protocol)");
     for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (applied by the value engine, issue #3)", g_overrides[i].key, g_overrides[i].value);
 }
@@ -520,6 +524,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, where, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
@@ -562,6 +567,7 @@ static void read_server_ini() {
       g_record = GetPrivateProfileIntW(L"server", L"record", 0, ini) != 0;
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
+      g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1519,10 +1525,35 @@ static void value_engine_scan() {
 // load-partition FUN_1402722c0, which holds the store's lock (+0x70) around it, after the parse has finished (state 7). The
 // partition it returns holds its instances (+0x20, count +0x28), so its configs get the profile before the call returns,
 // and before anything can be built from them. The scan still runs, for the menu's configs and as a second pass.
+// Mistakes in the maps' own data, fixed as their partition loads when the profile's [rules] asks (each off by default:
+// players are used to the game as it is, and keeping a flaw is their choice, as with the exploit rules).
+// Zavian Abyss: each creep pack is two spawn points, one of 3 ships and one of 2, which the respawn logic tells to Spawn
+// (EventConnections in the PvP layer, SubWorldData "Game/Levels/PvP/PVP_Abyss/PvP": event -202538501 -> "Spawn", djb2
+// 230891742). One of the twelve connections, to the middle X-wing pack's 2-ship point, sends "ReturnControl" (-597186424)
+// instead, so that pack starts and respawns with 3 ships (2026-10-23: the spawn log showed 13 X-wings, 3+3+3 and 2+2; the
+// level data has 11 Spawns and the one ReturnControl; Yavin has 12 Spawns). The connection is a server event, so the host's
+// fix is the one that changes the match; it is in the fingerprint anyway, so players know what the server plays. The root (an Asset: name +0x18) keeps EventConnections at +0x40 (count at -4), 32-byte
+// entries with SourceEvent at +0x10 and TargetEvent at +0x14. Rewritten only if exactly that one connection is found.
+static void map_fix_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
+        if (_stricmp(safe_str(rd<uint64_t>(inst, 0x18)), "Game/Levels/PvP/PVP_Abyss/PvP") != 0) continue;
+        uint64_t arr = rd<uint64_t>(inst, 0x40); uint32_t cnt = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        int found = 0; uint32_t at = 0;
+        for (uint32_t k = 0; k < cnt && k < 4096; k++)
+            if (rd<int32_t>(arr, k * 32 + 0x10) == -202538501 && rd<int32_t>(arr, k * 32 + 0x14) == -597186424) { found++; at = k; }
+        if (found == 1 && leaf_write(arr + at * 32ull + 0x14, true, 230891742.0))
+            status("map fix: Zavian Abyss, the middle X-wing creep pack's 2-ship spawn point now gets Spawn, not ReturnControl (event connection %u of %u)", at, cnt);
+        else status("map fix: Zavian Abyss's PvP layer loaded, but %d connection(s) match the miswired creep spawn; left alone", found);
+        return;
+    }
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
     uint64_t part = o_partnew(store, a2, loader, a4);
+    if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
@@ -1707,6 +1738,20 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
 // asked by the health components on every hit. A MaterialDecl packs flags in bits 0-7 (bit 7: set; otherwise the
 // default material), the effect material in bits 8-19 and the property index in bits 20-31, which picks the damage
 // relation. material_log=1 logs each distinct (a, b, caller) once, so a test flight shows which pairs damage asks for.
+// FUN_1416bcab0(spawn entity, request): ServerStarshipSpawnEntity's spawn (its vtable 0x143618a18, slot 27), for players,
+// creep and capital ships alike. The request starts with the LinearTransform to spawn at (its position at +0x30); the
+// entity's data is at +0x38. It calls the engine's generic spawn FUN_140c0c550 and returns the new ship, or 0 when the spawn
+// didn't happen. spawn_log=1 logs each call (2026-10-23: one of Zavian Abyss's X-wing creep packs spawns 3 ships of 5,
+// every time, possibly at points inside an asteroid).
+typedef uint64_t(__fastcall* sspawn_t)(uint64_t ent, uint64_t req);
+static sspawn_t o_sspawn;
+static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
+    float x = rd<float>(req, 0x30), y = rd<float>(req, 0x34), z = rd<float>(req, 0x38);
+    uint64_t r = o_sspawn(ent, req);
+    if (g_spawnLog) status("spawn: entity %llx (data %llx) at (%.1f, %.1f, %.1f) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), x, y, z,
+                           r ? "ship" : "NOTHING SPAWNED", r);
+    return r;
+}
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
 struct MatSeen { uint32_t a, b; uint64_t ret; };
@@ -2450,6 +2495,9 @@ static Site g_sites[] = {
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
+    {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
+     {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
+     (void*)h_sspawn, (void**)&o_sspawn},
     {"partition-new 0x140273060", 0x140273060, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
      (void*)h_partnew, (void**)&o_partnew},

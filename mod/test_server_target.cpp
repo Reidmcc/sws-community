@@ -114,6 +114,12 @@ int main() {
     const uint8_t partnew[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20,
                                0x4c,0x89,0xc0, 0x48,0x83,0xc4,0x20, 0x5f, 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x74,0x24,0x18, 0xc3};
     put(0x140273060, partnew, sizeof partnew);
+    // the server's starship spawn (FUN_1416bcab0): its real 20-byte prologue, then mov rax, [rcx+0x10] (the test puts the
+    // "ship" there, or 0 for a spawn that fails), lea rsp, [rbp+0x50] and the pops
+    if (map(0x1416b0000, 0x10000) != (void*)0x1416b0000) { printf("FAIL  could not map the starship-spawn region\n"); return 1; }
+    const uint8_t sspawn[] = {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00,
+                              0x48,0x8b,0x41,0x10, 0x48,0x8d,0x65,0x50, 0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
+    put(0x1416bcab0, sspawn, sizeof sspawn);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -305,6 +311,32 @@ int main() {
         check(stop->value == 0.5f && reg[1] == 0.5f,
               "value engine: a config gets the profile as its partition is created, before any scan (passive damage floor 0.15 -> 0.5)");
     }
+    {   // map fix: Zavian Abyss's PvP layer, with its one miswired creep spawn event (ReturnControl) among Spawns and an
+        // unrelated ReturnControl from another source, arrives through the partition creator; only the miswired one changes
+        uint8_t* root = fake_alloc(0x100); *(uint64_t*)(root + 8) = (uint64_t)fake_class(1);
+        *(const char**)(root + 0x18) = "Game/Levels/PvP/PVP_Abyss/PvP";
+        uint8_t* ev = fake_alloc(16 + 4 * 32); *(uint32_t*)(ev + 12) = 4; int32_t* e = (int32_t*)(ev + 16);
+        const int32_t pairs[4][2] = { { -202538501, 230891742 }, { -202538501, -597186424 }, { -202538501, 230891742 }, { 12345, -597186424 } };
+        for (int k = 0; k < 4; k++) { e[k * 8 + 4] = pairs[k][0]; e[k * 8 + 5] = pairs[k][1]; }
+        *(uint64_t*)(root + 0x40) = (uint64_t)(ev + 16);
+        uint8_t** insts4 = (uint8_t**)fake_alloc(16); insts4[0] = root;
+        uint8_t* part4 = fake_alloc(0x40); *(uint8_t***)(part4 + 0x20) = insts4; *(uint16_t*)(part4 + 0x28) = 1;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part4, 0);
+        check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
+              "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
+    }
+    {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
+        // each (the runner, run_standin.sh, checks the log)
+        uint8_t* ent = fake_alloc(0x400); uint8_t* req = fake_alloc(0x80);
+        *(float*)(req + 0x30) = 259.0f; *(float*)(req + 0x34) = -91.0f; *(float*)(req + 0x38) = 2886.0f;
+        typedef uint64_t(__fastcall* sspawn_t)(uint64_t, uint64_t);
+        *(uint64_t*)(ent + 0x10) = 0x5A5A0001;
+        uint64_t a = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
+        *(uint64_t*)(ent + 0x10) = 0;
+        uint64_t b = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
+        check(*(uint8_t*)0x1416bcab0 == 0xFF && a == 0x5A5A0001 && b == 0, "starship spawn hooked and passes the result through");
+    }
 
     alignas(16) static uint8_t obj[0x700];
     uint64_t r = ((uint64_t(__fastcall*)(void*, char, uint64_t, uint64_t))0x1401ae7d0)(obj, 0, 0, 0);
@@ -485,7 +517,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
