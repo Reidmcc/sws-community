@@ -7,7 +7,13 @@ rem running, the swap fails, the old exe stays, and you're told to close it.
 setlocal
 cd /d "%~dp0"
 set "CSC=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\Roslyn\csc.exe"
+if exist "%CSC%" goto havecsc
+rem another Visual Studio (Community, Professional, Enterprise, the GitHub runners'): ask vswhere
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" goto nocsc
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -find MSBuild\**\Bin\Roslyn\csc.exe`) do set "CSC=%%i"
 if not exist "%CSC%" goto nocsc
+:havecsc
 set "SRC=app\App.cs app\Core.cs app\Words.cs app\WordsLogic.cs"
 "%CSC%" -nologo -optimize+ -target:winexe -out:build\sws_settings.new.exe -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll %SRC% || exit /b 1
 "%CSC%" -nologo -optimize+ -target:exe -out:build\sws_settings_test.exe app\SelfTest.cs app\Core.cs app\Words.cs app\WordsLogic.cs || exit /b 1
