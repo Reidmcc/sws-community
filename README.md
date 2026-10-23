@@ -154,11 +154,14 @@ Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
 
 **Testing without the game:** `test_server_target.exe` maps the hook sites at their real addresses, plants the real
 function prologues with stand-in bodies, and checks each hook's effect through the real launcher, including a UDP round
-trip. Run it with the game closed:
+trip. After building, run it with the game closed, from Git Bash:
 
 ```bash
-sws_launch.exe --target <full path to test_server_target.exe> --dll sws_server_test.dll --yes
+bash mod/run_standin.sh
 ```
+
+It copies its own test configs into `mod/build/` and puts yours back afterwards. CI runs the same build and test on
+every pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on the mod.
 
 ## Repository layout
 
