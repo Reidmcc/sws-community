@@ -2290,7 +2290,12 @@ static DWORD WINAPI sampler(LPVOID) {
     for (int round = 0; round < 90; round++) {
         Sleep(round == 0 ? 500 : 2000);
         if (!g_netWrapped && round < 10) install_socket_wrappers();
+#ifdef PROBE_TEST
+        // the stand-in fills its socket vtables partway through its run, later on a slow machine (CI): keep trying
+        if (g_sockLog && !g_sockPatched) install_socket_passthrough();
+#else
         if (g_sockLog && !g_sockPatched && round < 10) install_socket_passthrough();
+#endif
         if (g_dedicated || g_stackSample) sample_threads(round);
         else if (round >= 10) break;
     }

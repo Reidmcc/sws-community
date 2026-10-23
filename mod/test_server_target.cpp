@@ -397,7 +397,7 @@ int main() {
         for (int i = 0; i < 20; i++) sv[i] = (void*)ss_nop;
         sv[0] = (void*)ss_dtor; sv[1] = (void*)ss_send; sv[2] = (void*)ss_recv; sv[5] = (void*)ss_setpeer;
         sv[17] = (void*)ss_addr; sv[18] = (void*)ss_addr; sv[19] = (void*)ss_create;
-        for (int i = 0; i < 40 && mv[1] == (void*)sm_connect; i++) Sleep(100);
+        for (int i = 0; i < 100 && mv[1] == (void*)sm_connect; i++) Sleep(100);   // up to 10 s: the DLL retries every sampler round (2 s)
         check(mv[1] != (void*)sm_connect && sv[1] != (void*)ss_send, "socket vtable slots patched with pass-through thunks");
         static uint8_t mgr[0x30]; *(void**)mgr = mv;
         typedef uint64_t(__fastcall* mlisten_t)(uint64_t, const char*, bool);

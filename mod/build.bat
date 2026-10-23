@@ -1,5 +1,5 @@
 @echo off
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>nul
+call "%~dp0vsenv.bat" || exit /b 1
 cd /d "%~dp0"
 if not exist build mkdir build
 cl /nologo /O2 /MT /W3 /EHa /LD sws_probe.cpp /Fo:build\ /Fe:build\sws_probe.dll user32.lib kernel32.lib || exit /b 1

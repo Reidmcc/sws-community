@@ -1,0 +1,38 @@
+name: Build and stand-in test
+
+# Builds the server DLL, launcher, checker, settings app and the stand-in, then runs the stand-in test: the DLL's test
+# build inside a stand-in for the game (no game files needed). Every pull request and every push to main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the DLL, launcher, checker and stand-in
+        shell: cmd
+        run: mod\build_server.bat
+
+      - name: Build the settings app
+        shell: cmd
+        run: mod\build_app.bat
+
+      - name: Stand-in test
+        shell: bash
+        run: bash mod/run_standin.sh
+
+      - name: Keep the stand-in's logs if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standin-logs
+          path: mod/build/standin_logs/
+          if-no-files-found: ignore
