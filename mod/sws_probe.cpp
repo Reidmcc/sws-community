@@ -1186,6 +1186,10 @@ struct DefaultSlot { uint32_t hash; char key[256]; double value; };
 static DefaultSlot* g_defaults; static const int kDefaultSlots = 1 << 17; static int g_defaultCount;
 static char (*g_seenAssets)[96]; static int g_seenCount; static bool g_defaultsDirty;
 static char (*g_seenNames)[96];   // each seen config's name as the game spells it (defaults.ini "; name=" lines)
+// The engine's state is touched from two threads: the main loop's 2-second scan and the data store's loader (configs
+// given the profile as they load). Lock order: a store's own lock first, then this one, never the other way.
+static SRWLOCK g_veLock = SRWLOCK_INIT;
+static volatile LONG g_loadApplied;   // configs handled in the loader as their partition was created
 static const int kVeTypeCount = (int)(sizeof kVeTypes / sizeof kVeTypes[0]);
 static const int kVeRootCount = (int)(sizeof kVeRoots / sizeof kVeRoots[0]);
 
@@ -1440,18 +1444,49 @@ static void write_defaults_file() {
     if (carried != lastCarried) { lastCarried = carried; status("values: defaults.ini keeps %d config(s) from earlier launches", carried); }
 }
 static void grid_apply();
-static void value_engine_scan() {
-    if (!g_valuesOn) return;
+// with g_veLock held: the targets and the defaults table, made once
+static bool ve_ready() {
     if (g_targetCount < 0) build_targets();
     if (!g_defaults) { g_defaults = (DefaultSlot*)calloc(kDefaultSlots, sizeof(DefaultSlot)); g_seenAssets = (char(*)[96])calloc(4096, 96); g_seenNames = (char(*)[96])calloc(4096, 96); }
-    if (!g_defaults || !g_seenAssets || !committed(0x1442d18c8)) return;
+    return g_defaults && g_seenAssets;
+}
+static_assert(sizeof kVeRoots / sizeof kVeRoots[0] <= 64, "raise kVeMaxRoots");
+static const int kVeMaxRoots = 64;
+static void ve_root_ranges(uint16_t* lo, uint16_t* hi) {
+    for (int k = 0; k < kVeRootCount; k++) {
+        lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
+}
+// one partition's instances (+0x20, count u16 at +0x28): each config of a root type gets process_config, under g_veLock
+static long ve_scan_partition(uint64_t part, const uint16_t* lo, const uint16_t* hi, long* inspected) {
+    long matched = 0;
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
+        uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
+        uint16_t id = rd<uint16_t>(ci, 0x48); (*inspected)++;
+        for (int k = 0; k < kVeRootCount; k++) {
+            if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
+            const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
+            char asset[96]; int j = 0;
+            for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
+            asset[j] = 0; if (!j) break;
+            matched++;
+            AcquireSRWLockExclusive(&g_veLock);
+            if (ve_ready()) process_config(inst, kVeRoots[k], asset);
+            ReleaseSRWLockExclusive(&g_veLock);
+            break;
+        }
+    }
+    return matched;
+}
+static void value_engine_scan() {
+    if (!g_valuesOn) return;
+    AcquireSRWLockExclusive(&g_veLock); bool ready = ve_ready(); ReleaseSRWLockExclusive(&g_veLock);
+    if (!ready || !committed(0x1442d18c8)) return;
     typedef void (__fastcall* cs_t)(uint64_t cs);
     cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
     if (!enter || !leave) return;
-    static_assert(sizeof kVeRoots / sizeof kVeRoots[0] <= 64, "raise kMaxRoots");
-    const int kMaxRoots = 64; uint16_t lo[kMaxRoots], hi[kMaxRoots];
-    for (int k = 0; k < kVeRootCount; k++) {
-        lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
+    uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
         uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
@@ -1463,29 +1498,37 @@ static void value_engine_scan() {
         uint64_t pb = rd<uint64_t>(dom, 0x138), pe = rd<uint64_t>(dom, 0x140);
         for (uint64_t pp = pb; pp && pp < pe; pp += 8) {
             uint64_t part = rd<uint64_t>(pp, 0); if (!part) continue;
-            uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
-            for (uint16_t i = 0; insts && i < n; i++) {
-                uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
-                uint64_t ci = rd<uint64_t>(inst, 8); if (!ci) continue;
-                uint16_t id = rd<uint16_t>(ci, 0x48); inspected++;
-                for (int k = 0; k < kVeRootCount; k++) {
-                    if (hi[k] < lo[k] || (uint16_t)(id - lo[k]) > (uint16_t)(hi[k] - lo[k])) continue;
-                    const char* base = safe_str(rd<uint64_t>(inst, 0x18)); const char* sl = strrchr(base, '/');
-                    char asset[96]; int j = 0;
-                    for (const char* q = sl ? sl + 1 : base; *q && j < 95; q++) asset[j++] = (char)tolower((unsigned char)*q);
-                    asset[j] = 0; if (!j) break;
-                    matched++;
-                    process_config(inst, kVeRoots[k], asset);
-                    break;
-                }
-            }
+            matched += ve_scan_partition(part, lo, hi, &inspected);
         }
         leave(dom + 0x70);
     }
+    AcquireSRWLockExclusive(&g_veLock);
     grid_apply();
     static int reports; ULONGLONG ms = GetTickCount64() - t0;
     if (reports < 5 || ms > 50) { reports++; status("values: scan %llu ms, %d domains, %ld instances, %ld configs, %d assets with defaults", ms, nd, inspected, matched, g_seenCount); }
+    static LONG lastLoad; LONG nowLoad = g_loadApplied;
+    if (nowLoad != lastLoad) { lastLoad = nowLoad; status("values: %ld config(s) handled as they loaded, before anything was built from them", nowLoad); }
     write_defaults_file();
+    ReleaseSRWLockExclusive(&g_veLock);
+}
+
+// Configs given the profile as they load (2026-10-23). Capital ships and their turrets are built once, when the map loads,
+// and take their configs' values then; the 2-second scan finds a map's configs only after that (Zavian Abyss: the map's
+// bundles at 12:47:45, its passive-damage configs written at 12:47:46, and the match ran with stock passive damage).
+// FUN_140273060(store, ?, loader) makes a partition object from a parsed partition: called only by the store's
+// load-partition FUN_1402722c0, which holds the store's lock (+0x70) around it, after the parse has finished (state 7). The
+// partition it returns holds its instances (+0x20, count +0x28), so its configs get the profile before the call returns,
+// and before anything can be built from them. The scan still runs, for the menu's configs and as a second pass.
+typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
+static partnew_t o_partnew;
+static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
+    uint64_t part = o_partnew(store, a2, loader, a4);
+    if (part && g_valuesOn) {
+        uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
+        long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
+        if (matched) InterlockedExchangeAdd(&g_loadApplied, matched);
+    }
+    return part;
 }
 
 // ---- Observation (issue #11: what the game actually does with each value) ---------------------------------------------
@@ -2407,6 +2450,9 @@ static Site g_sites[] = {
     {"level-step2 0x140cd6420", 0x140cd6420, 15,
      {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20},
      (void*)h_lvlstep2, (void**)&o_lvlstep2},
+    {"partition-new 0x140273060", 0x140273060, 15,
+     {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
+     (void*)h_partnew, (void**)&o_partnew},
     {"material-lookup 0x14057dd20", 0x14057dd20, 15,
      {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02},
      (void*)h_matlookup, (void**)&o_matlookup},
