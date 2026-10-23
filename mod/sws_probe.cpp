@@ -524,8 +524,8 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
-static float g_ywingHitboxScale = 0;   // [server] ywing_hitbox_scale: experiment (#20); 0 = look only, else scale the Y-wing's hitbox
-static bool g_ywingHitboxProbe = false; // [server] ywing_hitbox_probe: 1 = run the search (and the scale, if set)
+struct HitboxScale { char ship[32]; float scale; };
+static HitboxScale g_hitboxScales[32]; static int g_hitboxScaleCount;   // [hitbox] <ship>=<scale>: experiment (#20)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
@@ -570,8 +570,14 @@ static void read_server_ini() {
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
-      g_ywingHitboxProbe = GetPrivateProfileIntW(L"server", L"ywing_hitbox_probe", 0, ini) != 0;
-      { wchar_t b[32] = L""; GetPrivateProfileStringW(L"server", L"ywing_hitbox_scale", L"0", b, 32, ini); g_ywingHitboxScale = (float)_wtof(b); }
+      { wchar_t sec[2048] = L""; DWORD n = GetPrivateProfileSectionW(L"hitbox", sec, 2048, ini);
+        for (wchar_t* e = sec; n && *e && g_hitboxScaleCount < 32; e += wcslen(e) + 1) {
+            wchar_t* eq = wcschr(e, L'='); if (!eq || e[0] == L';') continue;
+            HitboxScale& h = g_hitboxScales[g_hitboxScaleCount]; int k = 0;
+            for (wchar_t* c = e; c < eq && k < 31; c++) if (!iswspace(*c)) h.ship[k++] = (char)towlower(*c);
+            h.ship[k] = 0; h.scale = (float)_wtof(eq + 1);
+            if (k && h.scale > 0.01f && h.scale < 10.0f) g_hitboxScaleCount++;
+        } }
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1622,29 +1628,30 @@ static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data
     commit();
 }
 // ---- Ship scale experiment (issue #20) ----------------------------------------------------------------------------
-// The Y-wing's physics (starship_ywing_physics_win32, Havok 2013.3 hknp) holds two hknpStaticCompoundShapes: the collision
-// shape (6 instances: a convex hull and five capsules) and the raycast shape lasers hit (9 compressed meshes). Each
-// instance (128 bytes) has its rotation rows at +0x20/+0x30/+0x40, translation at +0x50 and a scale vector at +0x60; the
-// low 16 bits of row 0's w lane are its flags. All of the Y-wing's are identity, zero and scale 1 with flags 0x40
-// (enabled); its geometry is in ship space, so scaling an instance about its origin scales it about the ship's.
-// Across the game's ~82,500 compound instances, every scaled one has flag 0x08 and no unscaled one does (Havok's
-// "has scale"); scenery uses 0x20 with it (scale the surface, i.e. convex radius). In the 64-bit layout the compound's
-// instance array is at +0x60 (count at +0x68) and its bounding box, which identifies the Y-wing's, at +0x80.
-// ywing_hitbox_probe=1 searches writable memory every 10 s for the two boxes, checks the instances, and logs them;
-// ywing_hitbox_scale=s (not 0 or 1) also sets flags |= 0x28 and scale (s, s, s). Shrinking keeps the compound's own
-// bounding tree conservative (its boxes stay larger than the shapes), so queries stay correct. Experiment only.
+// A starfighter's physics (starship_<ship>_physics_win32, Havok 2013.3 hknp) holds hknpStaticCompoundShapes: for most,
+// a collision shape and the raycast shape lasers hit. Each instance (128 bytes) has its rotation rows at +0x20/+0x30/
+// +0x40, translation at +0x50 and a scale vector at +0x60; the low 16 bits of row 0's w lane are its flags. The ships'
+// are all identity, zero and scale 1 with flags 0x40 (enabled), with the geometry in ship space, so scaling an instance
+// about its origin scales it about the ship's. Across the game's ~82,500 compound instances every scaled one has flag
+// 0x08 and no unscaled one does (Havok's "has scale"); scenery uses 0x20 with it (scale the surface, the convex radius).
+// In the 64-bit layout a compound's instance count is at +0x68 (the array at +0x60, or inline at +0xb0) and its bounding
+// box at +0x80. hitbox_shapes.h (local/tools/gen_hitbox_shapes.py) lists every starfighter's compounds by those 32 box
+// bytes and their counts. With [hitbox] <ship>=<scale> lines (ywing, xwing_ai, ...), a thread searches writable memory
+// every 10 s for those boxes, checks the instances, and gives each flags |= 0x28 and scale (s, s, s). Player and AI
+// physics are separate resources but some of their shapes are identical (the same box and count): those can't be told
+// apart, and are scaled if either is asked for (logged). Shrinking keeps a compound's own bounding tree conservative.
+// Experiment only: not in profiles or the fingerprint.
 #ifdef PROBE_TEST
 #define PROBE_TEST_HITBOX_WAIT 500
 #else
 #define PROBE_TEST_HITBOX_WAIT 10000
 #endif
-struct HitboxShape { const char* name; uint8_t aabb[32]; uint32_t count; };
-static const HitboxShape kYwingHitbox[2] = {
-    {"collision", {0x58,0x2f,0xce,0xc0,0x0a,0xd4,0x29,0xc0,0x27,0x60,0x9a,0xc1,0x9e,0x68,0xeb,0xc0,
-                   0x00,0x6d,0xcd,0x40,0xe2,0x74,0xa0,0x3f,0x4a,0xf1,0x85,0x40,0xee,0x3a,0x82,0x40}, 6},
-    {"raycast",   {0x7b,0xef,0xc4,0xc0,0x02,0x50,0x89,0xbf,0x61,0xce,0x3e,0xc1,0xd4,0x49,0x5d,0xc0,
-                   0x7b,0xef,0xc4,0x40,0xbd,0xf2,0xbe,0x3f,0x6a,0xf6,0x3c,0x41,0x00,0x43,0x02,0x41}, 9},
-};
+#include "hitbox_shapes.h"
+static const int kHitboxShapeCount = (int)(sizeof kHitboxShapes / sizeof kHitboxShapes[0]);
+static float hitbox_scale_for(const char* ship) {
+    for (int i = 0; i < g_hitboxScaleCount; i++) if (!strcmp(g_hitboxScales[i].ship, ship)) return g_hitboxScales[i].scale;
+    return 0;
+}
 // instances as the file has them (identity, no translation, enabled), allowing our own scale and flags
 static bool hb_instances_ok(uint64_t arr, uint32_t n) {
     for (uint32_t k = 0; k < n; k++) {
@@ -1657,18 +1664,27 @@ static bool hb_instances_ok(uint64_t arr, uint32_t n) {
     }
     return true;
 }
-static void hitbox_found(uint64_t comp, const HitboxShape& h) {
-    static uint64_t seen[64]; static int nseen;
+static void hitbox_found(uint64_t comp, int first) {
+    static uint64_t seen[256]; static int nseen;
     uint32_t n = rd<uint32_t>(comp, 0x68);
-    uint64_t arr = rd<uint64_t>(comp, 0x60); const char* where = "array pointer";
-    bool ok = n == h.count && arr && hb_instances_ok(arr, n);
-    if (!ok && n == h.count && hb_instances_ok(comp + 0xb0, n)) { arr = comp + 0xb0; where = "inline"; ok = true; }
+    // the table entries this compound could be: the same box and the same count
+    char who[160] = ""; float s = 0; int matches = 0;
+    for (int e = first; e < kHitboxShapeCount; e++) {
+        if (memcmp(kHitboxShapes[e].aabb, kHitboxShapes[first].aabb, 32) || kHitboxShapes[e].count != n) continue;
+        matches++;
+        if (strlen(who) + strlen(kHitboxShapes[e].ship) + 12 < sizeof who)
+            sprintf_s(who + strlen(who), sizeof who - strlen(who), "%s%s %d", who[0] ? " / " : "", kHitboxShapes[e].ship, kHitboxShapes[e].index);
+        float f = hitbox_scale_for(kHitboxShapes[e].ship); if (f > 0 && s == 0) s = f;
+    }
     int k = 0; while (k < nseen && seen[k] != comp) k++;
     bool fresh = k == nseen;
-    if (fresh && nseen < 64) seen[nseen++] = comp;
-    if (!ok) { if (fresh) status("hitbox: a Y-wing %s box at %llx, but its instances don't look right (count %u); left alone", h.name, comp, n); return; }
-    float s = g_ywingHitboxScale;
-    bool scale = s > 0.01f && s < 10.0f && s != 1.0f;
+    if (fresh && nseen < 256) seen[nseen++] = comp;
+    if (!matches) { if (fresh) status("hitbox: a known box at %llx, but its count (%u) matches no shape; left alone", comp, n); return; }
+    uint64_t arr = rd<uint64_t>(comp, 0x60); const char* where = "array pointer";
+    bool ok = arr && hb_instances_ok(arr, n);
+    if (!ok && hb_instances_ok(comp + 0xb0, n)) { arr = comp + 0xb0; where = "inline"; ok = true; }
+    if (!ok) { if (fresh) status("hitbox: %s at %llx, but its instances don't look right; left alone", who, comp); return; }
+    bool scale = s > 0 && s != 1.0f;
     int changed = 0;
     for (uint32_t j = 0; scale && j < n; j++) {
         uint64_t i = arr + 0x80ull * j;
@@ -1681,8 +1697,8 @@ static void hitbox_found(uint64_t comp, const HitboxShape& h) {
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
     if (fresh || changed)
-        status("hitbox: Y-wing %s shape at %llx, %u instances (%s at %llx)%s", h.name, comp, n, where, arr,
-               scale ? (changed ? ", scaled now" : ", already scaled") : ", looked at only (no scale set)");
+        status("hitbox: %s at %llx, %u instances (%s)%s%s", who, comp, n, where,
+               scale ? (changed ? ", scaled now" : ", already scaled") : ", not asked to scale", matches > 1 ? " [identical shapes: can't tell apart]" : "");
     if (changed) status("hitbox:   %d instance(s) given scale %.3g and flags |= 0x28", changed, s);
 }
 static void hitbox_scan() {
@@ -1693,12 +1709,15 @@ static void hitbox_scan() {
             !(mbi.Protect & PAGE_GUARD)) {
             __try {
                 const uint64_t* p = (const uint64_t*)base; size_t n = size / 8;
-                for (int h = 0; h < 2; h++) {
-                    uint64_t first; memcpy(&first, kYwingHitbox[h].aabb, 8);
+                for (int h = 0; h < kHitboxShapeCount; h++) {
+                    bool dup = false;   // each distinct box is searched once; hitbox_found sorts out which entries it is
+                    for (int g = 0; g < h; g++) if (!memcmp(kHitboxShapes[g].aabb, kHitboxShapes[h].aabb, 32)) dup = true;
+                    if (dup) continue;
+                    uint64_t first; memcpy(&first, kHitboxShapes[h].aabb, 8);
                     for (size_t k = 0; k + 4 <= n; k += 2) {   // the box is 16-byte aligned
-                        if (p[k] != first || memcmp(p + k, kYwingHitbox[h].aabb, 32)) continue;
+                        if (p[k] != first || memcmp(p + k, kHitboxShapes[h].aabb, 32)) continue;
                         uint64_t comp = (uint64_t)(p + k) - 0x80;
-                        if (comp >= base) hitbox_found(comp, kYwingHitbox[h]);
+                        if (comp >= base) hitbox_found(comp, h);
                     }
                 }
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -1707,7 +1726,8 @@ static void hitbox_scan() {
     }
 }
 static DWORD WINAPI hitbox_thread(LPVOID) {
-    status("hitbox: searching for the Y-wing's shapes every 10 s (scale %.3g)", g_ywingHitboxScale);
+    for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
+    status("hitbox: searching every %.1f s for %d known starfighter shapes", PROBE_TEST_HITBOX_WAIT / 1000.0, kHitboxShapeCount);
     for (;;) { Sleep(PROBE_TEST_HITBOX_WAIT); hitbox_scan(); }
 }
 static DWORD WINAPI observe_thread(LPVOID) {
@@ -2819,7 +2839,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 #endif
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
         if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
-        if (g_ywingHitboxProbe) { HANDLE h = CreateThread(nullptr, 0, hitbox_thread, nullptr, 0, nullptr); if (h) CloseHandle(h); }
+        if (g_hitboxScaleCount) { HANDLE h = CreateThread(nullptr, 0, hitbox_thread, nullptr, 0, nullptr); if (h) CloseHandle(h); }
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif
