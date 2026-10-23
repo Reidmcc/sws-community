@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include "hitbox_shapes.h"
 
 static int fails;
 // stand-ins for the engine's in-memory socket manager / socket (signatures from notes/socket-interface.md)
@@ -326,40 +327,51 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
-    {   // ship scale experiment (#20): the Y-wing's two compound shapes, found in memory by their bounding boxes (+0x80),
-        // with 128-byte instances (identity rows at +0x20, flags in row 0's w at +0x2c, scale at +0x60). The raycast one
-        // reaches its 9 instances through its array pointer (+0x60, count +0x68), the collision one has its 6 inline at
-        // +0xb0, and a decoy with the raycast box and the wrong count must be left alone. ywing_hitbox_scale=0.5.
-        static const uint8_t col[32] = {0x58,0x2f,0xce,0xc0,0x0a,0xd4,0x29,0xc0,0x27,0x60,0x9a,0xc1,0x9e,0x68,0xeb,0xc0,
-                                        0x00,0x6d,0xcd,0x40,0xe2,0x74,0xa0,0x3f,0x4a,0xf1,0x85,0x40,0xee,0x3a,0x82,0x40};
+    {   // ship scale experiment (#20). The Y-wing's raycast compound is found by its box (+0x80) but its instance scale is
+        // no longer written (lasers ignore it). What's scaled is mesh geometry: a compressed mesh's data, found by its domain
+        // box (+0x20), with its sections (0x60 apart: domain +0x10/+0x20, codec offset and scale +0x30) where the table says
+        // and the first section's codec as loaded. [hitbox] ywing=0.5: a Y-wing mesh is scaled; a TIE fighter mesh isn't.
         static const uint8_t ray[32] = {0x7b,0xef,0xc4,0xc0,0x02,0x50,0x89,0xbf,0x61,0xce,0x3e,0xc1,0xd4,0x49,0x5d,0xc0,
                                         0x7b,0xef,0xc4,0x40,0xbd,0xf2,0xbe,0x3f,0x6a,0xf6,0x3c,0x41,0x00,0x43,0x02,0x41};
-        auto instances = [](uint8_t* at, int n) {
-            for (int k = 0; k < n; k++) {
-                uint8_t* i = at + 0x80 * k;
-                *(float*)(i + 0x20) = 1; *(float*)(i + 0x34) = 1; *(float*)(i + 0x48) = 1; *(uint16_t*)(i + 0x2c) = 0x40;
-                *(float*)(i + 0x60) = 1; *(float*)(i + 0x64) = 1; *(float*)(i + 0x68) = 1; *(float*)(i + 0x6c) = 1;
+        uint8_t* rc = fake_alloc(0xb0 + 9 * 0x80);
+        for (int k = 0; k < 9; k++) {
+            uint8_t* i = rc + 0xb0 + 0x80 * k;
+            *(float*)(i + 0x20) = 1; *(float*)(i + 0x34) = 1; *(float*)(i + 0x48) = 1; *(uint16_t*)(i + 0x2c) = 0x40; *(float*)(i + 0x60) = 1;
+        }
+        memcpy(rc + 0x80, ray, 32); *(uint32_t*)(rc + 0x68) = 9;
+        auto fake_mesh = [](const HitboxMesh& m) {
+            uint8_t* d = fake_alloc(m.sections + m.count * 0x60 + 0x40);
+            memcpy(d + 0x20, m.domain, 32); *(uint32_t*)(d + 0x58) = m.count;
+            for (uint32_t j = 0; j < m.count; j++) {
+                float* sec = (float*)(d + m.sections + 0x60 * j);
+                for (int c = 0; c < 3; c++) { sec[4 + c] = -1.0f - j; sec[8 + c] = 1.0f + j; sec[12 + c] = 0.25f * j; sec[15 + c] = 0.001f; }
             }
+            memcpy(d + m.sections + 0x30, m.codec, 24);
+            return d;
         };
-        uint8_t* rc = fake_alloc(0x100); uint8_t* rcArr = fake_alloc(9 * 0x80); instances(rcArr, 9);
-        memcpy(rc + 0x80, ray, 32); *(uint64_t*)(rc + 0x60) = (uint64_t)rcArr; *(uint32_t*)(rc + 0x68) = 9;
-        uint8_t* cc = fake_alloc(0xb0 + 6 * 0x80); instances(cc + 0xb0, 6);
-        memcpy(cc + 0x80, col, 32); *(uint32_t*)(cc + 0x68) = 6;
-        uint8_t* dc = fake_alloc(0x100); uint8_t* dcArr = fake_alloc(9 * 0x80); instances(dcArr, 9);
-        memcpy(dc + 0x80, ray, 32); *(uint64_t*)(dc + 0x60) = (uint64_t)dcArr; *(uint32_t*)(dc + 0x68) = 3;
-        auto scaled = [](uint8_t* at, int n) {
-            for (int k = 0; k < n; k++) {
-                uint8_t* i = at + 0x80 * k;
-                if (*(uint16_t*)(i + 0x2c) != 0x68 || *(float*)(i + 0x60) != 0.5f || *(float*)(i + 0x64) != 0.5f ||
-                    *(float*)(i + 0x68) != 0.5f || *(float*)(i + 0x20) != 1.0f) return false;
-            }
+        const HitboxMesh* yw = nullptr; const HitboxMesh* tf = nullptr;
+        for (const HitboxMesh& m : kHitboxMeshes) {
+            if (!yw && !strcmp(m.ship, "ywing") && m.count > 1) yw = &m;
+            if (!tf && !strcmp(m.ship, "tiefighter")) tf = &m;
+        }
+        uint8_t* ym = fake_mesh(*yw); uint8_t* tm = fake_mesh(*tf);
+        float ydom[8], ysec1[6], ycodec0[6], tdom[8];
+        memcpy(ydom, ym + 0x20, 32); memcpy(ysec1, ym + yw->sections + 0x60 + 0x30, 24); memcpy(ycodec0, yw->codec, 24); memcpy(tdom, tm + 0x20, 32);
+        auto mesh_scaled = [&]() {
+            const float* d = (const float*)(ym + 0x20); const float* s1 = (const float*)(ym + yw->sections + 0x60 + 0x30);
+            const float* c0 = (const float*)(ym + yw->sections + 0x30);
+            for (int c = 0; c < 3; c++)
+                if (d[c] != ydom[c] * 0.5f || d[4 + c] != ydom[4 + c] * 0.5f) return false;
+            if (d[3] != ydom[3] || d[7] != ydom[7]) return false;   // the w lanes stay
+            for (int c = 0; c < 6; c++) if (s1[c] != ysec1[c] * 0.5f || c0[c] != ycodec0[c] * 0.5f) return false;
             return true;
         };
-        for (int t = 0; t < 60 && !(scaled(rcArr, 9) && scaled(cc + 0xb0, 6)); t++) Sleep(100);
-        check(scaled(rcArr, 9) && scaled(cc + 0xb0, 6),
-              "ship scale: the Y-wing's raycast (array pointer) and collision (inline) shapes found by their boxes and scaled 0.5 with flags 0x68");
-        check(*(uint16_t*)(dcArr + 0x2c) == 0x40 && *(float*)(dcArr + 0x60) == 1.0f,
-              "ship scale: a decoy with the raycast box but the wrong instance count is left alone");
+        for (int t = 0; t < 60 && !mesh_scaled(); t++) Sleep(100);
+        Sleep(1200);   // another scan or two: a scaled mesh must not be scaled again
+        check(mesh_scaled(), "ship scale: a Y-wing mesh found by its domain box; its domain, sections' domains and codecs scaled 0.5, once");
+        check(!memcmp(tm + 0x20, tdom, 32), "ship scale: a TIE fighter mesh (not asked for) is left alone");
+        check(*(uint16_t*)(rc + 0xb0 + 0x2c) == 0x40 && *(float*)(rc + 0xb0 + 0x60) == 1.0f,
+              "ship scale: the compound is found but its instance scale is no longer written");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)

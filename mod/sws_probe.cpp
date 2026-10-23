@@ -1648,6 +1648,7 @@ static void obs_sample(int slot, int sub, uint64_t comp, int kind, uint64_t data
 #endif
 #include "hitbox_shapes.h"
 static const int kHitboxShapeCount = (int)(sizeof kHitboxShapes / sizeof kHitboxShapes[0]);
+static const int kHitboxMeshCount = (int)(sizeof kHitboxMeshes / sizeof kHitboxMeshes[0]);
 static float hitbox_scale_for(const char* ship) {
     for (int i = 0; i < g_hitboxScaleCount; i++) if (!strcmp(g_hitboxScales[i].ship, ship)) return g_hitboxScales[i].scale;
     return 0;
@@ -1684,7 +1685,8 @@ static void hitbox_found(uint64_t comp, int first) {
     bool ok = arr && hb_instances_ok(arr, n);
     if (!ok && hb_instances_ok(comp + 0xb0, n)) { arr = comp + 0xb0; where = "inline"; ok = true; }
     if (!ok) { if (fresh) status("hitbox: %s at %llx, but its instances don't look right; left alone", who, comp); return; }
-    bool scale = s > 0 && s != 1.0f;
+    bool scale = false;   // the instance scale is ignored by the laser path (2026-10-23, 0.05 flight); meshes are scaled instead
+    (void)s;
     int changed = 0;
     for (uint32_t j = 0; scale && j < n; j++) {
         uint64_t i = arr + 0x80ull * j;
@@ -1698,8 +1700,47 @@ static void hitbox_found(uint64_t comp, int first) {
     }
     if (fresh || changed)
         status("hitbox: %s at %llx, %u instances (%s)%s%s", who, comp, n, where,
-               scale ? (changed ? ", scaled now" : ", already scaled") : ", not asked to scale", matches > 1 ? " [identical shapes: can't tell apart]" : "");
+               ", found (its meshes are what's scaled)", matches > 1 ? " [identical shapes: can't tell apart]" : "");
     if (changed) status("hitbox:   %d instance(s) given scale %.3g and flags |= 0x28", changed, s);
+}
+// The geometry itself. A compressed mesh's data (hknpCompressedMeshShapeData) keeps its vertices quantized per section,
+// decoded as offset + q * scale with the section's six codec floats (+0x30), and its shared vertices relative to the mesh's
+// domain box (+0x20/+0x30); each section also has a domain box (+0x10/+0x20) that its culling tree decodes against.
+// Multiplying all of them by s scales the mesh about the ship's origin, whatever reads it. The table (kHitboxMeshes) has
+// each mesh's domain bytes, where its sections start, how many, and the first section's codec as loaded: a mesh is scaled
+// only if that codec is still as loaded (so never twice), and identical meshes in player and AI physics are scaled if
+// either is asked for.
+static void hitbox_mesh_found(uint64_t data, int first) {
+    static uint64_t seen[1024]; static int nseen;
+    const HitboxMesh& m = kHitboxMeshes[first];
+    float s = 0; char who[160] = ""; int matches = 0;
+    for (int e = 0; e < kHitboxMeshCount; e++) {
+        const HitboxMesh& x = kHitboxMeshes[e];
+        if (memcmp(x.domain, m.domain, 32) || x.count != m.count || x.sections != m.sections || memcmp(x.codec, m.codec, 24)) continue;
+        matches++;
+        if (strlen(who) + strlen(x.ship) + 12 < sizeof who)
+            sprintf_s(who + strlen(who), sizeof who - strlen(who), "%s%s mesh %d", who[0] ? " / " : "", x.ship, x.index);
+        float f = hitbox_scale_for(x.ship); if (f > 0 && s == 0) s = f;
+    }
+    int k = 0; while (k < nseen && seen[k] != data) k++;
+    bool fresh = k == nseen;
+    if (fresh && nseen < 1024) seen[nseen++] = data;
+    uint8_t now[24]; for (int i = 0; i < 24; i++) now[i] = rd<uint8_t>(data + m.sections + 0x30, i);
+    if (rd<uint32_t>(data, 0x58) != m.count || memcmp(now, m.codec, 24)) {
+        if (fresh) status("hitbox: %s at %llx doesn't match its loaded form; left alone", who, data);
+        return;
+    }
+    if (!(s > 0 && s != 1.0f)) { if (fresh) status("hitbox: %s at %llx, %u sections, not asked to scale", who, data, m.count); return; }
+    __try {
+        for (uint32_t j = 0; j < m.count; j++) {
+            float* sec = (float*)(data + m.sections + 0x60ull * j);
+            for (int c = 0; c < 3; c++) { sec[4 + c] *= s; sec[8 + c] *= s; }   // the section's domain min (+0x10) and max (+0x20)
+            for (int c = 0; c < 6; c++) sec[12 + c] *= s;                      // its codec: offset xyz, scale xyz (+0x30)
+        }
+        float* dom = (float*)(data + 0x20);
+        for (int c = 0; c < 3; c++) { dom[c] *= s; dom[4 + c] *= s; }          // the mesh's domain min (+0x20) and max (+0x30)
+    } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: %s at %llx: write failed", who, data); return; }
+    status("hitbox: %s at %llx, %u sections, geometry scaled %.3g%s", who, data, m.count, s, matches > 1 ? " [identical meshes: can't tell apart]" : "");
 }
 static void hitbox_scan() {
     uint64_t a = 0x10000; MEMORY_BASIC_INFORMATION mbi;
@@ -1720,6 +1761,20 @@ static void hitbox_scan() {
                         if (comp >= base) hitbox_found(comp, h);
                     }
                 }
+                for (int h = 0; h < kHitboxMeshCount; h++) {
+                    float want = hitbox_scale_for(kHitboxMeshes[h].ship);
+                    if (!(want > 0 && want != 1.0f)) continue;   // only the meshes of ships asked for
+                    bool dup = false;
+                    for (int g = 0; g < h; g++)   // searched once per domain, among the ships asked for
+                        if (!memcmp(kHitboxMeshes[g].domain, kHitboxMeshes[h].domain, 32) && hitbox_scale_for(kHitboxMeshes[g].ship) > 0) dup = true;
+                    if (dup) continue;
+                    uint64_t first; memcpy(&first, kHitboxMeshes[h].domain, 8);
+                    for (size_t k = 0; k + 4 <= n; k += 2) {   // the domain is 16-byte aligned
+                        if (p[k] != first || memcmp(p + k, kHitboxMeshes[h].domain, 32)) continue;
+                        uint64_t data = (uint64_t)(p + k) - 0x20;
+                        if (data >= base) hitbox_mesh_found(data, h);
+                    }
+                }
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
         a = base + size;
@@ -1727,7 +1782,7 @@ static void hitbox_scan() {
 }
 static DWORD WINAPI hitbox_thread(LPVOID) {
     for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
-    status("hitbox: searching every %.1f s for %d known starfighter shapes", PROBE_TEST_HITBOX_WAIT / 1000.0, kHitboxShapeCount);
+    status("hitbox: searching every %.1f s for %d known starfighter shapes and %d meshes", PROBE_TEST_HITBOX_WAIT / 1000.0, kHitboxShapeCount, kHitboxMeshCount);
     for (;;) { Sleep(PROBE_TEST_HITBOX_WAIT); hitbox_scan(); }
 }
 static DWORD WINAPI observe_thread(LPVOID) {
