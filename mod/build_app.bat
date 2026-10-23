@@ -6,6 +6,7 @@ rem The app is built to a new file first and only then swapped in, so an open co
 rem running, the swap fails, the old exe stays, and you're told to close it.
 setlocal
 cd /d "%~dp0"
+if not exist build mkdir build
 set "CSC=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\Roslyn\csc.exe"
 if exist "%CSC%" goto havecsc
 rem another Visual Studio (Community, Professional, Enterprise, the GitHub runners'): ask vswhere
