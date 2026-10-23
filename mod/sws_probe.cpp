@@ -520,6 +520,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_mapFixes = true;          // [server] map_fixes: 0 = leave the maps' own data mistakes alone (see map_fix_partition)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, where, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
@@ -564,6 +565,7 @@ static void read_server_ini() {
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_mapFixes = GetPrivateProfileIntW(L"server", L"map_fixes", 1, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1521,10 +1523,34 @@ static void value_engine_scan() {
 // load-partition FUN_1402722c0, which holds the store's lock (+0x70) around it, after the parse has finished (state 7). The
 // partition it returns holds its instances (+0x20, count +0x28), so its configs get the profile before the call returns,
 // and before anything can be built from them. The scan still runs, for the menu's configs and as a second pass.
+// Mistakes in the maps' own data, fixed as their partition loads (map_fixes=1, the default).
+// Zavian Abyss: each creep pack is two spawn points, one of 3 ships and one of 2, which the respawn logic tells to Spawn
+// (EventConnections in the PvP layer, SubWorldData "Game/Levels/PvP/PVP_Abyss/PvP": event -202538501 -> "Spawn", djb2
+// 230891742). One of the twelve connections, to the middle X-wing pack's 2-ship point, sends "ReturnControl" (-597186424)
+// instead, so that pack starts and respawns with 3 ships (2026-10-23: the spawn log showed 13 X-wings, 3+3+3 and 2+2; the
+// level data has 11 Spawns and the one ReturnControl; Yavin has 12 Spawns). The connection is a server event, so the host's
+// fix is the one that counts. The root (an Asset: name +0x18) keeps EventConnections at +0x40 (count at -4), 32-byte
+// entries with SourceEvent at +0x10 and TargetEvent at +0x14. Rewritten only if exactly that one connection is found.
+static void map_fix_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
+        if (_stricmp(safe_str(rd<uint64_t>(inst, 0x18)), "Game/Levels/PvP/PVP_Abyss/PvP") != 0) continue;
+        uint64_t arr = rd<uint64_t>(inst, 0x40); uint32_t cnt = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        int found = 0; uint32_t at = 0;
+        for (uint32_t k = 0; k < cnt && k < 4096; k++)
+            if (rd<int32_t>(arr, k * 32 + 0x10) == -202538501 && rd<int32_t>(arr, k * 32 + 0x14) == -597186424) { found++; at = k; }
+        if (found == 1 && leaf_write(arr + at * 32ull + 0x14, true, 230891742.0))
+            status("map fix: Zavian Abyss, the middle X-wing creep pack's 2-ship spawn point now gets Spawn, not ReturnControl (event connection %u of %u)", at, cnt);
+        else status("map fix: Zavian Abyss's PvP layer loaded, but %d connection(s) match the miswired creep spawn; left alone", found);
+        return;
+    }
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
     uint64_t part = o_partnew(store, a2, loader, a4);
+    if (part && g_mapFixes) map_fix_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);

@@ -311,6 +311,21 @@ int main() {
         check(stop->value == 0.5f && reg[1] == 0.5f,
               "value engine: a config gets the profile as its partition is created, before any scan (passive damage floor 0.15 -> 0.5)");
     }
+    {   // map fix: Zavian Abyss's PvP layer, with its one miswired creep spawn event (ReturnControl) among Spawns and an
+        // unrelated ReturnControl from another source, arrives through the partition creator; only the miswired one changes
+        uint8_t* root = fake_alloc(0x100); *(uint64_t*)(root + 8) = (uint64_t)fake_class(1);
+        *(const char**)(root + 0x18) = "Game/Levels/PvP/PVP_Abyss/PvP";
+        uint8_t* ev = fake_alloc(16 + 4 * 32); *(uint32_t*)(ev + 12) = 4; int32_t* e = (int32_t*)(ev + 16);
+        const int32_t pairs[4][2] = { { -202538501, 230891742 }, { -202538501, -597186424 }, { -202538501, 230891742 }, { 12345, -597186424 } };
+        for (int k = 0; k < 4; k++) { e[k * 8 + 4] = pairs[k][0]; e[k * 8 + 5] = pairs[k][1]; }
+        *(uint64_t*)(root + 0x40) = (uint64_t)(ev + 16);
+        uint8_t** insts4 = (uint8_t**)fake_alloc(16); insts4[0] = root;
+        uint8_t* part4 = fake_alloc(0x40); *(uint8_t***)(part4 + 0x20) = insts4; *(uint16_t*)(part4 + 0x28) = 1;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part4, 0);
+        check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
+              "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
+    }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)
         uint8_t* ent = fake_alloc(0x400); uint8_t* req = fake_alloc(0x80);
