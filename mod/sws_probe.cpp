@@ -1692,15 +1692,22 @@ static int hitbox_scale_packfile(uint64_t buf, uint32_t size) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { status("hitbox: a packfile at %llx couldn't be read whole; left as it was", buf); }
     return scaled;
 }
-// Two in-place loaders take a packfile (and its size): FUN_142706d60, called by Frostbite's Havok resource loading
-// (FUN_141cad6d0), and FUN_142706770, reached through Havok's general load (FUN_1429c5d00, FUN_1429c7a60). Both are hooked;
-// the first flight with only the first hooked scaled nothing. Each one's packfiles are counted and the first few logged,
-// so a flight shows which path the starships' physics takes.
-static volatile LONG g_hkSeen[2], g_hkScaled[2];
+// Three in-place loaders take a packfile and its size. Frostbite's physics resources (HavokPhysicsData, resource type
+// djb2("havokphysicsdata") = 0x91043f65) come through its create step FUN_141caddc0 (the class's vtable 0x1436e01a8,
+// slot 7), which hands FUN_142707130(packfile, size, fixups, ...) the packfile with its pointer fixups in a separate table
+// (Frostbite's own packfile variant). Havok's FUN_142706d60 and FUN_142706770 load classic packfiles; two flights hooking
+// only those scaled nothing, as no packfile came through them. All three are hooked; each one's packfiles are counted and
+// the first few logged, so a flight shows which path is used.
+static volatile LONG g_hkSeen[3], g_hkScaled[3];
 static void hitbox_on_load(int which, uint64_t packfile, uint32_t size) {
-    if (!g_hitboxScaleCount || !packfile || size < 0x100 || size >= (64u << 20) || rd<uint32_t>(packfile, 0) != 0x57e0e057) return;
-    int n = hitbox_scale_packfile(packfile, size);
+    if (!g_hitboxScaleCount) return;
     LONG seen = InterlockedIncrement(&g_hkSeen[which]);
+    uint32_t magic = packfile ? rd<uint32_t>(packfile, 0) : 0;
+    if (!packfile || size < 0x100 || size >= (64u << 20) || magic != 0x57e0e057) {
+        if (seen <= 3) status("hitbox: loader %d: buffer %llx (%u bytes) starts %08x, not a packfile; left alone", which + 1, packfile, size, magic);
+        return;
+    }
+    int n = hitbox_scale_packfile(packfile, size);
     LONG scaled = n ? InterlockedExchangeAdd(&g_hkScaled[which], n) + n : g_hkScaled[which];
     if (seen <= 3 || n || seen % 200 == 0)
         status("hitbox: loader %d: packfile %llx (%u bytes), %d mesh(es) scaled; %ld packfiles and %ld meshes so far", which + 1, packfile, size, n, seen, scaled);
@@ -1710,6 +1717,12 @@ static hkload_t o_hkload;
 static uint64_t __fastcall h_hkload(uint64_t packfile, uint32_t size, uint64_t a3, uint64_t a4) {
     hitbox_on_load(0, packfile, size);
     return o_hkload(packfile, size, a3, a4);
+}
+typedef uint64_t(__fastcall* hkload3_t)(uint64_t packfile, uint32_t size, uint64_t fixups, uint64_t a4);
+static hkload3_t o_hkload3;
+static uint64_t __fastcall h_hkload3(uint64_t packfile, uint32_t size, uint64_t fixups, uint64_t a4) {
+    hitbox_on_load(2, packfile, size);
+    return o_hkload3(packfile, size, fixups, a4);
 }
 typedef uint64_t(__fastcall* hkload2_t)(uint64_t packfile, uint32_t size, uint64_t a3);
 static hkload2_t o_hkload2;
@@ -2596,6 +2609,9 @@ static Site g_sites[] = {
     {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
      (void*)h_sspawn, (void**)&o_sspawn},
+    {"havok-resource-load 0x142707130", 0x142707130, 16,
+     {0x48,0x8b,0xc4,0x55,0x57,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0x98,0x00,0x00,0x00},
+     (void*)h_hkload3, (void**)&o_hkload3},
     {"havok-packfile-load2 0x142706770", 0x142706770, 18,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40},
      (void*)h_hkload2, (void**)&o_hkload2},

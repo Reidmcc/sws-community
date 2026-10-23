@@ -132,6 +132,11 @@ int main() {
     const uint8_t hkload2[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40,
                                0x48,0x89,0xc8, 0x48,0x83,0xc4,0x40, 0x41,0x5e,0x5f,0x5e, 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x6c,0x24,0x10, 0xc3};
     put(0x142706770, hkload2, sizeof hkload2);
+    // Frostbite's Havok resource load (FUN_142707130): its real 16-byte prologue (mov rax, rsp; push rbp; push rdi;
+    // lea rbp, [rax-0x5f]; sub rsp, 0x98), then mov rax, rcx, lea rsp, [rbp+0x4f], pop rdi, pop rbp, ret
+    const uint8_t hkload3[] = {0x48,0x8b,0xc4,0x55,0x57,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0x98,0x00,0x00,0x00,
+                               0x48,0x89,0xc8, 0x48,0x8d,0x65,0x4f, 0x5f, 0x5d, 0xc3};
+    put(0x142707130, hkload3, sizeof hkload3);
     // material grid lookup (FUN_14057dd20): its real 15-byte prologue, then mov rax, imm64 (the stock cell, set below)
     // and the epilogue. The capital hull's direct-hit call site is planted too: entered at 0x1417db3f7, it gives the callee its
     // shadow space and keeps the stack aligned (sub rsp, 0x28), calls from 0x1417db3fb so the lookup returns to
@@ -387,6 +392,14 @@ int main() {
         const float* d2 = (const float*)(pk2 + 0x100 + 0x20);
         check(*(uint8_t*)0x142706770 == 0xFF && r4 == (uint64_t)pk2 && d2[0] == ydom[0] * 0.5f && d2[4] == ydom[4] * 0.5f,
               "ship scale: the second packfile loader is hooked too, and scales the same way");
+        // Frostbite's Havok resource load: a fresh packfile with the same Y-wing mesh, through FUN_142707130
+        uint8_t* pk3 = fake_alloc(0x100 + ysz); *(uint32_t*)pk3 = 0x57e0e057; *(uint32_t*)(pk3 + 4) = 0x10c0c010;
+        put_mesh(pk3 + 0x100, *yw);
+        typedef uint64_t(__fastcall* hkload3_t)(uint64_t, uint32_t, uint64_t, uint64_t);
+        uint64_t r5 = ((hkload3_t)0x142707130)((uint64_t)pk3, 0x100 + ysz, 0, 0);
+        const float* d3 = (const float*)(pk3 + 0x100 + 0x20);
+        check(*(uint8_t*)0x142707130 == 0xFF && r5 == (uint64_t)pk3 && d3[0] == ydom[0] * 0.5f && d3[4] == ydom[4] * 0.5f,
+              "ship scale: Frostbite's Havok resource load is hooked too, and scales the same way");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)
