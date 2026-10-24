@@ -233,7 +233,8 @@ static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshieldda
     "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
     "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
     "materialgrid",   // laser and ion damage against capital ships (grid_apply)
-    "shipscale" };   // a starfighter's size (model_scale_partition)
+    "shipscale",   // a starfighter's size (model_scale_partition)
+    "incomschematicattributesconfig" };   // match rules: Fleet Battles' morale per kill, phase sizes, timers; Dogfight's
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -1243,6 +1244,8 @@ static gstick_t o_gstick;
 // defaults are equal, else the bot's own default scaled by the same ratio. Creep configs are never touched.
 #include "config_types.h"   // the type table the engine walks (tools/gen_config_types.py)
 #include "bot_map.h"        // player config -> vs-AI bot configs, generated from the pvb_bot collections
+#include "schematic_attrs.h"   // match-rule attribute ids -> names (local/tools/gen_schematic_attrs.py)
+static const char* schematic_name(uint32_t id) { for (const SchematicAttr& a : kSchematicAttrs) if (a.id == id) return a.key; return nullptr; }
 // Object-graph walk (2026-10-21): each root config is walked through the type table, and every number gets a dotted key:
 // asset.field, asset.field[i], asset.field.x (Vec3), asset.sub.field (a followed sub-object, its actual class resolved from
 // its ClassInfo id), asset.field[i].member (arrays of value types). Attribute leaves (IncomAttributeFloat/Int/Vec3, Value at
@@ -1358,6 +1361,17 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
                 if (f.kind == 8) { VeLeaf l{ key, arr + 4ull * j, false, 0, 0, 0 }; fn(ctx, l); }
                 else ve_walk(arr + (uint64_t)stride * j, f.type, key, cap, depth + 1, fn, ctx);
                 key[m] = 0;
+            }
+            break; }
+        case 13: {   // a list-only config's registration list (IncomSchematicAttributesConfig: Fleet Battles' and
+            // Dogfight's match rules): 8-byte entries {u32 attribute id, value at +4}, each named by its attribute
+            key[n] = 0;
+            uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 256) cnt = 0;
+            for (int j = 0; j < cnt; j++) {
+                const char* nm = schematic_name(rd<uint32_t>(arr, 8 * j)); if (!nm) continue;
+                size_t m = strlen(key); if (m + strlen(nm) + 2 >= cap) continue;
+                sprintf_s(key + m, cap - m, ".%s", nm);
+                VeLeaf l{ key, arr + 8ull * j + 4, f.type == 1, 0, 0, 0, f.type == 2 }; fn(ctx, l); key[m] = 0;
             }
             break; }
         case 10: {   // a component's AttributeModifier list: each Float modifier, named by its attribute

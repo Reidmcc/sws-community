@@ -77,7 +77,8 @@ namespace SwsSettings
             "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
             "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
             "materialgrid",   // laser and ion damage against capital ships
-            "shipscale" };   // a starfighter's size (one per ship: shipscale_<ship>.scale)
+            "shipscale",   // a starfighter's size (one per ship: shipscale_<ship>.scale)
+            "incomschematicattributesconfig" };   // match rules: Fleet Battles' morale per kill, phase sizes, timers; Dogfight's
 
         public static Limits Load(string dir)
         {
@@ -315,19 +316,20 @@ namespace SwsSettings
             { "frigate", "Frigate (Nebulon-B)" }, { "raider", "Raider" }, { "lightcruiser", "Light cruiser (Arquitens)" },
             { "starhawk", "Starhawk" }, { "quasar", "Quasar Fire" }, { "gozanti", "Gozanti" }, { "gr75", "GR-75" },
             { "igv55", "IGV-55" }, { "zeta", "Zeta" }, { "bff", "BFF" } };
-        public const string Turrets = "~turrets", Shared = "~shared";
-        public static readonly string[] Groups = Ships.Concat(CapitalShips).Concat(new[] { Turrets, Shared }).ToArray();
+        public const string Turrets = "~turrets", Shared = "~shared", Match = "~match";
+        public static readonly string[] Groups = new[] { Match }.Concat(Ships).Concat(CapitalShips).Concat(new[] { Turrets, Shared }).ToArray();
         public static string ShipName(string s)
         {
             string n;
             if (s != null && (ShipNames.TryGetValue(s, out n) || CapitalNames.TryGetValue(s, out n))) return n;
-            return s == Turrets ? "Turrets (shared)" : "Shared";
+            return s == Turrets ? "Turrets (shared)" : s == Match ? "Match rules" : "Shared";
         }
         public static string CapitalName(string s) { string n; return CapitalNames.TryGetValue(s, out n) ? n : null; }
 
         static string[] Parts(string asset) { return asset.Split('_'); }
         public static string ShipOf(string asset)
         {
+            if (asset.StartsWith("incomschematicattributesconfig", StringComparison.Ordinal)) return Match;
             var parts = Parts(asset);
             foreach (var s in Ships) if (parts.Contains(s)) return s;
             foreach (var s in Ships) if (parts.Any(p => p == s + "ai")) return s;
@@ -365,9 +367,11 @@ namespace SwsSettings
             if (asset.StartsWith("damageovertimesettings")) return "Damage over time";
             if (asset == "materialgrid") return "Damage to capital ships";
             if (asset.StartsWith("shipscale_")) return "Size";
+            if (asset == "incomschematicattributesconfig_fleetbattle") return "Fleet Battles";
+            if (asset == "incomschematicattributesconfig_dogfight") return "Dogfight";
             return "Other";
         }
-        public static readonly string[] SystemOrder = { "Size", "Movement", "Power", "Shields", "Hull", "Primary weapons",
+        public static readonly string[] SystemOrder = { "Fleet Battles", "Dogfight", "Size", "Movement", "Power", "Shields", "Hull", "Primary weapons",
             "Aux and countermeasures", "Turret weapons", "Laser projectiles", "Missiles and explosions", "Engine components",
             "Hull components", "Shield components", "Damage sections", "Subsystems", "Weak points", "Turrets", "Engine wash",
             "Damage over time", "Damage to capital ships", "Other" };

@@ -221,7 +221,7 @@ namespace SwsSettings
         public void ShowValuesForShot(string mode)
         {
             ShowPage(PageValues);
-            var ship = tree.Nodes.Find("xwing", false).FirstOrDefault() ?? (tree.Nodes.Count > 0 ? tree.Nodes[0] : null);
+            var ship = tree.Nodes.Find(mode == "match" ? Catalog.Match : "xwing", false).FirstOrDefault() ?? (tree.Nodes.Count > 0 ? tree.Nodes[0] : null);
             if (ship == null) return;
             ship.Expand();
             if (mode == "ship") { tree.SelectedNode = ship; foreach (TreeNode sys in ship.Nodes) if (sys.Text.StartsWith("Engine") || sys.Text.StartsWith("Primary")) sys.Expand(); return; }
@@ -911,7 +911,7 @@ namespace SwsSettings
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
                 form.Shown += (s, e) =>
                 {
-                    if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : "system");
+                    if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : args[2] == "values-match" ? "match" : "system");
                     if (args.Length >= 3 && args[2] == "rules") form.ShowRulesForShot();
                     Application.DoEvents();
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
