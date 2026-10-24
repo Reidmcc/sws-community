@@ -44,6 +44,8 @@ Double-click sws_settings.exe for everything below without editing files:
 - Profile and values: pick, make, copy, rename, import or delete profiles; and change
   any of the game's values (speeds, shields, hull, weapons, components...) for every ship, each with its default and the
   range it's allowed. Reset one value or all of them to default. The fingerprint at the top must match everyone else's.
+  Each ship's Size makes it smaller or bigger, model and hitbox together (0.5 to 1.5; the project README lists the
+  sizes closest to canon).
 The values list fills in as you play: the mod records each part of the game the first time it loads it.
 
 Or by hand (server.ini, open it in Notepad):

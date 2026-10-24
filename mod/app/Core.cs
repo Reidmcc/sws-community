@@ -76,7 +76,8 @@ namespace SwsSettings
             "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
             "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
             "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
-            "materialgrid" };   // laser and ion damage against capital ships
+            "materialgrid",   // laser and ion damage against capital ships
+            "shipscale" };   // a starfighter's size (one per ship: shipscale_<ship>.scale)
 
         public static Limits Load(string dir)
         {
@@ -133,10 +134,21 @@ namespace SwsSettings
         // each config's name as the game spells it ("; name=HullCustom_Chameleon_Xwing", written by the DLL)
         public readonly Dictionary<string, string> Names = new Dictionary<string, string>(StringComparer.Ordinal);
         public string NameOf(string asset) { string n; return Names.TryGetValue(asset, out n) ? n : null; }
+        // each starfighter's size, a pseudo-config the DLL applies as the ship's blueprint loads (stock 1); listed whether
+        // or not the game has loaded that ship yet, so every ship can be sized
+        void AddShipScales()
+        {
+            foreach (var s in Catalog.Ships)
+            {
+                var f = new SortedDictionary<string, double>(new FieldOrder()); f["scale"] = 1.0;
+                Assets["shipscale_" + s] = f;
+                Names["shipscale_" + s] = "ShipScale";
+            }
+        }
         public static Defaults Load(string dir)
         {
             var d = new Defaults(); string file = Path.Combine(dir, "defaults.ini");
-            if (!File.Exists(file)) return d;
+            if (!File.Exists(file)) { d.AddShipScales(); return d; }
             SortedDictionary<string, double> cur = null; string section = null;
             foreach (var raw in File.ReadAllLines(file))
             {
@@ -147,6 +159,7 @@ namespace SwsSettings
                 int eq = line.IndexOf('='); double v;
                 if (cur != null && eq > 0 && Num.TryParse(line.Substring(eq + 1), out v)) cur[line.Substring(0, eq)] = v;
             }
+            d.AddShipScales();
             return d;
         }
         // fields in a readable order: alphabetical, with array indices in numeric order
@@ -331,9 +344,10 @@ namespace SwsSettings
             if (asset.StartsWith("capitalshipenginewashdamageareasettings")) return "Engine wash";
             if (asset.StartsWith("damageovertimesettings")) return "Damage over time";
             if (asset == "materialgrid") return "Damage to capital ships";
+            if (asset.StartsWith("shipscale_")) return "Size";
             return "Other";
         }
-        public static readonly string[] SystemOrder = { "Movement", "Power", "Shields", "Hull", "Primary weapons",
+        public static readonly string[] SystemOrder = { "Size", "Movement", "Power", "Shields", "Hull", "Primary weapons",
             "Aux and countermeasures", "Turret weapons", "Laser projectiles", "Missiles and explosions", "Engine components",
             "Hull components", "Shield components", "Damage sections", "Subsystems", "Weak points", "Turrets", "Engine wash",
             "Damage over time", "Damage to capital ships", "Other" };

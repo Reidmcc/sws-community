@@ -483,6 +483,9 @@ namespace SwsSettings
             if (!Num.TryParse(text, out v)) { pendingNote = "'" + text + "' isn't a number; " + key + " is unchanged."; return; }
             int dot = key.IndexOf('.'); var l = limits.Find(key.Substring(0, dot), key.Substring(dot + 1));
             double c = Limits.Clamp(l, v);
+            int row = e.RowIndex;
+            if (c != v)   // on the grid's last row Enter commits without leaving the cell, so show what was saved
+                BeginInvoke((Action)(() => { if (row < grid.Rows.Count) { grid.EndEdit(); RenderRow(grid.Rows[row]); } }));
             if (had && old == c) return;
             profile.Values[key] = c;
             Changed(c != v ? key + " = " + Num.Show(v) + " is outside its allowed range: set to " + Num.Show(c) + "." : null);
