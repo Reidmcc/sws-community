@@ -177,6 +177,11 @@ int main() {
     const uint8_t cweapon[] = {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55,0x56,0x57, 0x5f,0x5e,0x5d,0xc3};
     const uint8_t cpower[] = {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x48,0x83,0xec,0x30,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff, 0x48,0x83,0xc4,0x30,0x5f,0x5e,0x5d,0xc3};
     put(0x14169cf00, cmov, sizeof cmov); put(0x141680fb0, chealth, sizeof chealth); put(0x14172a5e0, cweapon, sizeof cweapon); put(0x1415fa310, cpower, sizeof cpower);
+    // the server's starship direct hit (FUN_14168a8b0): its real 18-byte prologue (mov rax, rsp; seven pushes;
+    // lea rbp, [rsp-0x60]), then mov rax, rdx (the out pointer, as the real one returns), lea rsp, [rbp+0x60] and the pops
+    const uint8_t shiphit[] = {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0,
+                               0x48,0x89,0xd0, 0x48,0x8d,0x65,0x60, 0x41,0x5f,0x41,0x5e,0x41,0x5c,0x5f,0x5e,0x5b,0x5d,0xc3};
+    put(0x14168a8b0, shiphit, sizeof shiphit);
     // online error mapper (FUN_1412d43d0): its first 15 bytes, then pop rbp; ret
     if (map(0x1412d0000, 0x10000) != (void*)0x1412d0000) { printf("FAIL  could not map the online-error region\n"); return 1; }
     const uint8_t onlerr[] = {0x40,0x55,0x48,0x8d,0xac,0x24,0xd0,0xe3,0xff,0xff,0xb8,0x30,0x1d,0x00,0x00, 0x5d, 0xc3};
@@ -411,6 +416,28 @@ int main() {
         *(uint64_t*)(ent + 0x10) = 0;
         uint64_t b = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
         check(*(uint8_t*)0x1416bcab0 == 0xFF && a == 0x5A5A0001 && b == 0, "starship spawn hooked and passes the result through");
+    }
+    {   // hit_log: a U-wing's health component whose physics component holds the ship's frame (yawed 90 degrees, at
+        // (1000, 50, -2000)) after a block that isn't one; two hits at known points in the ship's frame, (1, 2, 3) and
+        // (-4, 0.5, 10). The runner checks the log has both in the ship's frame, and where the transform was found.
+        uint8_t* comp = fake_alloc(0x1000); uint8_t* data = fake_alloc(0x100); uint8_t* asset = fake_alloc(0x40);
+        uint8_t* pc = fake_alloc(0x400); uint8_t* vt = fake_alloc(0x400); uint8_t* info = fake_alloc(0x100);
+        *(uint64_t*)(comp + 0x40) = (uint64_t)data; *(uint64_t*)(data + 0x90) = (uint64_t)asset;
+        *(uint64_t*)(asset + 8) = 0x144a8ca00; *(const char**)(asset + 0x18) = "starshiphealthdamagedata_uwing";
+        *(uint64_t*)(comp + 0x990) = (uint64_t)pc; *(uint64_t*)pc = (uint64_t)vt;
+        const float decoy[12] = {1,0,0, 0,0.5f,0, 0,0,1, 1000,50,-2000};   // not orthonormal: must be passed over
+        const float frame[12] = {0,0,-1, 0,1,0, 1,0,0, 1000,50,-2000};
+        for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++) {
+            *(float*)(pc + 0x40 + i * 16 + k * 4) = decoy[i * 3 + k]; *(float*)(pc + 0x80 + i * 16 + k * 4) = frame[i * 3 + k]; }
+        *(uint32_t*)(info + 0x20) = (3u << 20) | 0x80; *(int32_t*)(info + 0x58) = 2; *(float*)(info + 0x84) = 27.0f;
+        *(float*)(info + 0x70) = 9000; *(float*)(info + 0x90) = -9000;
+        typedef uint64_t(__fastcall* shiphit_t)(uint64_t, uint64_t, uint64_t);
+        uint8_t* out = fake_alloc(0x40);
+        *(float*)(info + 0x30) = 1003; *(float*)(info + 0x34) = 52; *(float*)(info + 0x38) = -2001;
+        uint64_t r1 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
+        *(float*)(info + 0x30) = 1010; *(float*)(info + 0x34) = 50.5f; *(float*)(info + 0x38) = -1996;
+        uint64_t r2 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
+        check(*(uint8_t*)0x14168a8b0 == 0xFF && r1 == (uint64_t)out && r2 == (uint64_t)out, "starship direct hit hooked and passes the result through");
     }
 
     alignas(16) static uint8_t obj[0x700];

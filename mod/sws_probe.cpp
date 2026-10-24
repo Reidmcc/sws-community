@@ -528,6 +528,7 @@ struct HitboxScale { char ship[32]; float scale; };
 static HitboxScale g_hitboxScales[32]; static int g_hitboxScaleCount;   // [hitbox] <ship>=<scale>: experiment (#20)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
+static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -570,6 +571,7 @@ static void read_server_ini() {
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       { wchar_t sec[2048] = L""; DWORD n = GetPrivateProfileSectionW(L"hitbox", sec, 2048, ini);
         for (wchar_t* e = sec; n && *e && g_hitboxScaleCount < 32; e += wcslen(e) + 1) {
             wchar_t* eq = wcschr(e, L'='); if (!eq || e[0] == L';') continue;
@@ -1863,6 +1865,114 @@ static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
     if (g_spawnLog) status("spawn: entity %llx (data %llx) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), r ? "ship" : "NOTHING SPAWNED", r);
     return r;
 }
+// FUN_14168a8b0(component, out, info): ServerStarshipHealthComponent's direct hit (vtable slot 41, notes/material-grid.md),
+// on the server, for every starfighter, player or AI. hit_log=1 logs where each hit landed in the struck ship's own frame
+// (#20: the U-wing's and Reaper's laser hitboxes seem to hold their wings in another pose than the one they fly in). The
+// info's layout isn't reflected: +0x20 is the attacker's material, +0x30, +0x40, +0x70 and +0x90 are vectors, +0x58 the
+// part, +0x60 the kind (2 = collision), +0x84 the damage. Which vector is the impact point, and where the ship's transform
+// lives, are found from the data: the transform is the first orthonormal block (three unit, mutually orthogonal vectors,
+// then a translation) within 30 m of a candidate point, in the component, its physics component (+0x990), the physics
+// body, or an object one of those points to. Once found, its place is kept per ship. The ship is named by its
+// StarshipHealthDamageData asset, found through the component's data (its HealthDamageDataAsset is at +0x90).
+typedef uint64_t(__fastcall* shiphit_t)(uint64_t comp, uint64_t out, uint64_t info);
+static shiphit_t o_shiphit;
+struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[64]; int misses; };
+static HitShip g_hitShips[512]; static int g_hitShipCount; static SRWLOCK g_hitLock = SRWLOCK_INIT;
+static const uint32_t kHitCand[3] = { 0x30, 0x70, 0x90 };
+static const char* kHitObj[3] = { "component", "physics component", "physics body" };
+static uint64_t hit_body(uint64_t pc) {   // the body the hit function itself reaches when the physics component forwards
+    if (!pc || rd<uint64_t>(rd<uint64_t>(pc, 0), 0x1c8) != 0x141ca4ec0) return 0;
+    uint64_t w = rd<uint64_t>(pc, 0x30), idp = rd<uint64_t>(pc, 0x38);
+    if (!w || !idp) return 0;
+    uint32_t id = rd<uint32_t>(idp, 0);
+    uint64_t t1 = rd<uint64_t>(w, 0x138); if (!t1) return 0;
+    uint64_t t2 = rd<uint64_t>(t1, ((id >> 16) & 0xff) * 8); if (!t2) return 0;
+    uint64_t t3 = rd<uint64_t>(t2, 0x138); if (!t3) return 0;
+    return rd<uint64_t>(t3, (id & 0xffff) * 8);
+}
+static uint64_t hit_obj(uint64_t comp, int obj, int ptrOff) {
+    uint64_t pc = rd<uint64_t>(comp, 0x990);
+    uint64_t b = obj == 0 ? comp : obj == 1 ? pc : hit_body(pc);
+    if (b && ptrOff >= 0) b = rd<uint64_t>(b, ptrOff);
+    return b < 0x10000 ? 0 : b;
+}
+static bool hit_frame(uint64_t at, float m[12]) {   // three orthonormal vectors and a translation, 16 bytes apart
+    for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++) m[i * 3 + k] = rd<float>(at, i * 16 + k * 4);
+    for (int i = 0; i < 12; i++) if (!(m[i] == m[i]) || fabsf(m[i]) > 1e6f) return false;
+    for (int i = 0; i < 3; i++) for (int j = i; j < 3; j++) {
+        float d = m[i * 3] * m[j * 3] + m[i * 3 + 1] * m[j * 3 + 1] + m[i * 3 + 2] * m[j * 3 + 2];
+        if (fabsf(d - (i == j ? 1.0f : 0.0f)) > 0.002f) return false;
+    }
+    return true;
+}
+static float hit_dist2(const float m[12], const float p[3]) {
+    float dx = p[0] - m[9], dy = p[1] - m[10], dz = p[2] - m[11];
+    return dx * dx + dy * dy + dz * dz;
+}
+static bool hit_find(uint64_t comp, uint64_t info, HitShip& s) {
+    for (int obj = 0; obj < 3; obj++) for (int ptrOff = -8; ptrOff < 0x100; ptrOff += 8) {
+        uint64_t b = hit_obj(comp, obj, ptrOff < 0 ? -1 : ptrOff);
+        if (!b) continue;
+        for (int off = 0; off < 0x400; off += 16) {
+            float m[12];
+            if (!hit_frame(b + off, m)) continue;
+            for (int c = 0; c < 3; c++) {
+                float p[3] = { rd<float>(info, kHitCand[c]), rd<float>(info, kHitCand[c] + 4), rd<float>(info, kHitCand[c] + 8) };
+                if (hit_dist2(m, p) < 30.0f * 30.0f && (p[0] != 0 || p[1] != 0 || p[2] != 0)) {
+                    s.obj = obj; s.ptrOff = ptrOff < 0 ? -1 : ptrOff; s.off = off; s.cand = c;
+                    char where[96];
+                    if (s.ptrOff >= 0) sprintf_s(where, "the %s's pointer at +%#x, then +%#x", kHitObj[obj], s.ptrOff, off);
+                    else sprintf_s(where, "the %s+%#x", kHitObj[obj], off);
+                    status("hit: %s: transform found in %s; the impact point is info+%#x; axes (%.3f %.3f %.3f) (%.3f %.3f %.3f) (%.3f %.3f %.3f)",
+                           s.name, where, kHitCand[c], m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+static void hit_name(uint64_t comp, char* out, size_t n) {
+    uint16_t lo = rd<uint16_t>(0x144a8ca00, 0x48), hi = rd<uint16_t>(0x144a8ca00, 0x4a);
+    for (uint32_t off = 0; off < 0x400; off += 8) {
+        uint64_t q = rd<uint64_t>(comp, off); if (q < 0x10000) continue;
+        uint64_t a = rd<uint64_t>(q, 0x90); if (a < 0x10000) continue;
+        uint64_t ci = rd<uint64_t>(a, 8); if (ci < 0x10000) continue;
+        uint16_t id = rd<uint16_t>(ci, 0x48);
+        if ((uint16_t)(id - lo) <= (uint16_t)(hi - lo)) { safe_copy(rd<uint64_t>(a, 0x18), out, n); if (out[0]) return; }
+    }
+    strcpy_s(out, n, "?");
+}
+static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info) {
+    if (g_hitLog && comp && info) {
+        AcquireSRWLockExclusive(&g_hitLock);
+        HitShip* s = nullptr;
+        for (int i = 0; i < g_hitShipCount && !s; i++) if (g_hitShips[i].comp == comp) s = &g_hitShips[i];
+        if (!s && g_hitShipCount < 512) {
+            s = &g_hitShips[g_hitShipCount++]; *s = {}; s->comp = comp; s->obj = -1;
+            hit_name(comp, s->name, sizeof s->name);
+        }
+        if (s && s->obj < 0 && s->misses < 3 && !hit_find(comp, info, *s)) {
+            if (++s->misses <= 3)
+                status("hit: %s: no transform found near info+0x30 (%.1f %.1f %.1f), +0x70 (%.1f %.1f %.1f) or +0x90 (%.1f %.1f %.1f)", s->name,
+                       rd<float>(info, 0x30), rd<float>(info, 0x34), rd<float>(info, 0x38), rd<float>(info, 0x70), rd<float>(info, 0x74),
+                       rd<float>(info, 0x78), rd<float>(info, 0x90), rd<float>(info, 0x94), rd<float>(info, 0x98));
+        }
+        if (s && s->obj >= 0) {
+            float m[12]; uint64_t b = hit_obj(comp, s->obj, s->ptrOff);
+            if (b && hit_frame(b + s->off, m)) {
+                uint32_t c = kHitCand[s->cand];
+                float d[3] = { rd<float>(info, c) - m[9], rd<float>(info, c + 4) - m[10], rd<float>(info, c + 8) - m[11] };
+                float l[3]; for (int i = 0; i < 3; i++) l[i] = d[0] * m[i * 3] + d[1] * m[i * 3 + 1] + d[2] * m[i * 3 + 2];
+                uint32_t a = rd<uint32_t>(info, 0x20);
+                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f)", s->name, rd<int32_t>(info, 0x58),
+                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2]);
+            }
+        }
+        ReleaseSRWLockExclusive(&g_hitLock);
+    }
+    return o_shiphit(comp, out, info);
+}
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
 struct MatSeen { uint32_t a, b; uint64_t ret; };
@@ -2609,6 +2719,9 @@ static Site g_sites[] = {
     {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
      (void*)h_sspawn, (void**)&o_sspawn},
+    {"starship-direct-hit 0x14168a8b0", 0x14168a8b0, 18,
+     {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0},
+     (void*)h_shiphit, (void**)&o_shiphit},
     {"havok-resource-load 0x142707130", 0x142707130, 16,
      {0x48,0x8b,0xc4,0x55,0x57,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0x98,0x00,0x00,0x00},
      (void*)h_hkload3, (void**)&o_hkload3},
