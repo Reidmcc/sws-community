@@ -190,6 +190,10 @@ def main():
         flags = ("i" if name in ints else "") + ("n" if sentinel else "") + ("x" if lk else "")
         locked += lk
         lines.append(f"{key}={lo:.9g},{hi:.9g},{flags}   ; {src}; stock {mn:.9g}..{mx:.9g} over {len(pools[key])}")
+    # ship size (#20): one uniform scale per starfighter (shipscale_<ship>.scale, stock 1), applied as the blueprint loads.
+    # 0.5 is the smallest size flown and measured (2026-10-23: model and hitbox at half size, clean); 1.5 the matching
+    # step up. Wider is untried: big ships may meet spawn points, hangars and capital ships in ways not yet seen.
+    lines.append("shipscale.scale=0.5,1.5,   ; ship size: 0.5 measured in flight, 1.5 the same step up (#20); stock 1")
     lines += ["", "[primary]"] + [f"{a}=1" for a in primaries]
     lines += ["", "[capital]"] + [f"{a}=1" for a in capital]
     open(OUT, "w", encoding="utf-8", newline="\r\n").write("\n".join(lines) + "\n")

@@ -41,6 +41,8 @@ game and load the mod's DLL into it. Some malware does the same, so the pattern 
   fixes: Zavian Abyss's middle X-wing creep pack spawns all 5 ships (its data tells one of the pack's two spawn points
   to return control instead of to spawn). Each is off unless chosen. The chosen rules are folded into the network
   protocol version, so players with different rules are refused at connect instead of landing in the same match.
+- **Ship size.** Each starfighter can be made smaller or bigger, its model and its laser hitbox together (one uniform
+  scale per ship, player and AI alike). [docs/ship-size.md](docs/ship-size.md) lists the sizes closest to canon.
 - **Unlocks.** Every ship component and cosmetic counts as owned, for everyone.
 - **No EA error 327.** The "lost connection to EA servers" event, which also locked the loadout screen, is suppressed.
 
@@ -137,6 +139,10 @@ percentage modifiers, named by the attribute they change (`hullcustom_heavy_xwin
 `axisturnratesfactor`, which engines and hulls modify; boost and drift turning have their own fields. A
 player ship's change also applies to its vs-AI bot version (copied, or scaled where the bot is tuned differently);
 the AI "creep" ships are left alone.
+
+**Ship size** (issue #20) is one value per starfighter, `shipscale_<ship>.scale` (the app lists it as **Size** under
+each ship): it resizes the ship's model and its laser hitbox together, for the player ship and its AI versions. How it
+works, and the sizes closest to canon for every ship: [docs/ship-size.md](docs/ship-size.md).
 
 **Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
 a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match

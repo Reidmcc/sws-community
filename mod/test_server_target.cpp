@@ -2,6 +2,7 @@
 // It plants the game's real prologue bytes (with small stand-in bodies) at every hook address, waits for the DLL to
 // hook them, then checks each server hook's effect. Exit code 0 = all pass.
 #define WIN32_LEAN_AND_MEAN
+#include <math.h>
 #include <winsock2.h>
 #include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -160,6 +161,11 @@ int main() {
     const uint8_t cweapon[] = {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55,0x56,0x57, 0x5f,0x5e,0x5d,0xc3};
     const uint8_t cpower[] = {0x48,0x89,0x4c,0x24,0x08,0x55,0x56,0x57,0x48,0x83,0xec,0x30,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff, 0x48,0x83,0xc4,0x30,0x5f,0x5e,0x5d,0xc3};
     put(0x14169cf00, cmov, sizeof cmov); put(0x141680fb0, chealth, sizeof chealth); put(0x14172a5e0, cweapon, sizeof cweapon); put(0x1415fa310, cpower, sizeof cpower);
+    // the server's starship direct hit (FUN_14168a8b0): its real 18-byte prologue (mov rax, rsp; seven pushes;
+    // lea rbp, [rsp-0x60]), then mov rax, rdx (the out pointer, as the real one returns), lea rsp, [rbp+0x60] and the pops
+    const uint8_t shiphit[] = {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0,
+                               0x48,0x89,0xd0, 0x48,0x8d,0x65,0x60, 0x41,0x5f,0x41,0x5e,0x41,0x5c,0x5f,0x5e,0x5b,0x5d,0xc3};
+    put(0x14168a8b0, shiphit, sizeof shiphit);
     // online error mapper (FUN_1412d43d0): its first 15 bytes, then pop rbp; ret
     if (map(0x1412d0000, 0x10000) != (void*)0x1412d0000) { printf("FAIL  could not map the online-error region\n"); return 1; }
     const uint8_t onlerr[] = {0x40,0x55,0x48,0x8d,0xac,0x24,0xd0,0xe3,0xff,0xff,0xb8,0x30,0x1d,0x00,0x00, 0x5d, 0xc3};
@@ -326,6 +332,41 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
+    {   // ship scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
+        // and its StarshipEntityData) arrives through the partition creator; the StandIn profile's shipscale_ywing.scale=0.5
+        // scales the entity's root part and mesh component (axes and translation), and leaves its physics component alone
+        uint8_t* bp = fake_alloc(0x40); *(uint64_t*)(bp + 8) = 0x144ade220;
+        *(const char**)(bp + 0x18) = "Game/Gameplay/Starships/Ywing_AI/Starship_Ywing_AI";   // the AI blueprint takes the player ship's size
+        auto comp = [](uint64_t cls, float sx, float tz) {
+            uint8_t* c = fake_alloc(0x100); *(uint64_t*)(c + 8) = cls; float* m = (float*)(c + 0x30);
+            m[0] = sx; m[5] = sx; m[10] = sx; m[12] = 0; m[13] = -0.78f; m[14] = tz; return c; };
+        uint8_t* rootPart = comp(0x1449fa760, 1.0f, -7.2f);
+        uint8_t* cockpit = comp(0x144a4e5c0, 1.0f, 0.0f); ((float*)(cockpit + 0x30))[13] = 0.0f;   // at the root part's origin
+        uint8_t* other = comp(0x144999000, 1.0f, 2.0f);   // another child of the root part: inherits the scale, untouched
+        uint8_t* karr = fake_alloc(16 + 2 * 8); *(uint32_t*)(karr + 12) = 2;
+        ((uint8_t**)(karr + 16))[0] = other; ((uint8_t**)(karr + 16))[1] = cockpit; *(uint64_t*)(rootPart + 0x70) = (uint64_t)(karr + 16);
+        uint8_t* glow = comp(0x144a035c0, 140.0f, -13.0f);
+        uint8_t* phys = comp(0x144999000, 1.0f, 0.0f);   // some other component type: must stay as it is
+        uint8_t* carr = fake_alloc(16 + 3 * 8); *(uint32_t*)(carr + 12) = 3;
+        ((uint8_t**)(carr + 16))[0] = rootPart; ((uint8_t**)(carr + 16))[1] = glow; ((uint8_t**)(carr + 16))[2] = phys;
+        uint8_t* ent = fake_alloc(0x100); *(uint64_t*)(ent + 8) = 0x1449fad80; *(uint64_t*)(ent + 0x60) = (uint64_t)(carr + 16);
+        uint8_t** insts5 = (uint8_t**)fake_alloc(16); insts5[0] = bp; insts5[1] = ent;
+        uint8_t* part5 = fake_alloc(0x40); *(uint8_t***)(part5 + 0x20) = insts5; *(uint16_t*)(part5 + 0x28) = 2;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part5, 0);
+        const float* r = (const float*)(rootPart + 0x30); const float* g = (const float*)(glow + 0x30); const float* p = (const float*)(phys + 0x30);
+        auto approx = [](float a, float b) { return fabsf(a - b) < 1e-5f; };
+        check(approx(r[0], 0.5f) && approx(r[5], 0.5f) && approx(r[10], 0.5f) && approx(r[13], -0.39f) && approx(r[14], -3.6f) &&
+              approx(g[0], 70.0f) && approx(g[5], 70.0f) && approx(g[10], 70.0f) && approx(g[13], -0.39f) && approx(g[14], -6.5f) &&
+              p[0] == 1.0f && p[13] == -0.78f,
+              "ship scale: the Y-wing's root part and mesh component scale about the ship's origin as its blueprint loads; other components untouched");
+        // the cockpit's world placement (root part x cockpit) is what it was: axes 1, translation (0, -0.78, -7.2)
+        const float* k = (const float*)(cockpit + 0x30); const float* o = (const float*)(other + 0x30);
+        float wy = r[13] + r[5] * k[13], wz = r[14] + r[10] * k[14];
+        check(approx(r[0] * k[0], 1.0f) && approx(r[5] * k[5], 1.0f) && approx(r[10] * k[10], 1.0f) && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
+              o[0] == 1.0f && o[14] == 2.0f,
+              "ship scale: the cockpit keeps its original size and place under the scaled root part; the part's other children untouched");
+    }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)
         uint8_t* ent = fake_alloc(0x400); uint8_t* req = fake_alloc(0x80);
@@ -336,6 +377,33 @@ int main() {
         *(uint64_t*)(ent + 0x10) = 0;
         uint64_t b = ((sspawn_t)0x1416bcab0)((uint64_t)ent, (uint64_t)req);
         check(*(uint8_t*)0x1416bcab0 == 0xFF && a == 0x5A5A0001 && b == 0, "starship spawn hooked and passes the result through");
+    }
+    {   // hit_log: a U-wing's health component whose physics component holds the ship's frame (yawed 90 degrees, at
+        // (1000, 50, -2000)) after a block that isn't one; two hits at known points in the ship's frame, (1, 2, 3) and
+        // (-4, 0.5, 10). The runner checks the log has both in the ship's frame, and where the transform was found.
+        uint8_t* comp = fake_alloc(0x1000); uint8_t* data = fake_alloc(0x100); uint8_t* asset = fake_alloc(0x40);
+        uint8_t* pc = fake_alloc(0x400); uint8_t* vt = fake_alloc(0x400); uint8_t* info = fake_alloc(0x100);
+        *(uint64_t*)(comp + 0x40) = (uint64_t)data; *(uint64_t*)(data + 0x90) = (uint64_t)asset;
+        *(uint64_t*)(asset + 8) = 0x144a8ca00; *(const char**)(asset + 0x18) = "starshiphealthdamagedata_uwing";
+        *(uint64_t*)(comp + 0x990) = (uint64_t)pc; *(uint64_t*)pc = (uint64_t)vt;
+        const float decoy[12] = {1,0,0, 0,0.5f,0, 0,0,1, 1000,50,-2000};   // not orthonormal: must be passed over
+        const float frame[12] = {0,0,-1, 0,1,0, 1,0,0, 1000,50,-2000};
+        for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++) {
+            *(float*)(pc + 0x40 + i * 16 + k * 4) = decoy[i * 3 + k]; *(float*)(pc + 0x80 + i * 16 + k * 4) = frame[i * 3 + k]; }
+        *(uint32_t*)(info + 0x20) = (3u << 20) | 0x80; *(uint32_t*)(info + 0x24) = 0x00c00880; *(int32_t*)(info + 0x58) = 2; *(float*)(info + 0x84) = 27.0f;   // +0x24: a starfighter hull
+        *(float*)(info + 0x78) = 1.0f; *(float*)(info + 0x90) = -9000;   // +0x70 a unit direction, as in the game
+        // the game's own decoy (2026-10-23 flight): an identity block at the origin, reached through the component's pointer
+        // at +0x10, that a unit direction sits 1 m from; it must be passed over
+        uint8_t* ident = fake_alloc(0x100); *(uint64_t*)(comp + 0x10) = (uint64_t)ident;
+        *(float*)(ident + 0x30) = 1; *(float*)(ident + 0x44) = 1; *(float*)(ident + 0x58) = 1;
+        typedef uint64_t(__fastcall* shiphit_t)(uint64_t, uint64_t, uint64_t);
+        uint8_t* out = fake_alloc(0x40);
+        *(float*)(info + 0x30) = 1003; *(float*)(info + 0x34) = 52; *(float*)(info + 0x38) = -2001;
+        uint64_t r1 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
+        Sleep(100); *(float*)(pc + 0x80 + 0x38) = -1995;   // the ship moves 5 m along world z (its own -x) between the hits
+        *(float*)(info + 0x30) = 1010; *(float*)(info + 0x34) = 50.5f; *(float*)(info + 0x38) = -1991;
+        uint64_t r2 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
+        check(*(uint8_t*)0x14168a8b0 == 0xFF && r1 == (uint64_t)out && r2 == (uint64_t)out, "starship direct hit hooked and passes the result through");
     }
 
     alignas(16) static uint8_t obj[0x700];
@@ -523,6 +591,7 @@ int main() {
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
                                 "hullcustom_heavy_xwing.healthmax=0.8;",
                                 "materialgrid.laserdamage.capitalhull=0.05;",
+                                "shipscale_tiefighter.scale=1.5;", "shipscale_ywing.scale=0.5;",
                                 "starshipmovementconfig_stardestroyer.afterburnermaxspeed=400;",
                                 "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
                                 "starshipmovementconfig_xwing.afterburnermaxspeed=250;",
