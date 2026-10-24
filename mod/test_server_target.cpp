@@ -348,6 +348,29 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
+    {   // model scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
+        // and its StarshipEntityData) arrives through the partition creator; [model] ywing=0.5 scales the entity's root part
+        // and mesh component (axes and translation), and leaves its physics component alone
+        uint8_t* bp = fake_alloc(0x40); *(uint64_t*)(bp + 8) = 0x144ade220;
+        *(const char**)(bp + 0x18) = "Game/Gameplay/Starships/Ywing/Starship_Ywing";
+        auto comp = [](uint64_t cls, float sx, float tz) {
+            uint8_t* c = fake_alloc(0x100); *(uint64_t*)(c + 8) = cls; float* m = (float*)(c + 0x30);
+            m[0] = sx; m[5] = sx; m[10] = sx; m[12] = 0; m[13] = -0.78f; m[14] = tz; return c; };
+        uint8_t* rootPart = comp(0x1449fa760, 1.0f, -7.2f);
+        uint8_t* glow = comp(0x144a035c0, 140.0f, -13.0f);
+        uint8_t* phys = comp(0x144999000, 1.0f, 0.0f);   // some other component type: must stay as it is
+        uint8_t* carr = fake_alloc(16 + 3 * 8); *(uint32_t*)(carr + 12) = 3;
+        ((uint8_t**)(carr + 16))[0] = rootPart; ((uint8_t**)(carr + 16))[1] = glow; ((uint8_t**)(carr + 16))[2] = phys;
+        uint8_t* ent = fake_alloc(0x100); *(uint64_t*)(ent + 8) = 0x1449fad80; *(uint64_t*)(ent + 0x60) = (uint64_t)(carr + 16);
+        uint8_t** insts5 = (uint8_t**)fake_alloc(16); insts5[0] = bp; insts5[1] = ent;
+        uint8_t* part5 = fake_alloc(0x40); *(uint8_t***)(part5 + 0x20) = insts5; *(uint16_t*)(part5 + 0x28) = 2;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part5, 0);
+        const float* r = (const float*)(rootPart + 0x30); const float* g = (const float*)(glow + 0x30); const float* p = (const float*)(phys + 0x30);
+        check(r[0] == 0.5f && r[5] == 0.5f && r[10] == 0.5f && r[13] == -0.39f && r[14] == -3.6f && g[0] == 70.0f && g[14] == -6.5f &&
+              p[0] == 1.0f && p[13] == -0.78f,
+              "model scale: the Y-wing's root part and mesh component scale about the ship's origin as its blueprint loads; other components untouched");
+    }
     {   // ship scale (#20): the Havok packfile loader (FUN_142706d60) is hooked at its entry; a packfile holding a Y-wing
         // mesh (its domain box at +0x20, its sections 0x60 apart where the table says, the first codec as shipped) has the
         // mesh scaled 0.5 before the loader runs; a TIE fighter mesh (not asked for) and a buffer without the packfile magic

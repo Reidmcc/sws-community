@@ -526,6 +526,7 @@ static bool g_observe = true;           // [server] observe: 0 = no output sampl
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
 struct HitboxScale { char ship[32]; float scale; };
 static HitboxScale g_hitboxScales[32]; static int g_hitboxScaleCount;   // [hitbox] <ship>=<scale>: experiment (#20)
+static HitboxScale g_modelScales[32]; static int g_modelScaleCount;     // [model] <ship>=<scale>: experiment (#20)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
@@ -579,6 +580,14 @@ static void read_server_ini() {
             for (wchar_t* c = e; c < eq && k < 31; c++) if (!iswspace(*c)) h.ship[k++] = (char)towlower(*c);
             h.ship[k] = 0; h.scale = (float)_wtof(eq + 1);
             if (k && h.scale > 0.01f && h.scale < 10.0f) g_hitboxScaleCount++;
+        } }
+      { wchar_t sec[2048] = L""; DWORD n = GetPrivateProfileSectionW(L"model", sec, 2048, ini);
+        for (wchar_t* e = sec; n && *e && g_modelScaleCount < 32; e += wcslen(e) + 1) {
+            wchar_t* eq = wcschr(e, L'='); if (!eq || e[0] == L';') continue;
+            HitboxScale& h = g_modelScales[g_modelScaleCount]; int k = 0;
+            for (wchar_t* c = e; c < eq && k < 31; c++) if (!iswspace(*c)) h.ship[k++] = (char)towlower(*c);
+            h.ship[k] = 0; h.scale = (float)_wtof(eq + 1);
+            if (k && h.scale > 0.01f && h.scale < 10.0f) g_modelScaleCount++;
         } }
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -1561,11 +1570,59 @@ static void map_fix_partition(uint64_t part) {
         return;
     }
 }
+// [model] <ship>=<scale>: a ship's visible model at another size (#20 experiment). A starship's blueprint partition
+// holds its StarshipBlueprint (an Asset: name +0x18, "Game/Gameplay/Starships/Ywing/Starship_Ywing") and its
+// StarshipEntityData, whose Components (+0x60, count at -4) are the model's top: the root PartComponentData (the
+// composite mesh's parts hang under it) and a MeshComponentData. Each component's LinearTransform is at +0x30 (right, up,
+// forward, trans, 16 bytes apart); scaling its axes and its translation by s scales everything under it about the ship's
+// origin, the point the hitbox scales about. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220,
+// StarshipEntityData 0x1449fad80, PartComponentData 0x1449fa760, MeshComponentData 0x144a035c0. Whether the renderer
+// and the part tree honour a scaled transform is what the experiment finds out.
+static float model_scale_for(const char* ship) {
+    for (int i = 0; i < g_modelScaleCount; i++) if (!strcmp(g_modelScales[i].ship, ship)) return g_modelScales[i].scale;
+    return 0;
+}
+static void model_scale_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    float s = 0; char ship[64] = "";
+    for (uint16_t i = 0; insts && i < n && s == 0; i++) {   // the blueprint names the ship
+        uint64_t inst = rd<uint64_t>(insts, i * 8);
+        if (!inst || rd<uint64_t>(inst, 8) != 0x144ade220) continue;
+        const char* name = safe_str(rd<uint64_t>(inst, 0x18));
+        const char* leaf = strrchr(name, '/'); leaf = leaf ? leaf + 1 : name;
+        if (_strnicmp(leaf, "starship_", 9) != 0) return;
+        int k = 0; for (const char* c = leaf + 9; *c && k < 63; c++) ship[k++] = (char)tolower((unsigned char)*c);
+        ship[k] = 0;
+        s = model_scale_for(ship);
+    }
+    if (s == 0) return;
+    int scaled = 0;
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t ent = rd<uint64_t>(insts, i * 8);
+        if (!ent || rd<uint64_t>(ent, 8) != 0x1449fad80) continue;
+        uint64_t arr = rd<uint64_t>(ent, 0x60); uint32_t cnt = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        for (uint32_t k = 0; k < cnt && k < 512; k++) {
+            uint64_t c = rd<uint64_t>(arr, k * 8); if (!c) continue;
+            uint64_t ci = rd<uint64_t>(c, 8);
+            if (ci != 0x1449fa760 && ci != 0x144a035c0) continue;
+            bool ok = true;
+            for (int f = 0; f < 12 && ok; f++) {   // right, up, forward and trans, x y z each: 4 vectors 16 bytes apart
+                uint64_t at = c + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
+                ok = leaf_write(at, false, rd<float>(at, 0) * s);
+            }
+            if (ok) scaled++;
+            status("model: %s %s scaled %.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
+                   ci == 0x1449fa760 ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
+        }
+    }
+    if (!scaled) status("model: %s blueprint loaded, but no part or mesh component found under its entity", ship);
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
     uint64_t part = o_partnew(store, a2, loader, a4);
     if (part && g_ruleZavianCreep) map_fix_partition(part);
+    if (part && g_modelScaleCount) model_scale_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
@@ -2988,6 +3045,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
         if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
         for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
+        for (int i = 0; i < g_modelScaleCount; i++) status("model: %s scale %.3g", g_modelScales[i].ship, g_modelScales[i].scale);
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif
