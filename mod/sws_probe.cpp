@@ -1987,8 +1987,12 @@ static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info)
                 }
                 if (mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2] > 1e-4f || !s->lastQ) {
                     s->lastT[0] = m[9]; s->lastT[1] = m[10]; s->lastT[2] = m[11]; s->lastQ = q.QuadPart; }
-                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f) %s", s->name, rd<int32_t>(info, 0x58),
-                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2], vel);
+                // what was struck (+0x24, the target's material): starfighter hull is property 12, a fighter's shield 0 (the
+                // shield bubble sits off the hull, so a hit on it is not on the hitbox's surface)
+                uint32_t b = rd<uint32_t>(info, 0x24), bp = (b & 0x80) ? b >> 20 : 0;
+                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f) %s on %s (%u)", s->name, rd<int32_t>(info, 0x58),
+                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2], vel,
+                       bp == 12 ? "hull" : bp == 0 ? "shield" : "other", bp);
             }
         }
         ReleaseSRWLockExclusive(&g_hitLock);
