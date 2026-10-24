@@ -48,6 +48,13 @@ def main():
     for i in info:
         print("  " + i)
     boxes = mesh_boxes()
+    # a [hitbox] scale in force (logged at startup as "hitbox: <ship> scale <s>") shrinks the meshes about the ship's origin
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = re.search(r"hitbox: (\w+) scale ([\d.]+)$", line.strip())
+        if m and m.group(1) in boxes:
+            s = float(m.group(2))
+            boxes[m.group(1)] = [(tuple(v * s for v in lo), tuple(v * s for v in hi)) for lo, hi in boxes[m.group(1)]]
+            print(f"  {m.group(1)}: meshes drawn at scale {s:g}")
     for asset, hs in sorted(hits.items(), key=lambda kv: -len(kv[1])):
         key = ship_key(asset)
         bx = boxes.get(key, [])
