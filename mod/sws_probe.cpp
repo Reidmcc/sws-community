@@ -1598,7 +1598,10 @@ static void map_fix_partition(uint64_t part) {
 // part's cockpit component (StarshipCockpitComponentData, ClassInfo 0x144a4e5c0, in the part's Components at +0x70) gets
 // the inverse: with the root part's original translation t (its axes are the identity), a child at local (axes A,
 // translation u) keeps its old world placement under the scaled part with axes A/s and translation (u + t)/s - t,
-// per axis component (axes A S^-1).
+// per axis component (axes A S^-1). The root part's StarshipEntryComponentData (ClassInfo 0x144a38580, at the ship's
+// origin) gets the same: the whole gameplay rig hangs under it (movement, weapons, turret, repulsors, a camera, meshes;
+// Y-wing blueprint dump 2026-10-24), and under a per-axis stretch it squashed the player's view sideways (Pseudo,
+// 2026-10-24, x0.5). So only the hull's parts, and the hitbox that follows them, change shape.
 static const float* model_scale_for(const char* ship) {
     for (int i = 0; i < g_modelScaleCount; i++) if (!strcmp(g_modelScales[i].ship, ship)) return g_modelScales[i].s;
     return nullptr;
@@ -1642,8 +1645,10 @@ static void model_scale_partition(uint64_t part) {
             uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
             for (uint32_t j = 0; j < nk && j < 512; j++) {
                 uint64_t k = rd<uint64_t>(kids, j * 8);
-                if (!k || rd<uint64_t>(k, 8) != 0x144a4e5c0) continue;
-                if (!ident) { status("model: %s cockpit left scaled: the root part is rotated, which the inverse here doesn't handle", ship); continue; }
+                uint64_t kci = k ? rd<uint64_t>(k, 8) : 0;
+                if (kci != 0x144a4e5c0 && kci != 0x144a38580) continue;
+                const char* what = kci == 0x144a4e5c0 ? "cockpit" : "entry component (the gameplay rig)";
+                if (!ident) { status("model: %s %s left scaled: the root part is rotated, which the inverse here doesn't handle", ship, what); continue; }
                 for (int f = 0; f < 9; f++) {   // axes S^-1
                     uint64_t at = k + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
                     leaf_write(at, false, rd<float>(at, 0) / s[f % 3]);
@@ -1652,7 +1657,7 @@ static void model_scale_partition(uint64_t part) {
                     uint64_t at = k + 0x60 + (uint64_t)f * 4;
                     leaf_write(at, false, (rd<float>(at, 0) + t0[f]) / s[f] - t0[f]);
                 }
-                status("model: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f)", ship,
+                status("model: %s %s kept at its original size and place (local translation now %.2f %.2f %.2f)", ship, what,
                        rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68));
             }
         }

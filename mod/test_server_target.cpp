@@ -360,8 +360,10 @@ int main() {
         uint8_t* rootPart = comp(0x1449fa760, 1.0f, -7.2f);
         uint8_t* cockpit = comp(0x144a4e5c0, 1.0f, 0.0f); ((float*)(cockpit + 0x30))[13] = 0.0f;   // at the root part's origin
         uint8_t* other = comp(0x144999000, 1.0f, 2.0f);   // another child of the root part: inherits the scale, untouched
-        uint8_t* karr = fake_alloc(16 + 2 * 8); *(uint32_t*)(karr + 12) = 2;
-        ((uint8_t**)(karr + 16))[0] = other; ((uint8_t**)(karr + 16))[1] = cockpit; *(uint64_t*)(rootPart + 0x70) = (uint64_t)(karr + 16);
+        uint8_t* entry = comp(0x144a38580, 1.0f, 7.2f); ((float*)(entry + 0x30))[13] = 0.78f;   // at the ship's origin, as in the blueprint
+        uint8_t* karr = fake_alloc(16 + 3 * 8); *(uint32_t*)(karr + 12) = 3;
+        ((uint8_t**)(karr + 16))[0] = other; ((uint8_t**)(karr + 16))[1] = cockpit; ((uint8_t**)(karr + 16))[2] = entry;
+        *(uint64_t*)(rootPart + 0x70) = (uint64_t)(karr + 16);
         uint8_t* glow = comp(0x144a035c0, 140.0f, -13.0f);
         uint8_t* phys = comp(0x144999000, 1.0f, 0.0f);   // some other component type: must stay as it is
         uint8_t* carr = fake_alloc(16 + 3 * 8); *(uint32_t*)(carr + 12) = 3;
@@ -383,6 +385,11 @@ int main() {
         check(approx(r[0] * k[0], 1.0f) && approx(r[5] * k[5], 1.0f) && approx(r[10] * k[10], 1.0f) && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
               o[0] == 1.0f && o[14] == 2.0f,
               "model scale: the cockpit keeps its original size and place under the scaled root part; the part's other children untouched");
+        // the entry component (the gameplay rig) likewise: world axes 1, world translation the ship's origin
+        const float* en = (const float*)(entry + 0x30);
+        check(approx(r[0] * en[0], 1.0f) && approx(r[5] * en[5], 1.0f) && approx(r[10] * en[10], 1.0f) &&
+              approx(r[12] + r[0] * en[12], 0.0f) && approx(r[13] + r[5] * en[13], 0.0f) && approx(r[14] + r[10] * en[14], 0.0f),
+              "model scale: the entry component (the gameplay rig) keeps its original size and place at the ship's origin");
     }
     {   // ship scale (#20): the Havok packfile loader (FUN_142706d60) is hooked at its entry; a packfile holding a Y-wing
         // mesh (its domain box at +0x20, its sections 0x60 apart where the table says, the first codec as shipped) has the
