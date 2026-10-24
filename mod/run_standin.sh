@@ -68,5 +68,9 @@ else echo "FAIL  fingerprints differ: DLL '${DLLFP:-none}', settings app '${APPF
 if [ -n "$LOG" ] && grep -q "spawn: entity .* -> ship 5a5a0001" "$LOG" && grep -q "spawn: entity .* -> NOTHING SPAWNED" "$LOG"; then
     echo "PASS  spawn_log logged both starship spawns and their outcome"
 else echo "FAIL  spawn_log lines missing from the log"; STATUS=1; fi
+# hit_log=1 (server_standin.ini): two hits on the stand-in's U-wing, logged in the ship's own frame
+if [ -n "$LOG" ] && grep -q "hit: starshiphealthdamagedata_uwing: transform found in the physics component+0x80; the impact point is info+0x30" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (1.00, 2.00, 3.00) velocity ?[[:space:]]*$" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (-4.00, 0.50, 10.00) velocity (-[2-5][0-9]\.[0-9], 0\.0, 0\.0)" "$LOG"; then
+    echo "PASS  hit_log found the ship's frame and logged both hits in it"
+else echo "FAIL  hit_log lines missing or wrong"; STATUS=1; fi
 [ -n "$LOG" ] && echo "log: $LOG"
 exit $STATUS

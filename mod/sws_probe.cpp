@@ -174,7 +174,8 @@ static bool g_ruleZavianCreep;   // fix_zavian_creep_pack (see map_fix_partition
 // Profiles (issue #2). server.ini [server] profile=<name> selects profiles\<name>.ini beside the DLL:
 //   [rules]   no_zero_throttle_pinball, no_multidrift, fix_zavian_creep_pack (missing = off; the map fix is in the
 //             fingerprint only when on, so profiles without it keep theirs)
-//   [values]  <asset>.<field>=<number> overrides (applied by the runtime value engine, issue #3)
+//   [values]  <asset>.<field>=<number> overrides (applied by the runtime value engine, issue #3; the pseudo-configs
+//             materialgrid.* and shipscale_<ship>.scale are applied by their own hooks)
 // "Default" is built in: no rules, no overrides, never read from disk. With no profile set, rules.ini is read as before
 // (missing = on), so older setups keep working. The fingerprint is FNV-1a over a canonical text of the rules and the
 // sorted, normalized overrides; it is mixed into the network protocol version (h_tinit), so players on different profiles
@@ -223,7 +224,8 @@ static const char* kLimitTypes[] = { "starshipmovementconfig", "starshipshieldda
     "damageovertimesettings", "shieldhealthsettings", "capitalshipresupplysubsystemsettings",
     "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
     "turretfirepatternsettingsasset",   // capital ships and turrets (tools/gen_limits.py CAPITAL)
-    "materialgrid" };   // laser and ion damage against capital ships (grid_apply)
+    "materialgrid",   // laser and ion damage against capital ships (grid_apply)
+    "shipscale" };   // a starfighter's size (model_scale_partition)
 static void load_limits(const wchar_t* dir) {
     wchar_t li[MAX_PATH]; swprintf_s(li, L"%ls\\limits.ini", dir);
     if (GetFileAttributesW(li) == INVALID_FILE_ATTRIBUTES) { status("limits: %ls not found; values are NOT clamped", li); return; }
@@ -306,6 +308,7 @@ static void clamp_overrides() {
     g_overrideCount = kept;
 }
 static wchar_t g_dllDir[MAX_PATH];
+static bool g_shipScaleOn;
 static void load_profile(const wchar_t* dir) {
     wcscpy_s(g_dllDir, dir);
     wchar_t sini[MAX_PATH]; swprintf_s(sini, L"%ls\\server.ini", dir);
@@ -351,6 +354,7 @@ static void load_profile(const wchar_t* dir) {
     }
     load_limits(dir);
     clamp_overrides();
+    for (int i = 0; i < g_overrideCount; i++) if (!strncmp(g_overrides[i].key, "shipscale_", 10)) g_shipScaleOn = true;
     g_profileFp = profile_fingerprint();
     status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d fix_zavian_creep_pack=%d, %d value override(s), fingerprint %08x%s",
            g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, (int)g_ruleZavianCreep, g_overrideCount, g_profileFp,
@@ -526,6 +530,7 @@ static bool g_observe = true;           // [server] observe: 0 = no output sampl
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
+static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -568,6 +573,7 @@ static void read_server_ini() {
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1549,11 +1555,90 @@ static void map_fix_partition(uint64_t part) {
         return;
     }
 }
+// Ship size (issue #20). The profile value shipscale_<ship>.scale (a pseudo-config like materialgrid: clamped by
+// limits.ini's shipscale.scale, in the fingerprint like any value) sizes a starfighter, player and AI alike, as its
+// blueprint partition loads. The partition holds a StarshipBlueprint (an Asset: name +0x18, ".../Starship_Ywing",
+// ".../Starship_Ywing_AI") and its StarshipEntityData, whose Components (+0x60, count at -4) are the model's top: the
+// root PartComponentData (the composite mesh's parts hang under it) and a MeshComponentData. Each component's
+// LinearTransform is at +0x30 (right, up, forward, trans, 16 bytes apart); scaling its axes and its translation by s
+// scales everything under it about the ship's origin. The laser hitbox follows: the game places each hitbox mesh at its
+// part, with the part's scale (measured 2026-10-23/24 with hit_log: at 0.5, all 86 AI hits on Y-wings lay within 0.25 m
+// of the half-size hull). Uniform only: a per-axis stretch distorts the models, and the game gives the hitbox one scale
+// whatever the axes say (tried 2026-10-24). The cockpit is the exception: under a scaled root part its graphics jump
+// around, worse the faster the ship turns (Pseudo, 2026-10-23), so the root part's StarshipCockpitComponentData (ClassInfo
+// 0x144a4e5c0, in the part's Components at +0x70) gets the inverse: with the root part's original translation t (its
+// axes are the identity), a child at local (axes A, translation u) keeps its old world placement with axes A/s and
+// translation (u + t)/s - t. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220, StarshipEntityData
+// 0x1449fad80, PartComponentData 0x1449fa760, MeshComponentData 0x144a035c0.
+static double ship_scale_for(const char* ship) {   // "ywing" or "ywing_ai": the player ship's value, for both
+    char key[96]; int k = sprintf_s(key, "shipscale_");
+    for (const char* c = ship; *c && *c != '_' && k < 80; c++) key[k++] = *c;
+    strcpy_s(key + k, sizeof key - k, ".scale");
+    for (int i = 0; i < g_overrideCount; i++) if (!strcmp(g_overrides[i].key, key)) return g_overrides[i].value;
+    return 0;
+}
+static void model_scale_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    float s = 0; char ship[64] = "";
+    for (uint16_t i = 0; insts && i < n && s == 0; i++) {   // the blueprint names the ship
+        uint64_t inst = rd<uint64_t>(insts, i * 8);
+        if (!inst || rd<uint64_t>(inst, 8) != 0x144ade220) continue;
+        const char* name = safe_str(rd<uint64_t>(inst, 0x18));
+        const char* leaf = strrchr(name, '/'); leaf = leaf ? leaf + 1 : name;
+        if (_strnicmp(leaf, "starship_", 9) != 0) return;
+        int k = 0; for (const char* c = leaf + 9; *c && k < 63; c++) ship[k++] = (char)tolower((unsigned char)*c);
+        ship[k] = 0;
+        s = (float)ship_scale_for(ship);
+    }
+    if (s <= 0 || s == 1.0f) return;
+    int scaled = 0;
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t ent = rd<uint64_t>(insts, i * 8);
+        if (!ent || rd<uint64_t>(ent, 8) != 0x1449fad80) continue;
+        uint64_t arr = rd<uint64_t>(ent, 0x60); uint32_t cnt = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        for (uint32_t k = 0; k < cnt && k < 512; k++) {
+            uint64_t c = rd<uint64_t>(arr, k * 8); if (!c) continue;
+            uint64_t ci = rd<uint64_t>(c, 8);
+            if (ci != 0x1449fa760 && ci != 0x144a035c0) continue;
+            float t0[3] = { rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68) };   // the original translation
+            bool ident = fabsf(rd<float>(c, 0x30) - 1) < 1e-4f && fabsf(rd<float>(c, 0x44) - 1) < 1e-4f && fabsf(rd<float>(c, 0x58) - 1) < 1e-4f &&
+                         fabsf(rd<float>(c, 0x34)) < 1e-4f && fabsf(rd<float>(c, 0x38)) < 1e-4f && fabsf(rd<float>(c, 0x40)) < 1e-4f &&
+                         fabsf(rd<float>(c, 0x48)) < 1e-4f && fabsf(rd<float>(c, 0x50)) < 1e-4f && fabsf(rd<float>(c, 0x54)) < 1e-4f;
+            bool ok = true;
+            for (int f = 0; f < 12 && ok; f++) {   // right, up, forward and trans, x y z each: 4 vectors 16 bytes apart
+                uint64_t at = c + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
+                ok = leaf_write(at, false, rd<float>(at, 0) * s);
+            }
+            if (ok) scaled++;
+            status("ship scale: %s %s scaled %.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
+                   ci == 0x1449fa760 ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
+            if (ci != 0x1449fa760 || !ok) continue;
+            uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
+            for (uint32_t j = 0; j < nk && j < 512; j++) {
+                uint64_t k = rd<uint64_t>(kids, j * 8);
+                if (!k || rd<uint64_t>(k, 8) != 0x144a4e5c0) continue;
+                if (!ident) { status("ship scale: %s cockpit left scaled: the root part is rotated, which the inverse here doesn't handle", ship); continue; }
+                for (int f = 0; f < 9; f++) {   // axes / s
+                    uint64_t at = k + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
+                    leaf_write(at, false, rd<float>(at, 0) / s);
+                }
+                for (int f = 0; f < 3; f++) {   // translation (u + t) / s - t
+                    uint64_t at = k + 0x60 + (uint64_t)f * 4;
+                    leaf_write(at, false, (rd<float>(at, 0) + t0[f]) / s - t0[f]);
+                }
+                status("ship scale: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f)", ship,
+                       rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68));
+            }
+        }
+    }
+    if (!scaled) status("ship scale: %s blueprint loaded, but no part or mesh component found under its entity", ship);
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
     uint64_t part = o_partnew(store, a2, loader, a4);
     if (part && g_ruleZavianCreep) map_fix_partition(part);
+    if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
@@ -1749,6 +1834,137 @@ static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
     uint64_t r = o_sspawn(ent, req);
     if (g_spawnLog) status("spawn: entity %llx (data %llx) -> %s %llx", ent, rd<uint64_t>(ent, 0x38), r ? "ship" : "NOTHING SPAWNED", r);
     return r;
+}
+// FUN_14168a8b0(component, out, info): ServerStarshipHealthComponent's direct hit (vtable slot 41, notes/material-grid.md),
+// on the server, for every starfighter, player or AI. hit_log=1 logs where each hit landed in the struck ship's own frame
+// (#20: checking hitboxes and ship size against where lasers actually land; the game places each hitbox mesh at its
+// blueprint part, so compare against the meshes placed there, not as the physics file stores them). The
+// info's layout isn't reflected: +0x20 is the attacker's material, +0x30, +0x40, +0x70 and +0x90 are vectors, +0x58 the
+// part, +0x60 the kind (2 = collision), +0x84 the damage. Which vector is the impact point, and where the ship's transform
+// lives, are found from the data: the transform is the first orthonormal block (three unit, mutually orthogonal vectors,
+// then a translation) within 30 m of a candidate point, in the component, its physics component (+0x990), the physics
+// body, or an object one of those points to. Once found, its place is kept per ship. The ship is named by its
+// StarshipHealthDamageData asset, found through the component's data (its HealthDamageDataAsset is at +0x90).
+typedef uint64_t(__fastcall* shiphit_t)(uint64_t comp, uint64_t out, uint64_t info);
+static shiphit_t o_shiphit;
+struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[160]; int misses; float lastT[3]; LONGLONG lastQ; };
+static volatile LONG g_hitRaw;   // the first few hits' info vectors are logged raw
+static HitShip g_hitShips[512]; static int g_hitShipCount; static SRWLOCK g_hitLock = SRWLOCK_INIT;
+static const uint32_t kHitCand[3] = { 0x30, 0x70, 0x90 };
+static const char* kHitObj[3] = { "component", "physics component", "physics body" };
+static uint64_t hit_body(uint64_t pc) {   // the body the hit function itself reaches when the physics component forwards
+    if (!pc || rd<uint64_t>(rd<uint64_t>(pc, 0), 0x1c8) != 0x141ca4ec0) return 0;
+    uint64_t w = rd<uint64_t>(pc, 0x30), idp = rd<uint64_t>(pc, 0x38);
+    if (!w || !idp) return 0;
+    uint32_t id = rd<uint32_t>(idp, 0);
+    uint64_t t1 = rd<uint64_t>(w, 0x138); if (!t1) return 0;
+    uint64_t t2 = rd<uint64_t>(t1, ((id >> 16) & 0xff) * 8); if (!t2) return 0;
+    uint64_t t3 = rd<uint64_t>(t2, 0x138); if (!t3) return 0;
+    return rd<uint64_t>(t3, (id & 0xffff) * 8);
+}
+static uint64_t hit_obj(uint64_t comp, int obj, int ptrOff) {
+    uint64_t pc = rd<uint64_t>(comp, 0x990);
+    uint64_t b = obj == 0 ? comp : obj == 1 ? pc : hit_body(pc);
+    if (b && ptrOff >= 0) b = rd<uint64_t>(b, ptrOff);
+    return b < 0x10000 ? 0 : b;
+}
+static bool hit_frame(uint64_t at, float m[12]) {   // three orthonormal vectors and a translation, 16 bytes apart
+    for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++) m[i * 3 + k] = rd<float>(at, i * 16 + k * 4);
+    for (int i = 0; i < 12; i++) if (!(m[i] == m[i]) || fabsf(m[i]) > 1e6f) return false;
+    for (int i = 0; i < 3; i++) for (int j = i; j < 3; j++) {
+        float d = m[i * 3] * m[j * 3] + m[i * 3 + 1] * m[j * 3 + 1] + m[i * 3 + 2] * m[j * 3 + 2];
+        if (fabsf(d - (i == j ? 1.0f : 0.0f)) > 0.002f) return false;
+    }
+    return true;
+}
+static float hit_dist2(const float m[12], const float p[3]) {
+    float dx = p[0] - m[9], dy = p[1] - m[10], dz = p[2] - m[11];
+    return dx * dx + dy * dy + dz * dz;
+}
+static bool hit_find(uint64_t comp, uint64_t info, HitShip& s) {
+    for (int obj = 0; obj < 3; obj++) for (int ptrOff = -8; ptrOff < 0x100; ptrOff += 8) {
+        uint64_t b = hit_obj(comp, obj, ptrOff < 0 ? -1 : ptrOff);
+        if (!b) continue;
+        for (int off = 0; off < 0x400; off += 16) {
+            float m[12];
+            if (!hit_frame(b + off, m)) continue;
+            // a frame at the world origin is a local or identity block, not a ship flying in a match (2026-10-23: the
+            // first flight matched an identity block at the origin against a unit direction in the info)
+            if (m[9] * m[9] + m[10] * m[10] + m[11] * m[11] < 4.0f) continue;
+            for (int c = 0; c < 3; c++) {
+                float p[3] = { rd<float>(info, kHitCand[c]), rd<float>(info, kHitCand[c] + 4), rd<float>(info, kHitCand[c] + 8) };
+                if (p[0] * p[0] + p[1] * p[1] + p[2] * p[2] < 4.0f) continue;   // a direction, not a point
+                if (hit_dist2(m, p) < 30.0f * 30.0f) {
+                    s.obj = obj; s.ptrOff = ptrOff < 0 ? -1 : ptrOff; s.off = off; s.cand = c;
+                    char where[96];
+                    if (s.ptrOff >= 0) sprintf_s(where, "the %s's pointer at +%#x, then +%#x", kHitObj[obj], s.ptrOff, off);
+                    else sprintf_s(where, "the %s+%#x", kHitObj[obj], off);
+                    status("hit: %s: transform found in %s; the impact point is info+%#x; axes (%.3f %.3f %.3f) (%.3f %.3f %.3f) (%.3f %.3f %.3f)",
+                           s.name, where, kHitCand[c], m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+static void hit_name(uint64_t comp, char* out, size_t n) {
+    uint16_t lo = rd<uint16_t>(0x144a8ca00, 0x48), hi = rd<uint16_t>(0x144a8ca00, 0x4a);
+    for (uint32_t off = 0; off < 0x400; off += 8) {
+        uint64_t q = rd<uint64_t>(comp, off); if (q < 0x10000) continue;
+        uint64_t a = rd<uint64_t>(q, 0x90); if (a < 0x10000) continue;
+        uint64_t ci = rd<uint64_t>(a, 8); if (ci < 0x10000) continue;
+        uint16_t id = rd<uint16_t>(ci, 0x48);
+        if ((uint16_t)(id - lo) <= (uint16_t)(hi - lo)) { safe_copy(rd<uint64_t>(a, 0x18), out, n); if (out[0]) return; }
+    }
+    strcpy_s(out, n, "?");
+}
+static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info) {
+    if (g_hitLog && comp && info) {
+        if (InterlockedIncrement(&g_hitRaw) <= 8)
+            status("hit: raw info +0x30 (%.2f %.2f %.2f) +0x40 (%.3f %.3f %.3f) +0x70 (%.3f %.3f %.3f) +0x90 (%.3f %.3f %.3f) part %d, called from %p",
+                   rd<float>(info, 0x30), rd<float>(info, 0x34), rd<float>(info, 0x38), rd<float>(info, 0x40), rd<float>(info, 0x44),
+                   rd<float>(info, 0x48), rd<float>(info, 0x70), rd<float>(info, 0x74), rd<float>(info, 0x78), rd<float>(info, 0x90),
+                   rd<float>(info, 0x94), rd<float>(info, 0x98), rd<int32_t>(info, 0x58), _ReturnAddress());
+        AcquireSRWLockExclusive(&g_hitLock);
+        HitShip* s = nullptr;
+        for (int i = 0; i < g_hitShipCount && !s; i++) if (g_hitShips[i].comp == comp) s = &g_hitShips[i];
+        if (!s && g_hitShipCount < 512) {
+            s = &g_hitShips[g_hitShipCount++]; *s = {}; s->comp = comp; s->obj = -1;
+            hit_name(comp, s->name, sizeof s->name);
+        }
+        if (s && s->obj < 0 && s->misses < 3 && !hit_find(comp, info, *s)) {
+            if (++s->misses <= 3)
+                status("hit: %s: no transform found near info+0x30 (%.1f %.1f %.1f), +0x70 (%.1f %.1f %.1f) or +0x90 (%.1f %.1f %.1f)", s->name,
+                       rd<float>(info, 0x30), rd<float>(info, 0x34), rd<float>(info, 0x38), rd<float>(info, 0x70), rd<float>(info, 0x74),
+                       rd<float>(info, 0x78), rd<float>(info, 0x90), rd<float>(info, 0x94), rd<float>(info, 0x98));
+        }
+        if (s && s->obj >= 0) {
+            float m[12]; uint64_t b = hit_obj(comp, s->obj, s->ptrOff);
+            if (b && hit_frame(b + s->off, m)) {
+                uint32_t c = kHitCand[s->cand];
+                float d[3] = { rd<float>(info, c) - m[9], rd<float>(info, c + 4) - m[10], rd<float>(info, c + 8) - m[11] };
+                float l[3]; for (int i = 0; i < 3; i++) l[i] = d[0] * m[i * 3] + d[1] * m[i * 3 + 1] + d[2] * m[i * 3 + 2];
+                uint32_t a = rd<uint32_t>(info, 0x20);
+                // the ship's velocity, from its frame now and at its last hit (in its own frame; hits trail fast ships, so
+                // the trail can be measured against the speed: 2026-10-23, TIE fighters' hits reached 20 m behind them)
+                LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f);
+                char vel[64] = "velocity ?";
+                float mv[3] = { m[9] - s->lastT[0], m[10] - s->lastT[1], m[11] - s->lastT[2] };
+                double dt = s->lastQ ? (double)(q.QuadPart - s->lastQ) / (double)f.QuadPart : 0;
+                if (dt > 0.02 && dt < 1.0 && mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2] > 1e-4f) {
+                    float lv[3]; for (int i = 0; i < 3; i++) lv[i] = (float)((mv[0] * m[i * 3] + mv[1] * m[i * 3 + 1] + mv[2] * m[i * 3 + 2]) / dt);
+                    sprintf_s(vel, "velocity (%.1f, %.1f, %.1f)", lv[0], lv[1], lv[2]);
+                }
+                if (mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2] > 1e-4f || !s->lastQ) {
+                    s->lastT[0] = m[9]; s->lastT[1] = m[10]; s->lastT[2] = m[11]; s->lastQ = q.QuadPart; }
+                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f) %s", s->name, rd<int32_t>(info, 0x58),
+                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2], vel);
+            }
+        }
+        ReleaseSRWLockExclusive(&g_hitLock);
+    }
+    return o_shiphit(comp, out, info);
 }
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
@@ -2496,6 +2712,9 @@ static Site g_sites[] = {
     {"starship-spawn 0x1416bcab0", 0x1416bcab0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
      (void*)h_sspawn, (void**)&o_sspawn},
+    {"starship-direct-hit 0x14168a8b0", 0x14168a8b0, 18,
+     {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0},
+     (void*)h_shiphit, (void**)&o_shiphit},
     {"partition-new 0x140273060", 0x140273060, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
      (void*)h_partnew, (void**)&o_partnew},
