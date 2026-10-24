@@ -133,6 +133,15 @@ int main() {
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x14057dd20ll - 0x1417db400ll);
       put(0x1417db3f7, site, sizeof site); }
+    // the squadron's field-change handler (FUN_1417a0cf0): its real 16-byte prologue (it ends on cmp eax, imm32), then the
+    // epilogue; and the target-score lookup (FUN_141617a00): its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
+    if (map(0x1417a0000, 0x10000) != (void*)0x1417a0000 || map(0x141610000, 0x10000) != (void*)0x141610000) { printf("FAIL  could not map the squadron regions\n"); return 1; }
+    const uint8_t sqfield[] = {0x40,0x53,0x48,0x83,0xec,0x70,0x8b,0x02,0x48,0x8b,0xd9,0x3d,0x94,0x22,0x95,0xaa,
+                               0x48,0x83,0xc4,0x70, 0x5b, 0xc3};
+    put(0x1417a0cf0, sqfield, sizeof sqfield);
+    const uint8_t scorelk[] = {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x40,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff,
+                               0x0f,0x57,0xc0, 0x48,0x83,0xc4,0x40, 0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
+    put(0x141617a00, scorelk, sizeof scorelk);
     // transport capture sites: real prologues, then matching epilogues
     if (map(0x140cb0000, 0x10000) != (void*)0x140cb0000 || map(0x1412e0000, 0x10000) != (void*)0x1412e0000) { printf("FAIL  could not map capture regions\n"); return 1; }
     const uint8_t cconnect[] = {0x4c,0x8b,0xdc,0x57,0x48,0x81,0xec,0x90,0x00,0x00,0x00,0x49,0xc7,0x43,0x88,0xfe,0xff,0xff,0xff,
@@ -432,18 +441,31 @@ int main() {
         typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part6, 0);
         uint8_t* nl = *(uint8_t**)(squad + 104);
-        // a list's priority for a tag (-1: not listed), and whether it still has the generic capital-ship score
-        auto prio = [](uint8_t* set, uint32_t tag) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
-                                                     for (uint32_t k = 0; k < n; k++) { uint8_t* s = ((uint8_t**)a)[k]; if (*(uint32_t*)(s + 40) == tag) return *(float*)(s + 44); }
-                                                     return -1.0f; };
+        // the game's score lookup (FUN_141617a00): the first score whose TargetTags bits are all on the target; none = 0
+        auto score = [](uint8_t* set, uint32_t target) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
+                                                         for (uint32_t k = 0; k < n; k++) { uint8_t* s = ((uint8_t**)a)[k]; uint32_t m = *(uint32_t*)(s + 40);
+                                                                                            if ((m & target) == m) return *(float*)(s + 44); }
+                                                         return 0.0f; };
+        // a frigate that also carries bits a stock score asks for (20 = bits 2 and 4), so the order of the scores matters
+        const uint32_t frigate = (1u << 29) | 2 | 20, flagship = (1u << 22) | 2, smallcap = (1u << 28) | 2, turret = 262144;
         bool lists = nl != lst && *(uint32_t*)(nl - 4) == 7;
         uint8_t* L[7] = {}; for (int p = 0; lists && p < 7; p++) L[p] = ((uint8_t**)nl)[p];
-        bool shape = lists && L[0] == L[1] && L[2] == L[5] && L[2] == L[6] && L[3] == L[4] && L[0] != L[2] && L[2] != L[3] && L[0] != L[3];
-        bool offense = shape && prio(L[0], 1u << 29) == 4 && prio(L[0], 1u << 22) == 3 && prio(L[0], 1u << 28) == 2 && prio(L[0], 2) < 0 && prio(L[0], 262144) == 5 && prio(L[0], 36) == 3;
-        bool faceoff = shape && prio(L[2], 1u << 28) == 4 && prio(L[2], 1u << 29) == 0 && prio(L[2], 1u << 22) == 0 && prio(L[2], 2) < 0;
-        bool defense = shape && prio(L[3], 1u << 28) == 2 && prio(L[3], 1u << 29) == 0 && prio(L[3], 1u << 22) == 0;
-        check(offense && faceoff && defense && *(uint32_t*)(*(uint8_t**)(L[0] + 24) + 0) != 0 && *(uint32_t*)(L[0] + 16) >= 0x10000000,
-              "aggressive creep: the TIE creep squadron gets a target list per phase (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
+        bool shared = lists && L[0] && L[0] == L[1] && L[0] == L[2] && L[0] == L[3] && L[0] == L[4] && L[0] == L[5] && L[0] == L[6];
+        bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4 && score(L[0], turret) == 5;
+        // the phase arrives through the squadron's field-change handler, as the repointed connection delivers it
+        uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = squad;
+        int32_t phaseVal = 0; uint8_t chg[16] = {}; *(int32_t*)chg = 93732099; *(int32_t**)(chg + 8) = &phaseVal;
+        typedef void(__fastcall* sqf_t)(uint8_t*, uint8_t*);
+        ((sqf_t)0x1417a0cf0)(ent, chg);   // phase 0: a Rebel zone, Imperial offense
+        bool offense = shared && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
+        phaseVal = 3; ((sqf_t)0x1417a0cf0)(ent, chg);   // an Imperial zone: defense
+        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 2;
+        phaseVal = 6; ((sqf_t)0x1417a0cf0)(ent, chg);   // transition: the opener's scores again
+        bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
+        uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; phaseVal = 0; ((sqf_t)0x1417a0cf0)(other, chg);
+        bool untouched = shared && score(L[0], frigate) == 0;   // another entity's field change leaves the creep alone
+        check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1417a0cf0 == 0xFF,
+              "aggressive creep: one shared target list, its scores switched by the phase through the squadron's field handler (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
         check(*(uint8_t**)(pcArr + 8) == squad && *(int32_t*)(pcArr + 20) == 93732099 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
               *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
