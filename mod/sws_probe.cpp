@@ -178,6 +178,9 @@ static bool g_creepOn;
 // [creep] aggressive = 1 (creep_ai_partition): creep engage like the vs-AI bots, with target priorities by phase;
 // missiles = 1 (creep_behaviour_scan): creep fire missiles and torpedoes. Each in the fingerprint when on.
 static bool g_creepAggressive, g_creepMissiles;
+// [creep] radius: how far aggressive creep look for targets, in metres (500..3000; 2000 is the bots' value). In the
+// fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
+static int g_creepRadius = 2000;
 static uint8_t* g_creepPool;   // the creep's own target lists (creep_alloc), made when aggressive is on
 
 // Profiles (issue #2). server.ini [server] profile=<name> selects profiles\<name>.ini beside the DLL:
@@ -209,6 +212,7 @@ static uint32_t profile_fingerprint() {
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) { sprintf_s(b, "creep.%s_pack%d=%s;", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]); h = fnv1a(h, b); }
     if (g_creepAggressive) h = fnv1a(h, "creep.aggressive=1;");
+    if (g_creepAggressive && g_creepRadius != 2000) { sprintf_s(b, "creep.radius=%d;", g_creepRadius); h = fnv1a(h, b); }
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
     return h ? h : 1;
@@ -392,6 +396,11 @@ static void load_profile(const wchar_t* dir) {
                 }
             g_creepAggressive = GetPrivateProfileIntW(L"creep", L"aggressive", 0, pf) != 0;
             g_creepMissiles = GetPrivateProfileIntW(L"creep", L"missiles", 0, pf) != 0;
+            g_creepRadius = (int)GetPrivateProfileIntW(L"creep", L"radius", 2000, pf);
+            if (g_creepRadius < 500 || g_creepRadius > 3000) {
+                int was = g_creepRadius; g_creepRadius = g_creepRadius < 500 ? 500 : 3000;
+                status("profile: [creep] radius = %d is outside 500..3000; clamped to %d", was, g_creepRadius);
+            }
             if (g_creepAggressive && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
@@ -424,7 +433,7 @@ static void load_profile(const wchar_t* dir) {
     for (int f = 0; f < 2; f++)
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
-    if (g_creepAggressive) status("  creep: aggressive within 2000 m, with targets by phase");
+    if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase", g_creepRadius);
     if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
     for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (%s)", g_overrides[i].key, g_overrides[i].value,
         !strncmp(g_overrides[i].key, "shipscale_", 10) ? "the ship's size, applied as its blueprint loads, issue #20"
@@ -1731,7 +1740,7 @@ static void model_scale_partition(uint64_t part) {
 // +104), one per phase: offense (the enemy frigates, then their flagship), face-off and transition (the small capital
 // ship), defense (no enemy capital ship). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
 // and adds frigate (tag bit 29), flagship (22) and small capital ship (28) scores. The squadron engages as its own
-// EngagementModeOverride (+112, Aggressive) says, within 2000 m (TargetingRules +32: EngagementMode +32, search radius
+// EngagementModeOverride (+112, Aggressive) says, within [creep] radius (2000 m by default; TargetingRules +32: EngagementMode +32, search radius
 // +40). Done as the prefab's partition loads, before a squadron is built from it. The lists and scores are copies of the
 // stock ones (TargetPrioritisationSettings: scores array +24; TargetPrioritisationScore: TargetTags +40, Priority +44;
 // a DataContainer's refcount is at +16) in memory kept for the process's life, their refcounts set so they never run out.
@@ -1803,10 +1812,11 @@ static void creep_ai_partition(uint64_t part) {
     }
     int32_t mode = rd<int32_t>(squad, 112);
     bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
-              leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, 2000.0) &&
+              leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius) &&
               write_u64(conn + 8, squad) && leaf_write(conn + 20, true, 93732099);
-    status("creep: %s: %s", leaf, ok ? "aggressive within 2000 m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
-                                       "capital ship; defense: no capital ship)" : "a write failed; its creep may keep the stock engagement");
+    if (ok) status("creep: %s: aggressive within %d m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
+                   "capital ship; defense: no capital ship)", leaf, g_creepRadius);
+    else status("creep: %s: a write failed; its creep may keep the stock engagement", leaf);
 }
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;

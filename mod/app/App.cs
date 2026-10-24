@@ -131,6 +131,8 @@ namespace SwsSettings
         readonly CheckBox ruleZavian = Theme.Check("Zavian Abyss: full middle X-wing creep pack");
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
+        readonly ComboBox creepRadius = Theme.Combo();
+        static readonly int[] CreepRadii = { 1000, 1200, 1500, 2000, 2500, 3000 };
         readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         static readonly string[][] CreepShipNames = { new[] { "X-wing (stock)", "Y-wing", "A-wing", "U-wing" },
             new[] { "TIE fighter (stock)", "TIE bomber", "TIE interceptor", "TIE reaper" } };
@@ -266,6 +268,11 @@ namespace SwsSettings
             for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
             creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles;
             creepAggressive.Enabled = creepMissiles.Enabled = !profile.BuiltIn;
+            {   // a hand-edited range that isn't in the list still shows as itself
+                string want = profile.CreepRadius.ToString("N0") + " m";
+                if (!creepRadius.Items.Contains(want)) creepRadius.Items.Add(want);
+                creepRadius.SelectedItem = want; creepRadius.Enabled = !profile.BuiltIn && profile.CreepAggressive;
+            }
             rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
             rulesNote.Text = profile.BuiltIn ? "Default is the game as shipped: every rule and fix off. Duplicate it on Profile and values to make your own." : "";
             loading = false;
@@ -661,13 +668,23 @@ namespace SwsSettings
                 }
                 col.Controls.Add(row);
             }
-            rule(creepAggressive, "Creep engage enemies within 2,000 m, as the vs-AI bots do, instead of only what their path brings near. Their targets follow the phase: " +
+            rule(creepAggressive, "Creep engage enemies within the range below (2,000 m is the vs-AI bots' value), instead of only what their path brings near. Their targets follow the phase: " +
                 "on offense the enemy frigates, then the flagship once the frigates are gone; in the opener the enemy corvette or Raider; on defense no capital ship. " +
                 "Players and other creep stay targets throughout.");
+            {
+                var row = Theme.Row(6); row.Margin = new Padding(28, 2, 0, 6);
+                row.Controls.Add(new Label { Text = "Engagement range", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(0, 8, 8, 0) });
+                creepRadius.Width = 120; foreach (int r in CreepRadii) creepRadius.Items.Add(r.ToString("N0") + " m");
+                creepRadius.SelectedIndexChanged += (s, e) => {
+                    if (loading || creepRadius.SelectedItem == null) return;
+                    int r; if (int.TryParse(creepRadius.SelectedItem.ToString().Replace(" m", "").Replace(",", "").Replace(".", ""), out r)) { profile.CreepRadius = r; SaveProfile(); }
+                };
+                row.Controls.Add(creepRadius); col.Controls.Add(row);
+            }
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions.");
 
-            creepAggressive.CheckedChanged += (s, e) => { if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
+            creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
             creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
             ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };

@@ -446,9 +446,9 @@ int main() {
               "aggressive creep: the TIE creep squadron gets a target list per phase (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
         check(*(uint8_t**)(pcArr + 8) == squad && *(int32_t*)(pcArr + 20) == 93732099 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
-              *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 2000.0f && *(int32_t*)(squad + 124) == 2 &&
+              *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
               *(uint32_t*)(sArr - 4) == 5 && *(uint32_t*)(((uint8_t**)sArr)[3] + 40) == 2 && *(uint8_t**)(stockSet + 24) == sArr,
-              "aggressive creep: the phase drives the list index, the squadron is Aggressive within 2000 m, the path connection and the stock list untouched");
+              "aggressive creep: the phase drives the list index, the squadron is Aggressive within the profile's 1200 m, the path connection and the stock list untouched");
     }
     {   // ship scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
         // and its StarshipEntityData) arrives through the partition creator; the StandIn profile's shipscale_ywing.scale=0.5
@@ -716,7 +716,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.missiles=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
