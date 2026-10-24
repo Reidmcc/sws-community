@@ -1876,7 +1876,7 @@ static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
 // StarshipHealthDamageData asset, found through the component's data (its HealthDamageDataAsset is at +0x90).
 typedef uint64_t(__fastcall* shiphit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shiphit_t o_shiphit;
-struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[160]; int misses; };
+struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[160]; int misses; float lastT[3]; LONGLONG lastQ; };
 static volatile LONG g_hitRaw;   // the first few hits' info vectors are logged raw
 static HitShip g_hitShips[512]; static int g_hitShipCount; static SRWLOCK g_hitLock = SRWLOCK_INIT;
 static const uint32_t kHitCand[3] = { 0x30, 0x70, 0x90 };
@@ -1951,10 +1951,10 @@ static void hit_name(uint64_t comp, char* out, size_t n) {
 static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info) {
     if (g_hitLog && comp && info) {
         if (InterlockedIncrement(&g_hitRaw) <= 8)
-            status("hit: raw info +0x30 (%.2f %.2f %.2f) +0x40 (%.3f %.3f %.3f) +0x70 (%.3f %.3f %.3f) +0x90 (%.3f %.3f %.3f) part %d",
+            status("hit: raw info +0x30 (%.2f %.2f %.2f) +0x40 (%.3f %.3f %.3f) +0x70 (%.3f %.3f %.3f) +0x90 (%.3f %.3f %.3f) part %d, called from %p",
                    rd<float>(info, 0x30), rd<float>(info, 0x34), rd<float>(info, 0x38), rd<float>(info, 0x40), rd<float>(info, 0x44),
                    rd<float>(info, 0x48), rd<float>(info, 0x70), rd<float>(info, 0x74), rd<float>(info, 0x78), rd<float>(info, 0x90),
-                   rd<float>(info, 0x94), rd<float>(info, 0x98), rd<int32_t>(info, 0x58));
+                   rd<float>(info, 0x94), rd<float>(info, 0x98), rd<int32_t>(info, 0x58), _ReturnAddress());
         AcquireSRWLockExclusive(&g_hitLock);
         HitShip* s = nullptr;
         for (int i = 0; i < g_hitShipCount && !s; i++) if (g_hitShips[i].comp == comp) s = &g_hitShips[i];
@@ -1975,8 +1975,20 @@ static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info)
                 float d[3] = { rd<float>(info, c) - m[9], rd<float>(info, c + 4) - m[10], rd<float>(info, c + 8) - m[11] };
                 float l[3]; for (int i = 0; i < 3; i++) l[i] = d[0] * m[i * 3] + d[1] * m[i * 3 + 1] + d[2] * m[i * 3 + 2];
                 uint32_t a = rd<uint32_t>(info, 0x20);
-                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f)", s->name, rd<int32_t>(info, 0x58),
-                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2]);
+                // the ship's velocity, from its frame now and at its last hit (in its own frame; hits trail fast ships, so
+                // the trail can be measured against the speed: 2026-10-23, TIE fighters' hits reached 20 m behind them)
+                LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f);
+                char vel[64] = "velocity ?";
+                float mv[3] = { m[9] - s->lastT[0], m[10] - s->lastT[1], m[11] - s->lastT[2] };
+                double dt = s->lastQ ? (double)(q.QuadPart - s->lastQ) / (double)f.QuadPart : 0;
+                if (dt > 0.02 && dt < 1.0 && mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2] > 1e-4f) {
+                    float lv[3]; for (int i = 0; i < 3; i++) lv[i] = (float)((mv[0] * m[i * 3] + mv[1] * m[i * 3 + 1] + mv[2] * m[i * 3 + 2]) / dt);
+                    sprintf_s(vel, "velocity (%.1f, %.1f, %.1f)", lv[0], lv[1], lv[2]);
+                }
+                if (mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2] > 1e-4f || !s->lastQ) {
+                    s->lastT[0] = m[9]; s->lastT[1] = m[10]; s->lastT[2] = m[11]; s->lastQ = q.QuadPart; }
+                status("hit: %s part %d kind %d material %u damage %.1f at (%.2f, %.2f, %.2f) %s", s->name, rd<int32_t>(info, 0x58),
+                       rd<int32_t>(info, 0x60), (a & 0x80) ? a >> 20 : 0, rd<float>(info, 0x84), l[0], l[1], l[2], vel);
             }
         }
         ReleaseSRWLockExclusive(&g_hitLock);
