@@ -526,7 +526,8 @@ static bool g_observe = true;           // [server] observe: 0 = no output sampl
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
 struct HitboxScale { char ship[32]; float scale; };
 static HitboxScale g_hitboxScales[32]; static int g_hitboxScaleCount;   // [hitbox] <ship>=<scale>: experiment (#20)
-static HitboxScale g_modelScales[32]; static int g_modelScaleCount;     // [model] <ship>=<scale>: experiment (#20)
+struct ModelScale { char ship[32]; float s[3]; };   // ship space: x across, y up, z along the ship
+static ModelScale g_modelScales[32]; static int g_modelScaleCount;      // [model] <ship>=<scale> or <x>,<y>,<z>: experiment (#20)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
@@ -584,10 +585,20 @@ static void read_server_ini() {
       { wchar_t sec[2048] = L""; DWORD n = GetPrivateProfileSectionW(L"model", sec, 2048, ini);
         for (wchar_t* e = sec; n && *e && g_modelScaleCount < 32; e += wcslen(e) + 1) {
             wchar_t* eq = wcschr(e, L'='); if (!eq || e[0] == L';') continue;
-            HitboxScale& h = g_modelScales[g_modelScaleCount]; int k = 0;
+            ModelScale& h = g_modelScales[g_modelScaleCount]; int k = 0;
             for (wchar_t* c = e; c < eq && k < 31; c++) if (!iswspace(*c)) h.ship[k++] = (char)towlower(*c);
-            h.ship[k] = 0; h.scale = (float)_wtof(eq + 1);
-            if (k && h.scale > 0.01f && h.scale < 10.0f) g_modelScaleCount++;
+            h.ship[k] = 0;
+            int got = 0; wchar_t* c = eq + 1;   // one number, or three (x, y, z) separated by commas or spaces
+            while (got < 3 && *c) {
+                while (*c && (iswspace(*c) || *c == L',')) c++;
+                if (!*c) break;
+                wchar_t* end; float v = wcstof(c, &end); if (end == c) break;
+                h.s[got++] = v; c = end;
+            }
+            if (got == 1) h.s[1] = h.s[2] = h.s[0];
+            bool ok = k && (got == 1 || got == 3);
+            for (int a = 0; a < 3 && ok; a++) ok = h.s[a] > 0.01f && h.s[a] < 10.0f;
+            if (ok) g_modelScaleCount++;
         } }
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -1575,22 +1586,27 @@ static void map_fix_partition(uint64_t part) {
 // StarshipEntityData, whose Components (+0x60, count at -4) are the model's top: the root PartComponentData (the
 // composite mesh's parts hang under it) and a MeshComponentData. Each component's LinearTransform is at +0x30 (right, up,
 // forward, trans, 16 bytes apart); scaling its axes and its translation by s scales everything under it about the ship's
-// origin, the point the hitbox scales about. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220,
+// origin, the point the hitbox scales about. Per axis (2026-10-24), the scale S = (sx, sy, sz) is applied in ship space:
+// a row-vector transform M becomes M S, so every row (the three axes and the translation) has its x, y and z components
+// multiplied by sx, sy and sz. That's a true ship-space stretch for whatever hangs under the part; it stays shear-free
+// for children whose axes are aligned with the ship's (all of the Y-wing's parts and meshes are: blueprint dump
+// 2026-10-24), and would shear a rotated child, which a Havok instance scale can't represent. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220,
 // StarshipEntityData 0x1449fad80, PartComponentData 0x1449fa760, MeshComponentData 0x144a035c0. Whether the renderer
 // and the part tree honour a scaled transform is what the experiment finds out. (They do, and the hitbox follows the
 // parts: 2026-10-23, Y-wing at 0.5.) The cockpit is the exception: it hangs under the root part, and drawn through a
 // scaled transform its graphics jump around, worse the faster the ship turns (Pseudo, the same night). So the root
 // part's cockpit component (StarshipCockpitComponentData, ClassInfo 0x144a4e5c0, in the part's Components at +0x70) gets
 // the inverse: with the root part's original translation t (its axes are the identity), a child at local (axes A,
-// translation u) keeps its old world placement under the scaled part with axes A/s and translation (u + t)/s - t.
-static float model_scale_for(const char* ship) {
-    for (int i = 0; i < g_modelScaleCount; i++) if (!strcmp(g_modelScales[i].ship, ship)) return g_modelScales[i].scale;
-    return 0;
+// translation u) keeps its old world placement under the scaled part with axes A/s and translation (u + t)/s - t,
+// per axis component (axes A S^-1).
+static const float* model_scale_for(const char* ship) {
+    for (int i = 0; i < g_modelScaleCount; i++) if (!strcmp(g_modelScales[i].ship, ship)) return g_modelScales[i].s;
+    return nullptr;
 }
 static void model_scale_partition(uint64_t part) {
     uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
-    float s = 0; char ship[64] = "";
-    for (uint16_t i = 0; insts && i < n && s == 0; i++) {   // the blueprint names the ship
+    const float* s = nullptr; char ship[64] = "";
+    for (uint16_t i = 0; insts && i < n && !s; i++) {   // the blueprint names the ship
         uint64_t inst = rd<uint64_t>(insts, i * 8);
         if (!inst || rd<uint64_t>(inst, 8) != 0x144ade220) continue;
         const char* name = safe_str(rd<uint64_t>(inst, 0x18));
@@ -1600,7 +1616,7 @@ static void model_scale_partition(uint64_t part) {
         ship[k] = 0;
         s = model_scale_for(ship);
     }
-    if (s == 0) return;
+    if (!s) return;
     int scaled = 0;
     for (uint16_t i = 0; insts && i < n; i++) {
         uint64_t ent = rd<uint64_t>(insts, i * 8);
@@ -1617,27 +1633,27 @@ static void model_scale_partition(uint64_t part) {
             bool ok = true;
             for (int f = 0; f < 12 && ok; f++) {   // right, up, forward and trans, x y z each: 4 vectors 16 bytes apart
                 uint64_t at = c + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
-                ok = leaf_write(at, false, rd<float>(at, 0) * s);
+                ok = leaf_write(at, false, rd<float>(at, 0) * s[f % 3]);   // M S: each row's x, y, z by sx, sy, sz
             }
             if (ok) scaled++;
-            status("model: %s %s scaled %.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
-                   ci == 0x1449fa760 ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
+            status("model: %s %s scaled x%.3g y%.3g z%.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
+                   ci == 0x1449fa760 ? "root part" : "mesh component", s[0], s[1], s[2], rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
             if (ci != 0x1449fa760 || !ok) continue;
             uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
             for (uint32_t j = 0; j < nk && j < 512; j++) {
                 uint64_t k = rd<uint64_t>(kids, j * 8);
                 if (!k || rd<uint64_t>(k, 8) != 0x144a4e5c0) continue;
                 if (!ident) { status("model: %s cockpit left scaled: the root part is rotated, which the inverse here doesn't handle", ship); continue; }
-                for (int f = 0; f < 9; f++) {   // axes / s
+                for (int f = 0; f < 9; f++) {   // axes S^-1
                     uint64_t at = k + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
-                    leaf_write(at, false, rd<float>(at, 0) / s);
+                    leaf_write(at, false, rd<float>(at, 0) / s[f % 3]);
                 }
                 for (int f = 0; f < 3; f++) {   // translation (u + t) / s - t
                     uint64_t at = k + 0x60 + (uint64_t)f * 4;
-                    leaf_write(at, false, (rd<float>(at, 0) + t0[f]) / s - t0[f]);
+                    leaf_write(at, false, (rd<float>(at, 0) + t0[f]) / s[f] - t0[f]);
                 }
-                status("model: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f, axes x%.3g)", ship,
-                       rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68), 1.0 / s);
+                status("model: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f)", ship,
+                       rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68));
             }
         }
     }
@@ -3071,7 +3087,8 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         { HANDLE s = CreateThread(nullptr, 0, sampler, nullptr, 0, nullptr); if (s) CloseHandle(s); }
         if (g_observe) { HANDLE o = CreateThread(nullptr, 0, observe_thread, nullptr, 0, nullptr); if (o) CloseHandle(o); }
         for (int i = 0; i < g_hitboxScaleCount; i++) status("hitbox: %s scale %.3g", g_hitboxScales[i].ship, g_hitboxScales[i].scale);
-        for (int i = 0; i < g_modelScaleCount; i++) status("model: %s scale %.3g", g_modelScales[i].ship, g_modelScales[i].scale);
+        for (int i = 0; i < g_modelScaleCount; i++)
+            status("model: %s scale x%.3g y%.3g z%.3g", g_modelScales[i].ship, g_modelScales[i].s[0], g_modelScales[i].s[1], g_modelScales[i].s[2]);
         AddVectoredExceptionHandler(1, crash_catcher);
         status("crash catcher installed");
 #endif

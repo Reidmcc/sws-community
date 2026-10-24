@@ -350,8 +350,8 @@ int main() {
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
     {   // model scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
-        // and its StarshipEntityData) arrives through the partition creator; [model] ywing=0.5 scales the entity's root part
-        // and mesh component (axes and translation), and leaves its physics component alone
+        // and its StarshipEntityData) arrives through the partition creator; [model] ywing=0.5, 0.25, 2 scales the entity's root
+        // part and mesh component per axis (x, y, z; axes and translation), and leaves its physics component alone
         uint8_t* bp = fake_alloc(0x40); *(uint64_t*)(bp + 8) = 0x144ade220;
         *(const char**)(bp + 0x18) = "Game/Gameplay/Starships/Ywing/Starship_Ywing";
         auto comp = [](uint64_t cls, float sx, float tz) {
@@ -372,13 +372,15 @@ int main() {
         typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part5, 0);
         const float* r = (const float*)(rootPart + 0x30); const float* g = (const float*)(glow + 0x30); const float* p = (const float*)(phys + 0x30);
-        check(r[0] == 0.5f && r[5] == 0.5f && r[10] == 0.5f && r[13] == -0.39f && r[14] == -3.6f && g[0] == 70.0f && g[14] == -6.5f &&
+        auto approx = [](float a, float b) { return fabsf(a - b) < 1e-5f; };
+        check(approx(r[0], 0.5f) && approx(r[5], 0.25f) && approx(r[10], 2.0f) && approx(r[13], -0.195f) && approx(r[14], -14.4f) &&
+              approx(g[0], 70.0f) && approx(g[5], 35.0f) && approx(g[10], 280.0f) && approx(g[13], -0.195f) && approx(g[14], -26.0f) &&
               p[0] == 1.0f && p[13] == -0.78f,
-              "model scale: the Y-wing's root part and mesh component scale about the ship's origin as its blueprint loads; other components untouched");
+              "model scale: the Y-wing's root part and mesh component scale per axis about the ship's origin as its blueprint loads; other components untouched");
         // the cockpit's world placement (root part x cockpit) is what it was: axes 1, translation (0, -0.78, -7.2)
         const float* k = (const float*)(cockpit + 0x30); const float* o = (const float*)(other + 0x30);
         float wy = r[13] + r[5] * k[13], wz = r[14] + r[10] * k[14];
-        check(r[0] * k[0] == 1.0f && r[5] * k[5] == 1.0f && r[10] * k[10] == 1.0f && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
+        check(approx(r[0] * k[0], 1.0f) && approx(r[5] * k[5], 1.0f) && approx(r[10] * k[10], 1.0f) && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
               o[0] == 1.0f && o[14] == 2.0f,
               "model scale: the cockpit keeps its original size and place under the scaled root part; the part's other children untouched");
     }
