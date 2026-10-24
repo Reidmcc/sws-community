@@ -359,7 +359,10 @@ static void load_profile(const wchar_t* dir) {
     status("profile: '%s': no_zero_throttle_pinball=%d no_multidrift=%d fix_zavian_creep_pack=%d, %d value override(s), fingerprint %08x%s",
            g_profileName, (int)g_rulePinball, (int)g_ruleMultidrift, (int)g_ruleZavianCreep, g_overrideCount, g_profileFp,
            g_profileFp ? "" : " (stock protocol)");
-    for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (applied by the value engine, issue #3)", g_overrides[i].key, g_overrides[i].value);
+    for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (%s)", g_overrides[i].key, g_overrides[i].value,
+        !strncmp(g_overrides[i].key, "shipscale_", 10) ? "the ship's size, applied as its blueprint loads, issue #20"
+        : !strncmp(g_overrides[i].key, "materialgrid.", 13) ? "laser and ion damage against capital ships, applied at each hit"
+        : "applied by the value engine, issue #3");
 }
 static const float kCruiseMargin = 1.0f;
 
