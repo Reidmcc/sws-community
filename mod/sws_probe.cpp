@@ -1577,7 +1577,12 @@ static void map_fix_partition(uint64_t part) {
 // forward, trans, 16 bytes apart); scaling its axes and its translation by s scales everything under it about the ship's
 // origin, the point the hitbox scales about. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220,
 // StarshipEntityData 0x1449fad80, PartComponentData 0x1449fa760, MeshComponentData 0x144a035c0. Whether the renderer
-// and the part tree honour a scaled transform is what the experiment finds out.
+// and the part tree honour a scaled transform is what the experiment finds out. (They do, and the hitbox follows the
+// parts: 2026-10-23, Y-wing at 0.5.) The cockpit is the exception: it hangs under the root part, and drawn through a
+// scaled transform its graphics jump around, worse the faster the ship turns (Pseudo, the same night). So the root
+// part's cockpit component (StarshipCockpitComponentData, ClassInfo 0x144a4e5c0, in the part's Components at +0x70) gets
+// the inverse: with the root part's original translation t (its axes are the identity), a child at local (axes A,
+// translation u) keeps its old world placement under the scaled part with axes A/s and translation (u + t)/s - t.
 static float model_scale_for(const char* ship) {
     for (int i = 0; i < g_modelScaleCount; i++) if (!strcmp(g_modelScales[i].ship, ship)) return g_modelScales[i].scale;
     return 0;
@@ -1605,6 +1610,10 @@ static void model_scale_partition(uint64_t part) {
             uint64_t c = rd<uint64_t>(arr, k * 8); if (!c) continue;
             uint64_t ci = rd<uint64_t>(c, 8);
             if (ci != 0x1449fa760 && ci != 0x144a035c0) continue;
+            float t0[3] = { rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68) };   // the original translation
+            bool ident = fabsf(rd<float>(c, 0x30) - 1) < 1e-4f && fabsf(rd<float>(c, 0x44) - 1) < 1e-4f && fabsf(rd<float>(c, 0x58) - 1) < 1e-4f &&
+                         fabsf(rd<float>(c, 0x34)) < 1e-4f && fabsf(rd<float>(c, 0x38)) < 1e-4f && fabsf(rd<float>(c, 0x40)) < 1e-4f &&
+                         fabsf(rd<float>(c, 0x48)) < 1e-4f && fabsf(rd<float>(c, 0x50)) < 1e-4f && fabsf(rd<float>(c, 0x54)) < 1e-4f;
             bool ok = true;
             for (int f = 0; f < 12 && ok; f++) {   // right, up, forward and trans, x y z each: 4 vectors 16 bytes apart
                 uint64_t at = c + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
@@ -1613,6 +1622,23 @@ static void model_scale_partition(uint64_t part) {
             if (ok) scaled++;
             status("model: %s %s scaled %.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
                    ci == 0x1449fa760 ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
+            if (ci != 0x1449fa760 || !ok) continue;
+            uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
+            for (uint32_t j = 0; j < nk && j < 512; j++) {
+                uint64_t k = rd<uint64_t>(kids, j * 8);
+                if (!k || rd<uint64_t>(k, 8) != 0x144a4e5c0) continue;
+                if (!ident) { status("model: %s cockpit left scaled: the root part is rotated, which the inverse here doesn't handle", ship); continue; }
+                for (int f = 0; f < 9; f++) {   // axes / s
+                    uint64_t at = k + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
+                    leaf_write(at, false, rd<float>(at, 0) / s);
+                }
+                for (int f = 0; f < 3; f++) {   // translation (u + t) / s - t
+                    uint64_t at = k + 0x60 + (uint64_t)f * 4;
+                    leaf_write(at, false, (rd<float>(at, 0) + t0[f]) / s - t0[f]);
+                }
+                status("model: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f, axes x%.3g)", ship,
+                       rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68), 1.0 / s);
+            }
         }
     }
     if (!scaled) status("model: %s blueprint loaded, but no part or mesh component found under its entity", ship);
