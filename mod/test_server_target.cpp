@@ -279,9 +279,21 @@ int main() {
     uint8_t* ilist = fake_alloc(16 + 8); *(uint32_t*)(ilist + 12) = 1; *(uint32_t*)(ilist + 16) = 0x66660001; *(int32_t*)(ilist + 20) = 3;
     *(uint64_t*)(weapon + 0x48) = (uint64_t)(ilist + 16);
     uint8_t** insts1 = (uint8_t**)fake_alloc(64); insts1[0] = player.inst; insts1[1] = bot.inst; insts1[2] = other; insts1[3] = blast; insts1[4] = hull; insts1[5] = firePattern;
-    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon; insts2[3] = sd.inst; insts2[4] = dot;
+    // match rules (IncomSchematicAttributesConfig, ClassInfo 0x144adaea0): values only in its registration lists, 8-byte
+    // entries {u32 attribute id, value at +4}: bool +0x38, float +0x40, int +0x48. Creep morale on offense (600676783) and
+    // defense (3544638778), an id no attribute has, the match length (1469253729) and the morale DoT switch (3123731505).
+    *(uint16_t*)(0x144adaea0 + 0x48) = 960; *(uint16_t*)(0x144adaea0 + 0x4a) = 960;
+    uint8_t* rules = fake_alloc(0x100); *(uint64_t*)(rules + 8) = (uint64_t)fake_class(960);
+    *(const char**)(rules + 0x18) = "Game/Levels/PvP/AttributeIds/FleetBattle/IncomSchematicAttributesConfig_FleetBattle";
+    uint8_t* rFloat = fake_alloc(16 + 3 * 8); *(uint32_t*)(rFloat + 12) = 3;
+    *(uint32_t*)(rFloat + 16) = 600676783u; *(float*)(rFloat + 20) = 1.0f; *(uint32_t*)(rFloat + 24) = 3544638778u; *(float*)(rFloat + 28) = 3.0f;
+    *(uint32_t*)(rFloat + 32) = 0x12345678u; *(float*)(rFloat + 36) = 9.0f;
+    uint8_t* rInt = fake_alloc(16 + 8); *(uint32_t*)(rInt + 12) = 1; *(uint32_t*)(rInt + 16) = 1469253729u; *(int32_t*)(rInt + 20) = 1800;
+    uint8_t* rBool = fake_alloc(16 + 8); *(uint32_t*)(rBool + 12) = 1; *(uint32_t*)(rBool + 16) = 3123731505u; rBool[20] = 0;
+    *(uint64_t*)(rules + 0x38) = (uint64_t)(rBool + 16); *(uint64_t*)(rules + 0x40) = (uint64_t)(rFloat + 16); *(uint64_t*)(rules + 0x48) = (uint64_t)(rInt + 16);
+    uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon; insts2[3] = sd.inst; insts2[4] = dot; insts2[5] = rules;
     uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 6;
-    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 5;
+    uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 6;
     uint8_t** parts = (uint8_t**)fake_alloc(64); parts[0] = part1; parts[1] = part2;
     uint8_t* domain = fake_alloc(0x200); InitializeCriticalSection((CRITICAL_SECTION*)(domain + 0x70));
     *(uint8_t***)(domain + 0x138) = parts; *(uint8_t***)(domain + 0x140) = parts + 2;
@@ -467,6 +479,9 @@ int main() {
     check(player.speeds[8] == 150.0f && player.speeds[7] == 120.0f + 3.125f * 7, "value engine: one array element written, its neighbours untouched");
     check(*(float*)(player.inst + 0x2ec) == 10000.0f && player.reg[1] == 1.0f, "value engine: fields without an override untouched");
     check(bot.ab->value == 250.0f, "value engine: vs-AI bot follows the player where their defaults match");
+    check(*(float*)(rFloat + 20) == 2.0f && *(float*)(rFloat + 28) == 3.0f && *(float*)(rFloat + 36) == 9.0f &&
+          *(int32_t*)(rInt + 20) == 2400 && rBool[20] == 1,
+          "match rules: creep morale on offense 1 -> 2, the match length 1800 -> 2400 and the morale DoT on, in the config's lists; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");
@@ -504,7 +519,9 @@ int main() {
               strstr(buf, "; name=HullCustom_Heavy_Xwing") &&
               strstr(buf, "afterburnerchargerate[0]=0.5") && strstr(buf, "afterburnerchargerate[1]=-0.5") &&
               strstr(buf, "[materialgrid]") && strstr(buf, "laserdamage.capitalhull=1") && strstr(buf, "iondamage.capitalshields=1") &&
-              strstr(buf, "[damageovertimesettings_flagship]") && strstr(buf, "splitdamagebetweenstarshipsattribute=1"),
+              strstr(buf, "[damageovertimesettings_flagship]") && strstr(buf, "splitdamagebetweenstarshipsattribute=1") &&
+              strstr(buf, "[incomschematicattributesconfig_fleetbattle]") && strstr(buf, "towpointsgainedforcreepkillwhileonoffense=1") &&
+              strstr(buf, "towpointsgainedforcreepkillwhileondefense=3") && strstr(buf, "matchmaxtime=1800") && strstr(buf, "towenablemoraledot=0"),
               "value engine: defaults.ini records the values as loaded");
         check(n && strstr(buf, "[oldconfig_from_earlier]") && strstr(buf, "foo=1") && strstr(buf, "bar[2]=-0.5") &&
               !strstr(buf, "stalefield") && !strstr(buf, "earlier launch"),
@@ -590,6 +607,9 @@ int main() {
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
                                 "hullcustom_heavy_xwing.healthmax=0.8;",
+                                "incomschematicattributesconfig_fleetbattle.matchmaxtime=2400;",
+                                "incomschematicattributesconfig_fleetbattle.towenablemoraledot=1;",
+                                "incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileonoffense=2;",
                                 "materialgrid.laserdamage.capitalhull=0.05;",
                                 "shipscale_tiefighter.scale=1.5;", "shipscale_ywing.scale=0.5;",
                                 "starshipmovementconfig_stardestroyer.afterburnermaxspeed=400;",

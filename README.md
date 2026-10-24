@@ -144,6 +144,12 @@ the AI "creep" ships are left alone.
 each ship): it resizes the ship's model and its laser hitbox together, for the player ship and its AI versions. How it
 works, and the sizes closest to canon for every ship: [docs/ship-size.md](docs/ship-size.md).
 
+**Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
+creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
+the kickoff and phase sizes of the morale bar, its optional drain over time, the match and kickoff timers, respawn time and
+the passive-to-aggressive creep ratio; Dogfight's score to win, match time and pickup timings. Keys look like
+`incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileondefense` ("tow" is the tug-of-war morale bar).
+
 **Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
 a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match
 modifiers allow), down to 0.1× the lowest (0 where the game ships 0), with tighter bounds where they're known: speeds

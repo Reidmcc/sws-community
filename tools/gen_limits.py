@@ -38,6 +38,10 @@ OUT = os.path.join(BUILD, "limits.ini")
 COMPONENTS = ["enginecustom", "hullcustom", "shieldcustom"]   # engine / hull / shield components: one category
 # laser and ion damage against capital ships: multipliers on material-grid cells (the DLL's grid settings, stock 1)
 GRID = ["materialgrid"]
+# match rules: Fleet Battles' and Dogfight's IncomSchematicAttributesConfig (morale per kill, phase sizes, timers),
+# their values in registration lists named by mod/schematic_attrs.h
+MATCH = ["incomschematicattributesconfig"]
+SCHEMATIC_H = os.path.join(PROJECT, "mod", "schematic_attrs.h")
 # capital ships and their turrets (each its own category; the same list is in sws_probe.cpp and app/Core.cs)
 CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsubsystemsettings",
            "capitalshipweakpointssettings", "capitalshipweaponsubsystemsettings", "capitalshipenginewashdamageareasettings",
@@ -45,7 +49,7 @@ CAPITAL = ["capitalshiphealthsettings", "damagesectionsettings", "capitalshipsub
            "turrethealthsettings", "turretaimingsettings", "turrettargetcomputersettings",
            "turretfirepatternsettingsasset"]
 CATEGORIES = ["starshipmovementconfig", "starshipshielddata", "starshiphealthdamagedata", "starshippowermanagement",
-              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL + GRID
+              "starshipweaponconfig", "bulletconfig", "missileconfig", "explosionconfig"] + COMPONENTS + CAPITAL + GRID + MATCH
 # Capital ships and turrets have their own movement, weapon, bullet, missile and explosion configs, of the same types
 # as the starfighters'. Pooled together, a Star Destroyer's turn torque would set the X-wing's ceiling, so those configs
 # are limited on their own: <type>_capital.<field>, and listed under [capital] for the DLL and the app.
@@ -115,12 +119,17 @@ def int_fields():
     names = set()
     for m in re.finditer(r'\{"([a-z0-9]+)", 0x[0-9a-f]+, (?:4|11|12), ', open(TYPES_H, encoding="utf-8").read()):
         names.add(m.group(1))
-    return names
+    return names | schematic_names(1) | schematic_names(2)
+
+
+def schematic_names(kind):
+    """match-rule attribute names registered as integers (kind 1) or yes/no (kind 2)"""
+    return set(re.findall(r'\{ \d+u, "([a-z0-9_]+)", "[^"]*", ' + str(kind) + r' \}', open(SCHEMATIC_H, encoding="utf-8").read()))
 
 
 def bool_fields():
     """field names the type table marks as yes/no (kinds 11 and 12)"""
-    return set(re.findall(r'\{"([a-z0-9]+)", 0x[0-9a-f]+, (?:11|12), ', open(TYPES_H, encoding="utf-8").read()))
+    return set(re.findall(r'\{"([a-z0-9]+)", 0x[0-9a-f]+, (?:11|12), ', open(TYPES_H, encoding="utf-8").read())) | schematic_names(2)
 
 
 def limit(key, vals, is_int):
