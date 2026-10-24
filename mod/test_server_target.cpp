@@ -430,7 +430,11 @@ int main() {
         for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++) {
             *(float*)(pc + 0x40 + i * 16 + k * 4) = decoy[i * 3 + k]; *(float*)(pc + 0x80 + i * 16 + k * 4) = frame[i * 3 + k]; }
         *(uint32_t*)(info + 0x20) = (3u << 20) | 0x80; *(int32_t*)(info + 0x58) = 2; *(float*)(info + 0x84) = 27.0f;
-        *(float*)(info + 0x70) = 9000; *(float*)(info + 0x90) = -9000;
+        *(float*)(info + 0x78) = 1.0f; *(float*)(info + 0x90) = -9000;   // +0x70 a unit direction, as in the game
+        // the game's own decoy (2026-10-23 flight): an identity block at the origin, reached through the component's pointer
+        // at +0x10, that a unit direction sits 1 m from; it must be passed over
+        uint8_t* ident = fake_alloc(0x100); *(uint64_t*)(comp + 0x10) = (uint64_t)ident;
+        *(float*)(ident + 0x30) = 1; *(float*)(ident + 0x44) = 1; *(float*)(ident + 0x58) = 1;
         typedef uint64_t(__fastcall* shiphit_t)(uint64_t, uint64_t, uint64_t);
         uint8_t* out = fake_alloc(0x40);
         *(float*)(info + 0x30) = 1003; *(float*)(info + 0x34) = 52; *(float*)(info + 0x38) = -2001;

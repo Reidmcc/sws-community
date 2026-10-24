@@ -13,7 +13,8 @@ INFO = re.compile(r"hit: (\S+): (transform found .*|no transform found .*)")
 
 
 def ship_key(asset):
-    k = asset.lower().replace("starshiphealthdamagedata_", "")
+    m = re.search(r"starships/([^/]+)/", asset.lower())   # Game/Gameplay/Starships/<Ship>/Config/...
+    k = m.group(1) if m else asset.lower().replace("starshiphealthdamagedata_", "")
     for suf in ("_bot_pvb", "_pvb", "_bot", "_ai", "_sp"):
         k = k.replace(suf, "")
     return k

@@ -1876,7 +1876,8 @@ static uint64_t __fastcall h_sspawn(uint64_t ent, uint64_t req) {
 // StarshipHealthDamageData asset, found through the component's data (its HealthDamageDataAsset is at +0x90).
 typedef uint64_t(__fastcall* shiphit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shiphit_t o_shiphit;
-struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[64]; int misses; };
+struct HitShip { uint64_t comp; int obj, ptrOff, off, cand; char name[160]; int misses; };
+static volatile LONG g_hitRaw;   // the first few hits' info vectors are logged raw
 static HitShip g_hitShips[512]; static int g_hitShipCount; static SRWLOCK g_hitLock = SRWLOCK_INIT;
 static const uint32_t kHitCand[3] = { 0x30, 0x70, 0x90 };
 static const char* kHitObj[3] = { "component", "physics component", "physics body" };
@@ -1916,9 +1917,13 @@ static bool hit_find(uint64_t comp, uint64_t info, HitShip& s) {
         for (int off = 0; off < 0x400; off += 16) {
             float m[12];
             if (!hit_frame(b + off, m)) continue;
+            // a frame at the world origin is a local or identity block, not a ship flying in a match (2026-10-23: the
+            // first flight matched an identity block at the origin against a unit direction in the info)
+            if (m[9] * m[9] + m[10] * m[10] + m[11] * m[11] < 4.0f) continue;
             for (int c = 0; c < 3; c++) {
                 float p[3] = { rd<float>(info, kHitCand[c]), rd<float>(info, kHitCand[c] + 4), rd<float>(info, kHitCand[c] + 8) };
-                if (hit_dist2(m, p) < 30.0f * 30.0f && (p[0] != 0 || p[1] != 0 || p[2] != 0)) {
+                if (p[0] * p[0] + p[1] * p[1] + p[2] * p[2] < 4.0f) continue;   // a direction, not a point
+                if (hit_dist2(m, p) < 30.0f * 30.0f) {
                     s.obj = obj; s.ptrOff = ptrOff < 0 ? -1 : ptrOff; s.off = off; s.cand = c;
                     char where[96];
                     if (s.ptrOff >= 0) sprintf_s(where, "the %s's pointer at +%#x, then +%#x", kHitObj[obj], s.ptrOff, off);
@@ -1945,6 +1950,11 @@ static void hit_name(uint64_t comp, char* out, size_t n) {
 }
 static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info) {
     if (g_hitLog && comp && info) {
+        if (InterlockedIncrement(&g_hitRaw) <= 8)
+            status("hit: raw info +0x30 (%.2f %.2f %.2f) +0x40 (%.3f %.3f %.3f) +0x70 (%.3f %.3f %.3f) +0x90 (%.3f %.3f %.3f) part %d",
+                   rd<float>(info, 0x30), rd<float>(info, 0x34), rd<float>(info, 0x38), rd<float>(info, 0x40), rd<float>(info, 0x44),
+                   rd<float>(info, 0x48), rd<float>(info, 0x70), rd<float>(info, 0x74), rd<float>(info, 0x78), rd<float>(info, 0x90),
+                   rd<float>(info, 0x94), rd<float>(info, 0x98), rd<int32_t>(info, 0x58));
         AcquireSRWLockExclusive(&g_hitLock);
         HitShip* s = nullptr;
         for (int i = 0; i < g_hitShipCount && !s; i++) if (g_hitShips[i].comp == comp) s = &g_hitShips[i];
