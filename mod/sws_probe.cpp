@@ -532,6 +532,7 @@ static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
+static bool g_creepTest = false;        // [server] creep_test: 1 = the creep rework prototype (creep_test_scan)
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
@@ -576,6 +577,7 @@ static void read_server_ini() {
       g_observe = g_record && GetPrivateProfileIntW(L"server", L"observe", 1, ini) != 0;   // observation writes records
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_creepTest = GetPrivateProfileIntW(L"server", L"creep_test", 0, ini) != 0;
       g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -1742,10 +1744,98 @@ static uint64_t __fastcall h_cweaponctor(uint64_t self, uint64_t a2, uint64_t a3
     uint64_t r = o_cweaponctor(self, a2, a3, a4); if (g_observe) obs_register(self, 4); return r; }
 
 
+// ---- Creep rework prototype (2026-10-24; [server] creep_test=1, a test switch, not a profile rule) -------------------
+// Do bomber creep attack capital ships? Every Imperial creep spawn point (StarshipSpawnReferenceObjectData, ClassInfo
+// 0x1449fdc00: Blueprint +0xC0, Config +0x1F0) that spawns Starship_TieFighter_AI is pointed at Starship_TieBomber_AI with
+// the vs-AI bots' torpedo-and-bomb loadout; the creep squadrons (IncomSquadronAISquadronEntityData 0x144a028c0 in the
+// pf_pvp_creeplogic_* prefabs: TargetingRules +32, its EngagementMode +32 and MaxSearchRadius +40) get the engagement mode
+// their own EngagementModeOverride (+112) holds ("Aggressive") and a 3000 m search radius, as the vs-AI bots have; and the
+// squad behaviour bhv_aisquadron_basic_imperial's missile input defaults to on (its instance 57, a BoolEntityData
+// 0x144a58840, DefaultValue +36: the bots feed that input, creep don't, so creep never fire missiles). Done on the 2-second
+// scan, after the engine has resolved the level's references (written earlier, the resolution would put them back).
+static const char* inst_leaf(uint64_t inst, char* out, size_t cap) {   // an Asset's name after its last '/', copied
+    const char* n = safe_str(rd<uint64_t>(inst, 0x18)); const char* s = strrchr(n, '/');
+    strncpy_s(out, cap, s ? s + 1 : n, _TRUNCATE); return out;
+}
+template <typename F> static void walk_partitions(F fn) {
+    if (!committed(0x1442d18c8)) return;
+    typedef void (__fastcall* cs_t)(uint64_t cs);
+    cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
+    if (!enter || !leave) return;
+    uint64_t domains[64]; int nd = 0;
+    for (int c = 0; c < 0xbbe; c++) {
+        uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
+        uint64_t dom = rd<uint64_t>(entry, 0x68); if (!dom) continue;
+        bool dup = false; for (int i = 0; i < nd; i++) if (domains[i] == dom) dup = true;
+        if (dup || nd >= 64) continue;
+        domains[nd++] = dom;
+        enter(dom + 0x70);
+        uint64_t pb = rd<uint64_t>(dom, 0x138), pe = rd<uint64_t>(dom, 0x140);
+        for (uint64_t pp = pb; pp && pp < pe; pp += 8) {
+            uint64_t part = rd<uint64_t>(pp, 0); if (!part) continue;
+            uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+            if (insts && n) fn(insts, n);
+        }
+        leave(dom + 0x70);
+    }
+}
+static bool write_u64(uint64_t at, uint64_t v) { __try { *(uint64_t*)at = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+static void creep_test_scan() {
+    if (!g_creepTest) return;
+    static uint64_t bomberBp, bomberCfg; static int swapped, squads; static bool auxOn, auxWarned;
+    char leaf[128];
+    walk_partitions([&](uint64_t insts, uint16_t n) {   // the targets: partition roots (Assets) by name
+        uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
+        inst_leaf(root, leaf, sizeof leaf);
+        if (!bomberBp && rd<uint64_t>(root, 8) == 0x144ade220 && !_stricmp(leaf, "Starship_TieBomber_AI")) bomberBp = root;
+        if (!bomberCfg && !_stricmp(leaf, "StarshipConfigCollection_TieBomber_AI_PvB_Bot_Bomb_Torpedo_HeavyHull")) bomberCfg = root;
+    });
+    walk_partitions([&](uint64_t insts, uint16_t n) {
+        uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
+        inst_leaf(root, leaf, sizeof leaf);
+        bool creepLogic = !_strnicmp(leaf, "pf_pvp_creeplogic", 17);
+        bool behaviour = !_stricmp(leaf, "bhv_aisquadron_basic_imperial");
+        // a blueprint's own objects aren't in the partition's list (only its root is): Objects +72, PropertyConnections +40
+        // (32-byte entries: Source +0, Target +8, SourceFieldId +16, TargetFieldId +20), counts at -4
+        if (behaviour && !auxOn) {
+            uint64_t pc = rd<uint64_t>(root, 40); uint32_t np = pc ? rd<uint32_t>(pc - 4, 0) : 0; uint64_t pdv = 0, flag = 0;
+            for (uint32_t k = 0; k < np && k < 8192 && !pdv; k++)   // the missile input into its default-value node
+                if (rd<int32_t>(pc, k * 32 + 16) == 1336394533 && rd<int32_t>(pc, k * 32 + 20) == 1658462601) pdv = rd<uint64_t>(pc, k * 32 + 8);
+            for (uint32_t k = 0; k < np && k < 8192 && pdv && !flag; k++)   // what feeds that node's default
+                if (rd<uint64_t>(pc, k * 32 + 8) == pdv && rd<int32_t>(pc, k * 32 + 20) == 2066049125) flag = rd<uint64_t>(pc, k * 32);
+            if (flag && rd<uint64_t>(flag, 8) == 0x144a58840 && rd<uint8_t>(flag, 36) == 0 && leaf_write(flag + 36, false, 1, true)) {
+                auxOn = true; status("creep test: the squad behaviour's missile input now defaults to on (creep may fire missiles and torpedoes)"); }
+            else if (!auxWarned) { auxWarned = true; status("creep test: the missile default wasn't found as expected (%u connections, node %llx, flag %llx); missiles left off", np, pdv, flag); }
+        }
+        if (creepLogic) {
+            uint64_t objs = rd<uint64_t>(root, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
+            for (uint32_t k = 0; k < no && k < 4096; k++) {
+                uint64_t o = rd<uint64_t>(objs, k * 8);
+                if (!o || rd<uint64_t>(o, 8) != 0x144a028c0 || rd<int32_t>(o, 32) == rd<int32_t>(o, 112)) continue;
+                leaf_write(o + 32, true, rd<int32_t>(o, 112)); leaf_write(o + 40, false, 3000.0);
+                status("creep test: creep squadron in %s now engages as its override says (%d) within 3000 m", leaf, rd<int32_t>(o, 112)); squads++;
+            }
+        }
+        for (uint16_t i = 0; i < n; i++) {
+            uint64_t inst = rd<uint64_t>(insts, i * 8); if (!inst) continue;
+            uint64_t ci = rd<uint64_t>(inst, 8);
+            if (ci == 0x1449fdc00 && bomberBp && bomberCfg) {
+                uint64_t bp = rd<uint64_t>(inst, 0xC0); if (!bp || bp == bomberBp) continue;
+                char bl[64]; inst_leaf(bp, bl, sizeof bl);
+                if (_stricmp(bl, "Starship_TieFighter_AI")) continue;
+                if (write_u64(inst + 0xC0, bomberBp) && write_u64(inst + 0x1F0, bomberCfg)) {
+                    swapped++;
+                    status("creep test: spawn point %llx (team %d) now spawns TIE bombers with the torpedo-and-bomb loadout (%d so far)", inst, rd<int32_t>(inst, 432), swapped);
+                }
+            }
+        }
+    });
+}
+
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
     { static ULONGLONG lastScan; ULONGLONG nowScan = GetTickCount64();
-      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); } }
+      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_test_scan(); } }
     // phases: 0 waiting for the delay; 1 startup data loading; 2 game config loading; 3 spawned (or given up)
     static ULONGLONG first, phaseStart, lastNote; static int phase; static bool announced, pumping;
     static uint32_t handle; static const char* bundle;
