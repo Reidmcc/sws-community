@@ -334,7 +334,30 @@ int main() {
     auto onePart = [](uint8_t* root) { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = root; uint8_t* p = fake_alloc(0x40);
                                        *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
     parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = onePart(ywingAi); parts[5] = onePart(awingAi);
-    *(uint8_t***)(domain + 0x140) = parts + 6;
+    // creep missiles ([creep] missiles=1): bhv_aisquadron_basic_imperial's wiring, cut down. The AllowMissileFiring input
+    // (1336394533) into a PropertyDefaultValue's InValue (1658462601), whose DefaultValue (2066049125) a Bool feeds; a Bool
+    // into a node that DogfighterInfo.IsBot (215512070) also feeds (the bot test); the SelectFloat (InputSelect +48) whose
+    // Out (193453899) is the missile rule's MinTargetDistance (-1814841251); and a decoy: another input's default Bool
+    // (DisableBombs, -737100000), which must stay as it is.
+    auto bhvObj = [](uint64_t cls) { uint8_t* o = fake_alloc(0x40); *(uint64_t*)(o + 8) = cls; return o; };
+    uint8_t* bhvIface = bhvObj(0x144999100); uint8_t* bhvPdv = bhvObj(0x144999101); uint8_t* bhvPdv2 = bhvObj(0x144999101);
+    uint8_t* allowBool = bhvObj(0x144a58840); uint8_t* flagBool = bhvObj(0x144a58840); uint8_t* bombsBool = bhvObj(0x144a58840);
+    uint8_t* orNode = bhvObj(0x144999102); uint8_t* dogInfo = bhvObj(0x144999103); uint8_t* minSel = bhvObj(0x144999104); uint8_t* rule = bhvObj(0x144999105);
+    struct PcEntry { uint8_t* s; uint8_t* d; int32_t sf, tf; };
+    const PcEntry bhvPc[] = { { bhvIface, bhvPdv, 1336394533, 1658462601 }, { allowBool, bhvPdv, 225375086, 2066049125 },
+                              { minSel, rule, 193453899, -1814841251 }, { flagBool, orNode, 225375086, 193450867 },
+                              { dogInfo, orNode, 215512070, 193450864 }, { bhvIface, bhvPdv2, -737100000, 1658462601 },
+                              { bombsBool, bhvPdv2, 225375086, 2066049125 } };
+    const int nBhvPc = sizeof bhvPc / sizeof bhvPc[0];
+    uint8_t* bhvPcArr = fake_alloc(16 + nBhvPc * 32); *(uint32_t*)(bhvPcArr + 12) = nBhvPc;
+    for (int i = 0; i < nBhvPc; i++) {
+        uint8_t* e = bhvPcArr + 16 + i * 32; *(uint8_t**)e = bhvPc[i].s; *(uint8_t**)(e + 8) = bhvPc[i].d;
+        *(int32_t*)(e + 16) = bhvPc[i].sf; *(int32_t*)(e + 20) = bhvPc[i].tf;
+    }
+    uint8_t* bhvRoot = fake_alloc(0x80); *(uint64_t*)(bhvRoot + 8) = 0;
+    *(const char**)(bhvRoot + 0x18) = "Game/AI/SquadronAI/Behaviours/Bhv_AISquadron_Basic_Imperial"; *(uint64_t*)(bhvRoot + 40) = (uint64_t)(bhvPcArr + 16);
+    parts[6] = onePart(bhvRoot); parts[7] = onePart(creepPrefab);
+    *(uint8_t***)(domain + 0x140) = parts + 8;
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
     wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini");
     {   // an earlier launch's file: a config this run never loads (must be carried over) and a stale section for one it
@@ -379,6 +402,53 @@ int main() {
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part4, 0);
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
+    }
+    {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition
+        // creator. Its property connections: the phase (FrontlineIndex, 862952468) into a debug display (field 5685821) and
+        // into the SelectInt that picks the path (858290427); its squadron (0x144a028c0) is Defensive within 500 m, its
+        // override Aggressive (0), one target list (+104) of the stock creep's five scores. Afterwards the debug connection
+        // drives the squadron's list index (93732099), and the squadron has seven lists: Imperial offense in phases 0 and 1,
+        // face-off in 2, 5 and 6, defense in 3 and 4. The stock list itself is left as it was.
+        auto dc = [](size_t size) { uint8_t* o = fake_alloc(16 + size) + 16; *(uint64_t*)o = 0x143999000; *(uint32_t*)(o + 16) = 1; return o; };
+        const uint32_t tags[5] = { 262144, 36, 20, 2, 524292 }; const float prios[5] = { 5, 3, 2, 2, 3 };
+        uint8_t* sArr = fake_alloc(16 + 5 * 8) + 16; *(uint32_t*)(sArr - 4) = 5;
+        for (int k = 0; k < 5; k++) { uint8_t* s = dc(48); *(uint32_t*)(s + 40) = tags[k]; *(float*)(s + 44) = prios[k]; ((uint8_t**)sArr)[k] = s; }
+        uint8_t* stockSet = dc(32); *(uint8_t**)(stockSet + 24) = sArr;
+        uint8_t* lst = fake_alloc(16 + 8) + 16; *(uint32_t*)(lst - 4) = 1; ((uint8_t**)lst)[0] = stockSet;
+        uint8_t* squad = fake_alloc(0x100); *(uint64_t*)(squad + 8) = 0x144a028c0;
+        *(int32_t*)(squad + 32) = 1; *(float*)(squad + 40) = 500.0f; *(int32_t*)(squad + 112) = 0; *(uint8_t*)(squad + 139) = 1;
+        *(uint8_t**)(squad + 104) = lst;
+        uint8_t* debugDisp = fake_alloc(0x100); uint8_t* selInt = fake_alloc(0x40); uint8_t* iface = fake_alloc(0x40);
+        uint8_t* pcArr = fake_alloc(16 + 2 * 32) + 16; *(uint32_t*)(pcArr - 4) = 2;
+        *(uint8_t**)pcArr = iface; *(uint8_t**)(pcArr + 8) = debugDisp; *(int32_t*)(pcArr + 16) = 862952468; *(int32_t*)(pcArr + 20) = 5685821; *(int32_t*)(pcArr + 24) = 3;
+        *(uint8_t**)(pcArr + 32) = iface; *(uint8_t**)(pcArr + 40) = selInt; *(int32_t*)(pcArr + 48) = 862952468; *(int32_t*)(pcArr + 52) = 858290427;
+        uint8_t* objArr = fake_alloc(16 + 3 * 8) + 16; *(uint32_t*)(objArr - 4) = 3;
+        ((uint8_t**)objArr)[0] = debugDisp; ((uint8_t**)objArr)[1] = squad; ((uint8_t**)objArr)[2] = selInt;
+        uint8_t* bp = fake_alloc(0x80); *(uint64_t*)(bp + 8) = 0;
+        *(const char**)(bp + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_CreepLogic_Exploit_TieFighters";
+        *(uint8_t**)(bp + 40) = pcArr; *(uint8_t**)(bp + 72) = objArr;
+        uint8_t** insts6 = (uint8_t**)fake_alloc(16); insts6[0] = bp;
+        uint8_t* part6 = fake_alloc(0x40); *(uint8_t***)(part6 + 0x20) = insts6; *(uint16_t*)(part6 + 0x28) = 1;
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part6, 0);
+        uint8_t* nl = *(uint8_t**)(squad + 104);
+        // a list's priority for a tag (-1: not listed), and whether it still has the generic capital-ship score
+        auto prio = [](uint8_t* set, uint32_t tag) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
+                                                     for (uint32_t k = 0; k < n; k++) { uint8_t* s = ((uint8_t**)a)[k]; if (*(uint32_t*)(s + 40) == tag) return *(float*)(s + 44); }
+                                                     return -1.0f; };
+        bool lists = nl != lst && *(uint32_t*)(nl - 4) == 7;
+        uint8_t* L[7] = {}; for (int p = 0; lists && p < 7; p++) L[p] = ((uint8_t**)nl)[p];
+        bool shape = lists && L[0] == L[1] && L[2] == L[5] && L[2] == L[6] && L[3] == L[4] && L[0] != L[2] && L[2] != L[3] && L[0] != L[3];
+        bool offense = shape && prio(L[0], 1u << 29) == 4 && prio(L[0], 1u << 22) == 3 && prio(L[0], 1u << 28) == 2 && prio(L[0], 2) < 0 && prio(L[0], 262144) == 5 && prio(L[0], 36) == 3;
+        bool faceoff = shape && prio(L[2], 1u << 28) == 4 && prio(L[2], 1u << 29) == 0 && prio(L[2], 1u << 22) == 0 && prio(L[2], 2) < 0;
+        bool defense = shape && prio(L[3], 1u << 28) == 2 && prio(L[3], 1u << 29) == 0 && prio(L[3], 1u << 22) == 0;
+        check(offense && faceoff && defense && *(uint32_t*)(*(uint8_t**)(L[0] + 24) + 0) != 0 && *(uint32_t*)(L[0] + 16) >= 0x10000000,
+              "aggressive creep: the TIE creep squadron gets a target list per phase (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
+        check(*(uint8_t**)(pcArr + 8) == squad && *(int32_t*)(pcArr + 20) == 93732099 && *(int32_t*)(pcArr + 16) == 862952468 &&
+              *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
+              *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 2000.0f && *(int32_t*)(squad + 124) == 2 &&
+              *(uint32_t*)(sArr - 4) == 5 && *(uint32_t*)(((uint8_t**)sArr)[3] + 40) == 2 && *(uint8_t**)(stockSet + 24) == sArr,
+              "aggressive creep: the phase drives the list index, the squadron is Aggressive within 2000 m, the path connection and the stock list untouched");
     }
     {   // ship scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
         // and its StarshipEntityData) arrives through the partition creator; the StandIn profile's shipscale_ywing.scale=0.5
@@ -526,6 +596,8 @@ int main() {
           "match rules: creep morale on offense 1 -> 2, the match length 1800 -> 2400 and the morale DoT on, in the config's lists; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
+    check(allowBool[36] == 1 && flagBool[36] == 1 && *(int32_t*)(minSel + 48) == 1 && bombsBool[36] == 0,
+          "creep missiles: the squad behaviour's missile default and bot test on, the minimum distance on the bots' 200 m; another input's default untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");
     check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
@@ -644,7 +716,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.missiles=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

@@ -175,6 +175,10 @@ static const char* kCreepShips[2][4] = { { "xwing", "ywing", "awing", "uwing" },
 static const char* kCreepFaction[2] = { "rebel", "imperial" };
 static int g_creepPack[2][3];
 static bool g_creepOn;
+// [creep] aggressive = 1 (creep_ai_partition): creep engage like the vs-AI bots, with target priorities by phase;
+// missiles = 1 (creep_behaviour_scan): creep fire missiles and torpedoes. Each in the fingerprint when on.
+static bool g_creepAggressive, g_creepMissiles;
+static uint8_t* g_creepPool;   // the creep's own target lists (creep_alloc), made when aggressive is on
 
 // Profiles (issue #2). server.ini [server] profile=<name> selects profiles\<name>.ini beside the DLL:
 //   [rules]   no_zero_throttle_pinball, no_multidrift, fix_zavian_creep_pack (missing = off; the map fix is in the
@@ -192,7 +196,7 @@ static char g_profileName[64] = "(rules.ini)";
 static uint32_t g_profileFp;
 static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
 static uint32_t profile_fingerprint() {
-    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount && !g_creepOn) return 0;
+    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles) return 0;
     int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
     for (int i = 0; i < g_overrideCount; i++) order[i] = i;
     for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
@@ -204,6 +208,8 @@ static uint32_t profile_fingerprint() {
     for (int f = 0; f < 2; f++)   // creep packs: only the ones changed from the stock ship
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) { sprintf_s(b, "creep.%s_pack%d=%s;", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]); h = fnv1a(h, b); }
+    if (g_creepAggressive) h = fnv1a(h, "creep.aggressive=1;");
+    if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
     return h ? h : 1;
 }
@@ -384,6 +390,9 @@ static void load_profile(const wchar_t* dir) {
                     if (found < 0) { status("profile: [creep] %ls = '%ls' isn't one of the %s ships; the stock ship stays", key, v, kCreepFaction[f]); continue; }
                     g_creepPack[f][p] = found; if (found) g_creepOn = true;
                 }
+            g_creepAggressive = GetPrivateProfileIntW(L"creep", L"aggressive", 0, pf) != 0;
+            g_creepMissiles = GetPrivateProfileIntW(L"creep", L"missiles", 0, pf) != 0;
+            if (g_creepAggressive && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
             g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
@@ -415,6 +424,8 @@ static void load_profile(const wchar_t* dir) {
     for (int f = 0; f < 2; f++)
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
+    if (g_creepAggressive) status("  creep: aggressive within 2000 m, with targets by phase");
+    if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
     for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (%s)", g_overrides[i].key, g_overrides[i].value,
         !strncmp(g_overrides[i].key, "shipscale_", 10) ? "the ship's size, applied as its blueprint loads, issue #20"
         : !strncmp(g_overrides[i].key, "materialgrid.", 13) ? "laser and ion damage against capital ships, applied at each hit"
@@ -1705,12 +1716,105 @@ static void model_scale_partition(uint64_t part) {
     }
     if (!scaled) status("ship scale: %s blueprint loaded, but no part or mesh component found under its entity", ship);
 }
+// ---- Aggressive creep that keep to the phases ([creep] aggressive=1) ------------------------------------------------
+// Stock creep fly Defensive within 500 m, so they fight only what their path brings near (2026-10-24: bomber creep mostly
+// idle); Aggressive within 3000 m sent them off the opener's paths at the enemy frigates. The vs-AI bots are Aggressive
+// at 2000-3000 m and still keep to the phases: each phase enables a configuration with its own target scores (kickoff:
+// only the small capital ship among capital ships; offense: the frigates). The creep get the same in their own data
+// (notes/creep-ai.md). The maps place the creep logic prefabs PF_PvP_CreepLogic_Exploit_XWings / _TieFighters, which take
+// the match's phase, FrontlineIndex (field 862952468: 0 Rebel zone 2, 1 Rebel zone 1, 2 face-off, 3 Imperial zone 1,
+// 4 Imperial zone 2, 5 overtime, 6 transition), and also feed it to a debug display (PropertyDebugEntityData, field
+// 5685821). That property connection (the blueprint's +40, 32-byte entries: Source +0, Target +8, SourceFieldId +16,
+// TargetFieldId +20, count at -4) is pointed at the creep squadron's TargetPrioritisationSettingsIndex (93732099)
+// instead, the way the campaign's levels drive that index from their logic, and the squadron (IncomSquadronAISquadron-
+// EntityData 0x144a028c0, in the blueprint's Objects at +72) gets seven target lists (TargetPrioritisationSettingsList
+// +104), one per phase: offense (the enemy frigates, then their flagship), face-off and transition (the small capital
+// ship), defense (no enemy capital ship). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
+// and adds frigate (tag bit 29), flagship (22) and small capital ship (28) scores. The squadron engages as its own
+// EngagementModeOverride (+112, Aggressive) says, within 2000 m (TargetingRules +32: EngagementMode +32, search radius
+// +40). Done as the prefab's partition loads, before a squadron is built from it. The lists and scores are copies of the
+// stock ones (TargetPrioritisationSettings: scores array +24; TargetPrioritisationScore: TargetTags +40, Priority +44;
+// a DataContainer's refcount is at +16) in memory kept for the process's life, their refcounts set so they never run out.
+static bool write_u64(uint64_t at, uint64_t v) { __try { *(uint64_t*)at = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+static uint64_t creep_alloc(size_t n) {
+    static volatile LONG64 used;
+    if (!g_creepPool) return 0;
+    LONG64 sz = (LONG64)((n + 15) & ~(size_t)15), at = InterlockedExchangeAdd64(&used, sz);
+    return at + sz <= (1 << 20) ? (uint64_t)(g_creepPool + at) : 0;
+}
+static uint64_t creep_copy(uint64_t obj, size_t size) {   // a DataContainer's copy, with the 16 bytes (its GUID) ahead of it
+    uint64_t m = creep_alloc(16 + size); if (!m) return 0;
+    __try { memcpy((void*)m, (void*)(obj - 16), 16 + size); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    *(uint32_t*)(m + 16 + 16) = 0x40000000;
+    return m + 16;
+}
+static uint64_t creep_array(uint32_t n) {   // an array of pointers, its count at -4
+    uint64_t m = creep_alloc(16 + n * 8ull); if (!m) return 0;
+    *(uint32_t*)(m + 12) = n; return m + 16;
+}
+static void creep_ai_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
+    const char* name = safe_str(rd<uint64_t>(root, 0x18)); const char* leaf = strrchr(name, '/'); leaf = leaf ? leaf + 1 : name;
+    if (_strnicmp(leaf, "pf_pvp_creeplogic", 17)) return;
+    char low[96]; strncpy_s(low, leaf, _TRUNCATE); _strlwr_s(low);
+    int fac = strstr(low, "xwings") ? 0 : strstr(low, "tiefighters") ? 1 : -1; if (fac < 0) return;
+    uint64_t objs = rd<uint64_t>(root, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
+    uint64_t squad = 0; int squads = 0;
+    for (uint32_t k = 0; k < no && k < 4096; k++) { uint64_t o = rd<uint64_t>(objs, k * 8); if (o && rd<uint64_t>(o, 8) == 0x144a028c0) { squad = o; squads++; } }
+    uint64_t pc = rd<uint64_t>(root, 40); uint32_t np = pc ? rd<uint32_t>(pc - 4, 0) : 0;
+    uint64_t conn = 0; int conns = 0;
+    for (uint32_t k = 0; k < np && k < 8192; k++)
+        if (rd<int32_t>(pc, k * 32 + 16) == 862952468 && rd<int32_t>(pc, k * 32 + 20) == 5685821) { conn = pc + k * 32ull; conns++; }
+    uint64_t list = squad ? rd<uint64_t>(squad, 104) : 0; uint32_t nl = list ? rd<uint32_t>(list - 4, 0) : 0;
+    uint64_t stock = nl == 1 ? rd<uint64_t>(list, 0) : 0;
+    uint64_t sarr = stock ? rd<uint64_t>(stock, 24) : 0; uint32_t ns = sarr ? rd<uint32_t>(sarr - 4, 0) : 0;
+    if (squads != 1 || conns != 1 || !stock || !ns || ns > 32) {
+        status("creep: %s isn't laid out as expected (%d squadron(s), %d phase connection(s), %u target list(s), %u score(s)); its creep keep the stock engagement",
+               leaf, squads, conns, nl, ns);
+        return;
+    }
+    struct Extra { uint32_t tags; float prio[3]; };   // priority on offense, face-off, defense
+    static const Extra kExtra[3] = { { 1u << 29, { 4, 0, 0 } },     // the frigates
+                                     { 1u << 22, { 3, 0, 0 } },     // the flagship, once the frigates are gone
+                                     { 1u << 28, { 2, 4, 2 } } };   // the small capital ship: the corvette or the Raider
+    uint64_t set[3] = {};
+    for (int r = 0; r < 3; r++) {
+        uint64_t arr = creep_array(ns + 3), tmpl = 0; uint32_t m = 0; if (!arr) break;
+        for (uint32_t k = 0; k < ns; k++) {
+            uint64_t s = rd<uint64_t>(sarr, k * 8); if (!s) continue;
+            tmpl = s;
+            if (rd<uint32_t>(s, 40) != 2) *(uint64_t*)(arr + m++ * 8ull) = s;
+        }
+        for (int e = 0; e < 3 && tmpl; e++) {
+            uint64_t s = creep_copy(tmpl, 48); if (!s) { tmpl = 0; break; }
+            *(uint64_t*)(s + 24) = 0; *(uint64_t*)(s + 32) = 0;
+            *(uint32_t*)(s + 40) = kExtra[e].tags; *(float*)(s + 44) = kExtra[e].prio[r];
+            *(uint64_t*)(arr + m++ * 8ull) = s;
+        }
+        uint64_t st = tmpl ? creep_copy(stock, 32) : 0; if (!st) break;
+        *(uint32_t*)(arr - 4) = m; *(uint64_t*)(st + 24) = arr; set[r] = st;
+    }
+    uint64_t phases = set[0] && set[1] && set[2] ? creep_array(7) : 0;
+    if (!phases) { status("creep: no room for %s's target lists; its creep keep the stock engagement", leaf); return; }
+    for (int p = 0; p < 7; p++) {
+        bool offense = fac ? p == 0 || p == 1 : p == 3 || p == 4, defense = fac ? p == 3 || p == 4 : p == 0 || p == 1;
+        *(uint64_t*)(phases + p * 8ull) = set[offense ? 0 : defense ? 2 : 1];
+    }
+    int32_t mode = rd<int32_t>(squad, 112);
+    bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
+              leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, 2000.0) &&
+              write_u64(conn + 8, squad) && leaf_write(conn + 20, true, 93732099);
+    status("creep: %s: %s", leaf, ok ? "aggressive within 2000 m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
+                                       "capital ship; defense: no capital ship)" : "a write failed; its creep may keep the stock engagement");
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
     uint64_t part = o_partnew(store, a2, loader, a4);
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
+    if (part && g_creepAggressive) creep_ai_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
@@ -1851,7 +1955,6 @@ template <typename F> static void walk_partitions(F fn) {
         leave(dom + 0x70);
     }
 }
-static bool write_u64(uint64_t at, uint64_t v) { __try { *(uint64_t*)at = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 static void creep_scan() {
     if (!g_creepOn) return;
     static const char* kBlueprint[2][4] = { { "Starship_XWing_AI", "Starship_YWing_AI", "Starship_AWing_AI", "Starship_UWing_AI" },
@@ -1921,10 +2024,63 @@ static void creep_scan() {
     }
 }
 
+// ---- Creep missiles and torpedoes ([creep] missiles=1) --------------------------------------------------------------
+// The squad behaviours (bhv_aisquadron_basic_imperial and _rebel, shared by creep and the vs-AI bots) let a ship fire
+// missiles, torpedoes included (they go through the missile rule), only if all hold (notes/creep-ai.md 3.2): the
+// AllowMissileFiring input, which the bots feed and the creep don't, so it stays at its default, off; a test that the
+// ship is a bot or its squadron's leader, which creep wingmen fail; and a minimum target distance the rule takes from a
+// SelectFloat, 700 m for AI and 200 m for bots, picked when the bot test changes. For creep: the input's default goes on
+// (the Bool feeding the DefaultValue of the PropertyDefaultValue that the input feeds), the bot test's Bool goes on (the
+// one Bool that feeds an Or alongside DogfighterInfo.IsBot; it also gives creep the bots' tail-attack dogfighting), and
+// the SelectFloat starts on the bots' 200 m. The bots set all three themselves, so they don't change. The behaviours also
+// drive the campaign's AI, so this waits for a Fleet Battles creep logic prefab to be loaded; it runs on the 2-second
+// scan, ahead of the first creep launch. Field ids (djb2-xor of the names): AllowMissileFiring 1336394533, InValue
+// 1658462601, DefaultValue 2066049125, Value 225375086, IsBot 215512070, MinTargetDistance -1814841251, Out 193453899.
+// BoolEntityData 0x144a58840: DefaultValue +36. SelectFloatEntityData: InputSelect +48.
+static void creep_behaviour_scan() {
+    if (!g_creepMissiles) return;
+    bool fleet = false; uint64_t bhv[8]; int nb = 0; char leaf[128];
+    walk_partitions([&](uint64_t insts, uint16_t n) {
+        uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
+        inst_leaf(root, leaf, sizeof leaf);
+        if (!_strnicmp(leaf, "pf_pvp_creeplogic", 17)) fleet = true;
+        else if ((!_stricmp(leaf, "bhv_aisquadron_basic_imperial") || !_stricmp(leaf, "bhv_aisquadron_basic_rebel")) && nb < 8) bhv[nb++] = root;
+    });
+    if (!fleet) return;
+    for (int b = 0; b < nb; b++) {
+        uint64_t root = bhv[b]; inst_leaf(root, leaf, sizeof leaf);
+        uint64_t pc = rd<uint64_t>(root, 40); uint32_t np = pc ? rd<uint32_t>(pc - 4, 0) : 0;
+        auto src = [&](uint32_t k) { return rd<uint64_t>(pc, k * 32); };
+        auto dst = [&](uint32_t k) { return rd<uint64_t>(pc, k * 32 + 8); };
+        auto sf = [&](uint32_t k) { return rd<int32_t>(pc, k * 32 + 16); };
+        auto tf = [&](uint32_t k) { return rd<int32_t>(pc, k * 32 + 20); };
+        uint64_t pdv = 0, allow = 0, sel = 0, flag = 0; int nPdv = 0, nAllow = 0, nSel = 0, nFlag = 0;
+        for (uint32_t k = 0; k < np && k < 8192; k++) {
+            if (sf(k) == 1336394533 && tf(k) == 1658462601) { pdv = dst(k); nPdv++; }
+            if (sf(k) == 193453899 && tf(k) == -1814841251) { sel = src(k); nSel++; }
+        }
+        for (uint32_t k = 0; k < np && k < 8192; k++) {
+            if (nPdv == 1 && dst(k) == pdv && tf(k) == 2066049125 && rd<uint64_t>(src(k), 8) == 0x144a58840) { allow = src(k); nAllow++; }
+            if (sf(k) != 225375086 || rd<uint64_t>(src(k), 8) != 0x144a58840) continue;
+            for (uint32_t j = 0; j < np && j < 8192; j++)   // a Bool into a node that IsBot also feeds
+                if (sf(j) == 215512070 && dst(j) == dst(k)) { if (flag != src(k)) nFlag++; flag = src(k); }
+        }
+        if (nAllow != 1 || nSel != 1 || nFlag != 1) {
+            static uint64_t warned[8]; bool w = false; for (uint64_t x : warned) if (x == root) w = true;
+            if (!w) { for (uint64_t& x : warned) if (!x) { x = root; break; }
+                      status("creep: %s isn't laid out as expected (missile default %d, distance selector %d, bot test %d); creep missiles left off", leaf, nAllow, nSel, nFlag); }
+            continue;
+        }
+        if (rd<uint8_t>(allow, 36) == 1 && rd<uint8_t>(flag, 36) == 1 && rd<int32_t>(sel, 48) == 1) continue;
+        bool ok = leaf_write(allow + 36, false, 1, true) && leaf_write(flag + 36, false, 1, true) && leaf_write(sel + 48, true, 1);
+        status("creep: %s: %s", leaf, ok ? "creep fire missiles and torpedoes, wingmen too, from 200 m" : "a write failed; creep missiles may stay off");
+    }
+}
+
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
     { static ULONGLONG lastScan; ULONGLONG nowScan = GetTickCount64();
-      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_scan(); } }
+      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_scan(); creep_behaviour_scan(); } }
     // phases: 0 waiting for the delay; 1 startup data loading; 2 game config loading; 3 spawned (or given up)
     static ULONGLONG first, phaseStart, lastNote; static int phase; static bool announced, pumping;
     static uint32_t handle; static const char* bundle;

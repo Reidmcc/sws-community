@@ -130,6 +130,8 @@ namespace SwsSettings
         // rules page: the profile's yes/no rules and fixes, each off by default (the game as shipped)
         readonly CheckBox ruleZavian = Theme.Check("Zavian Abyss: full middle X-wing creep pack");
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
+        readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
+        readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         static readonly string[][] CreepShipNames = { new[] { "X-wing (stock)", "Y-wing", "A-wing", "U-wing" },
             new[] { "TIE fighter (stock)", "TIE bomber", "TIE interceptor", "TIE reaper" } };
         readonly Label rulesProfile = Theme.Label("", Theme.Big), rulesNote = Theme.Label("", Theme.Small, Theme.Changed);
@@ -262,6 +264,8 @@ namespace SwsSettings
             rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift; ruleZavian.Checked = profile.FixZavianCreep;
             rulePinball.Enabled = ruleMultidrift.Enabled = ruleZavian.Enabled = !profile.BuiltIn;
             for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
+            creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles;
+            creepAggressive.Enabled = creepMissiles.Enabled = !profile.BuiltIn;
             rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
             rulesNote.Text = profile.BuiltIn ? "Default is the game as shipped: every rule and fix off. Duplicate it on Profile and values to make your own." : "";
             loading = false;
@@ -567,7 +571,13 @@ namespace SwsSettings
             string n = AskName(copy ? "Duplicate profile" : "New profile", copy ? profile.Name + " copy" : "");
             if (n == null) return;
             var p = new Profile { Name = n };
-            if (copy) { p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep; foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value; }
+            if (copy)
+            {
+                p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
+                for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
+                p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles;
+                foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value;
+            }
             p.Save(dir);
             if (server.Exists) server.Profile = n;
             FillProfiles(n);
@@ -635,7 +645,7 @@ namespace SwsSettings
             rule(ruleZavian, "In Zavian Abyss's data, one of the middle X-wing creep pack's two spawn points is told to return control instead of to spawn, so the pack has 3 ships instead of 5, at the start and on every respawn. This makes it spawn all 5.");
 
             section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
-                "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers. " +
+                "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers, unless creep missiles are on below. " +
                 "Packs are numbered along the line they spawn in. Part of the fingerprint.");
             for (int f = 0; f < 2; f++)
             {
@@ -651,7 +661,14 @@ namespace SwsSettings
                 }
                 col.Controls.Add(row);
             }
+            rule(creepAggressive, "Creep engage enemies within 2,000 m, as the vs-AI bots do, instead of only what their path brings near. Their targets follow the phase: " +
+                "on offense the enemy frigates, then the flagship once the frigates are gone; in the opener the enemy corvette or Raider; on defense no capital ship. " +
+                "Players and other creep stay targets throughout.");
+            rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
+                "chasing a target's tail. Applies to every pack of both factions.");
 
+            creepAggressive.CheckedChanged += (s, e) => { if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
+            creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
             ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };
             ruleZavian.CheckedChanged += (s, e) => { if (!loading) { profile.FixZavianCreep = ruleZavian.Checked; SaveProfile(); } };
