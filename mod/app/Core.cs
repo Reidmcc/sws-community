@@ -179,6 +179,10 @@ namespace SwsSettings
         public string Name;                 // "Default" is built in
         public bool NoPinball, NoMultidrift;
         public bool FixZavianCreep;         // in the fingerprint only when on, so profiles without it keep theirs
+        // [creep] <faction>_pack<1-3>: each creep pack's ship, an index into CreepShips; 0 = the stock ship (the DLL's creep_scan)
+        public static readonly string[][] CreepShips = { new[] { "xwing", "ywing", "awing", "uwing" }, new[] { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
+        public static readonly string[] CreepFaction = { "rebel", "imperial" };
+        public readonly int[,] Creep = new int[2, 3];
         public readonly SortedDictionary<string, double> Values = new SortedDictionary<string, double>(StringComparer.Ordinal);
         public bool BuiltIn { get { return Name == "Default"; } }
 
@@ -199,6 +203,13 @@ namespace SwsSettings
             p.NoPinball = Ini.GetInt(file, "rules", "no_zero_throttle_pinball", 0) != 0;
             p.NoMultidrift = Ini.GetInt(file, "rules", "no_multidrift", 0) != 0;
             p.FixZavianCreep = Ini.GetInt(file, "rules", "fix_zavian_creep_pack", 0) != 0;
+            for (int f = 0; f < 2; f++)
+                for (int k = 0; k < 3; k++)
+                {
+                    string v = new string(Ini.Get(file, "creep", CreepFaction[f] + "_pack" + (k + 1), "").Where(ch => !char.IsWhiteSpace(ch) && ch != '-' && ch != '_').ToArray()).ToLowerInvariant();
+                    int t = Array.IndexOf(CreepShips[f], v);
+                    if (t > 0) p.Creep[f, k] = t;
+                }
             foreach (var e in Ini.Section(file, "values"))
             {
                 int eq = e.IndexOf('=');
@@ -220,7 +231,11 @@ namespace SwsSettings
             sb.Append("[rules]\r\n");
             sb.Append("no_zero_throttle_pinball=" + (NoPinball ? 1 : 0) + "\r\n");
             sb.Append("no_multidrift=" + (NoMultidrift ? 1 : 0) + "\r\n");
-            sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n\r\n[values]\r\n");
+            sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n\r\n[creep]\r\n");
+            for (int f = 0; f < 2; f++)
+                for (int k = 0; k < 3; k++)
+                    sb.Append(CreepFaction[f] + "_pack" + (k + 1) + "=" + CreepShips[f][Creep[f, k]] + "\r\n");
+            sb.Append("\r\n[values]\r\n");
             foreach (var kv in Values) sb.Append(kv.Key + "=" + Num.G9(kv.Value) + "\r\n");
             File.WriteAllText(PathOf(dir, Name), sb.ToString(), new UTF8Encoding(false));
         }
@@ -260,17 +275,22 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
-        public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values)
+        public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values, int[,] creep = null)
         {
-            if (!pinball && !multidrift && !zavianCreep && values.Count == 0) return 0;
+            bool anyCreep = false;
+            if (creep != null) foreach (int t in creep) if (t != 0) anyCreep = true;
+            if (!pinball && !multidrift && !zavianCreep && values.Count == 0 && !anyCreep) return 0;
             uint h = 2166136261u;
             h = Fnv(h, "pinball=" + (pinball ? 1 : 0) + ";multidrift=" + (multidrift ? 1 : 0) + ";");
             if (zavianCreep) h = Fnv(h, "zaviancreep=1;");
+            for (int f = 0; f < 2 && creep != null; f++)   // creep packs: only the ones changed from the stock ship
+                for (int k = 0; k < 3; k++)
+                    if (creep[f, k] != 0) h = Fnv(h, "creep." + Profile.CreepFaction[f] + "_pack" + (k + 1) + "=" + Profile.CreepShips[f][creep[f, k]] + ";");
             foreach (var kv in values) h = Fnv(h, kv.Key + "=" + Num.G9(kv.Value) + ";");
             return h == 0 ? 1 : h;
         }

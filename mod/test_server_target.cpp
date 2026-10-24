@@ -287,6 +287,42 @@ int main() {
     *(uint8_t***)(domain + 0x138) = parts; *(uint8_t***)(domain + 0x140) = parts + 2;
     uint8_t* centry = fake_alloc(0x80); *(uint8_t**)(centry + 0x68) = domain;
     *(uint8_t**)(0x1442d18c8 + 4 * 8) = centry;   // compartment 4 ("Game")
+    // creep packs: a level layer (LayerData 0x144a56c40) whose link connections (+48, 24-byte entries) tie three Rebel creep
+    // prefab placements (0x144a176a0, Blueprint +0xC0 "PF_PvP_CreepLogic_Exploit_XWings") to their two spawn points each
+    // (0x1449fdc00: ship +0xC0, loadout +0x1F0, translation +176), listed out of order; plus a decoy link from another
+    // prefab's placement. The StandIn profile: rebel_pack1 = Y-wing, rebel_pack3 = A-wing, pack 2 stock.
+    auto bpRoot = [](const char* name) { uint8_t* b = fake_alloc(0x40); *(uint64_t*)(b + 8) = 0x144ade220; *(const char**)(b + 0x18) = name; return b; };
+    uint8_t* xwingAi = bpRoot("Game/Gameplay/Starships/XWing_AI/Starship_XWing_AI");
+    uint8_t* ywingAi = bpRoot("Game/Gameplay/Starships/Ywing_AI/Starship_Ywing_AI");
+    uint8_t* awingAi = bpRoot("Game/Gameplay/Starships/AWing_AI/Starship_AWing_AI");
+    uint8_t* creepCfg = fake_alloc(0x40);
+    uint8_t* creepPrefab = fake_alloc(0x40); *(const char**)(creepPrefab + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_CreepLogic_Exploit_XWings";
+    uint8_t* otherPrefab = fake_alloc(0x40); *(const char**)(otherPrefab + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_FrontlineState";
+    uint8_t* creepSpawn[3][2]; uint8_t* place[3];
+    const float packX[3] = { -303.0f, -220.0f, -113.0f };
+    for (int k = 0; k < 3; k++) {
+        place[k] = fake_alloc(0x100); *(uint64_t*)(place[k] + 8) = 0x144a176a0; *(uint64_t*)(place[k] + 0xC0) = (uint64_t)creepPrefab;
+        for (int j = 0; j < 2; j++) {
+            uint8_t* sp = fake_alloc(0x200); *(uint64_t*)(sp + 8) = 0x1449fdc00;
+            *(uint64_t*)(sp + 0xC0) = (uint64_t)xwingAi; *(uint64_t*)(sp + 0x1F0) = (uint64_t)creepCfg;
+            *(float*)(sp + 176) = packX[k]; *(float*)(sp + 180) = 384.0f; *(float*)(sp + 184) = j ? 3697.0f : 3781.0f;
+            creepSpawn[k][j] = sp;
+        }
+    }
+    uint8_t* decoyPlace = fake_alloc(0x100); *(uint64_t*)(decoyPlace + 8) = 0x144a176a0; *(uint64_t*)(decoyPlace + 0xC0) = (uint64_t)otherPrefab;
+    uint8_t* decoySpawn = fake_alloc(0x200); *(uint64_t*)(decoySpawn + 8) = 0x1449fdc00; *(uint64_t*)(decoySpawn + 0xC0) = (uint64_t)xwingAi;
+    uint8_t* lcArr = fake_alloc(16 + 7 * 24); *(uint32_t*)(lcArr + 12) = 7;
+    const int order[3] = { 2, 0, 1 };
+    for (int i = 0; i < 6; i++) {
+        uint8_t* e = lcArr + 16 + i * 24; int k = order[i / 2];
+        *(uint64_t*)e = (uint64_t)place[k]; *(uint64_t*)(e + 8) = (uint64_t)creepSpawn[k][i % 2];
+    }
+    *(uint64_t*)(lcArr + 16 + 6 * 24) = (uint64_t)decoyPlace; *(uint64_t*)(lcArr + 16 + 6 * 24 + 8) = (uint64_t)decoySpawn;
+    uint8_t* layer = fake_alloc(0x80); *(uint64_t*)(layer + 8) = 0x144a56c40; *(uint64_t*)(layer + 48) = (uint64_t)(lcArr + 16);
+    auto onePart = [](uint8_t* root) { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = root; uint8_t* p = fake_alloc(0x40);
+                                       *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
+    parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = onePart(ywingAi); parts[5] = onePart(awingAi);
+    *(uint8_t***)(domain + 0x140) = parts + 6;
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
     wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini");
     {   // an earlier launch's file: a config this run never loads (must be carried over) and a stale section for one it
@@ -441,6 +477,12 @@ int main() {
     alignas(16) static uint8_t gs[0x200];
     for (int i = 0; i < 150; i++) { ((void(__fastcall*)(void*, uint64_t, uint64_t, uint64_t))0x1401bfe60)(gs, 0, 0, 0); Sleep(30); }
     check(true, "ticked 4.5 s (see status log for the 3b spawn lines)");
+    check(*(uint64_t*)(creepSpawn[0][0] + 0xC0) == (uint64_t)ywingAi && *(uint64_t*)(creepSpawn[0][1] + 0xC0) == (uint64_t)ywingAi &&
+          *(uint64_t*)(creepSpawn[0][0] + 0x1F0) == 0 && *(uint64_t*)(creepSpawn[0][1] + 0x1F0) == 0 &&
+          *(uint64_t*)(creepSpawn[2][0] + 0xC0) == (uint64_t)awingAi && *(uint64_t*)(creepSpawn[2][1] + 0xC0) == (uint64_t)awingAi &&
+          *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0x1F0) == (uint64_t)creepCfg &&
+          *(uint64_t*)(decoySpawn + 0xC0) == (uint64_t)xwingAi,
+          "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings, with no loadout; pack 2 and a non-creep spawn point stay stock");
     {   // StandIn: materialgrid.laserdamage.capitalhull=0.05. Through the hull site, a laser on the capital material and on
         // the default material (a corvette's hull) get the private copy; ion, a shield target, and any other caller don't
         uint64_t viaCap = ((matl_t)0x1417db3f7)(grid, &laserMat, &capitalMat), viaDef = ((matl_t)0x1417db3f7)(grid, &laserMat, &defaultMat);
@@ -585,7 +627,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

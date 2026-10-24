@@ -129,6 +129,9 @@ namespace SwsSettings
 
         // rules page: the profile's yes/no rules and fixes, each off by default (the game as shipped)
         readonly CheckBox ruleZavian = Theme.Check("Zavian Abyss: full middle X-wing creep pack");
+        readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
+        static readonly string[][] CreepShipNames = { new[] { "X-wing (stock)", "Y-wing", "A-wing", "U-wing" },
+            new[] { "TIE fighter (stock)", "TIE bomber", "TIE interceptor", "TIE reaper" } };
         readonly Label rulesProfile = Theme.Label("", Theme.Big), rulesNote = Theme.Label("", Theme.Small, Theme.Changed);
 
         // values page
@@ -258,6 +261,7 @@ namespace SwsSettings
             loading = true;
             rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift; ruleZavian.Checked = profile.FixZavianCreep;
             rulePinball.Enabled = ruleMultidrift.Enabled = ruleZavian.Enabled = !profile.BuiltIn;
+            for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
             rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
             rulesNote.Text = profile.BuiltIn ? "Default is the game as shipped: every rule and fix off. Duplicate it on Profile and values to make your own." : "";
             loading = false;
@@ -629,6 +633,24 @@ namespace SwsSettings
             rule(ruleMultidrift, "A drift can start only while the afterburner is on, so each boost allows one drift, as with the combined boost-and-drift input. Releasing and re-pressing drift mid-drift no longer starts a new drift.");
             section("Map fixes", "These are part of the fingerprint too, so everyone in a match knows the server plays the map the way they expect.");
             rule(ruleZavian, "In Zavian Abyss's data, one of the middle X-wing creep pack's two spawn points is told to return control instead of to spawn, so the pack has 3 ships instead of 5, at the start and on every respawn. This makes it spawn all 5.");
+
+            section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
+                "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers. " +
+                "Packs are numbered along the line they spawn in. Part of the fingerprint.");
+            for (int f = 0; f < 2; f++)
+            {
+                var row = Theme.Row(6); row.Margin = new Padding(0, 10, 0, 0);
+                row.Controls.Add(new Label { Text = f == 0 ? "Rebel" : "Imperial", AutoSize = true, Font = Theme.Body, ForeColor = Theme.Text, Margin = new Padding(0, 6, 12, 0), MinimumSize = new Size(70, 0) });
+                for (int k = 0; k < 3; k++)
+                {
+                    var box = Theme.Combo(); box.Width = 170; foreach (var n in CreepShipNames[f]) box.Items.Add(n);
+                    int ff = f, kk = k;
+                    box.SelectedIndexChanged += (s, e) => { if (!loading && box.SelectedIndex >= 0) { profile.Creep[ff, kk] = box.SelectedIndex; SaveProfile(); } };
+                    row.Controls.Add(new Label { Text = "Pack " + (k + 1), AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(k == 0 ? 0 : 14, 8, 6, 0) });
+                    row.Controls.Add(box); creepBoxes[f, k] = box;
+                }
+                col.Controls.Add(row);
+            }
 
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
             ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };
