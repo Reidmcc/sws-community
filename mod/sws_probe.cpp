@@ -1869,7 +1869,31 @@ static scorelookup_t o_scorelookup;
 static SRWLOCK g_creepLogLock = SRWLOCK_INIT;
 static float __fastcall h_scorelookup(uint64_t settings, uint32_t tags, uint64_t* out) {
     float r = o_scorelookup(settings, tags, out);
-    if (!g_creepLog || !g_creepPool || settings < (uint64_t)g_creepPool || settings >= (uint64_t)g_creepPool + (1 << 20)) return r;
+    if (!g_creepLog) return r;
+    uint64_t ret = (uint64_t)_ReturnAddress();
+    bool ours = g_creepPool && settings >= (uint64_t)g_creepPool && settings < (uint64_t)g_creepPool + (1 << 20);
+    {   // any list, ours or not, and who asked: once per (list, caller); for lists that aren't ours only when they score a
+        // frigate (tag bit 29) above 0, with the list's scores, to find what sends creep at the frigates
+        static struct { uint64_t settings, ret; } callers[256]; static int ncallers;
+        if (ours || ((tags & (1u << 29)) && r > 0)) {
+            AcquireSRWLockExclusive(&g_creepLogLock);
+            bool dup = false;
+            for (int i = 0; i < ncallers && !dup; i++) dup = callers[i].settings == settings && callers[i].ret == ret;
+            if (!dup && ncallers < 256) {
+                callers[ncallers++] = { settings, ret };
+                char sc[512] = ""; size_t at = 0;
+                uint64_t a = rd<uint64_t>(settings, 24); uint32_t na = a ? rd<uint32_t>(a - 4, 0) : 0;
+                for (uint32_t k = 0; k < na && k < 24 && at < sizeof sc - 32; k++) {
+                    uint64_t s = rd<uint64_t>(a, k * 8);
+                    at += sprintf_s(sc + at, sizeof sc - at, " %x:%g", rd<uint32_t>(s, 40), (double)rd<float>(s, 44));
+                }
+                status("creep targets: list %p (%s) asked from %p: target tags %08x -> priority %g; scores%s", (void*)settings,
+                       ours ? "the creep's" : "NOT the creep's", (void*)ret, tags, (double)r, sc);
+            }
+            ReleaseSRWLockExclusive(&g_creepLogLock);
+        }
+    }
+    if (!ours) return r;
     static struct { uint64_t arr; uint32_t tags; float r; } seen[512]; static int nseen;
     uint64_t arr = rd<uint64_t>(settings, 24);
     AcquireSRWLockExclusive(&g_creepLogLock);
