@@ -414,6 +414,7 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
+    uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition
         // creator. Its property connections: the phase (FrontlineIndex, 862952468) into a debug display (field 5685821) and
         // into the SelectInt that picks the path (858290427); its squadron (0x144a028c0) is Defensive within 500 m, its
@@ -445,6 +446,12 @@ int main() {
         uint8_t* part6 = fake_alloc(0x40); *(uint8_t***)(part6 + 0x20) = insts6; *(uint16_t*)(part6 + 0x28) = 1;
         typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part6, 0);
+        {   // and list it with the loaded partitions, as the game's store would (the bomb-raid mode is set only while loaded)
+            uint8_t** cur = *(uint8_t***)(domain + 0x138); size_t np = *(uint8_t***)(domain + 0x140) - cur;
+            uint8_t** grown = (uint8_t**)fake_alloc((np + 1) * 8); memcpy(grown, cur, np * 8); grown[np] = part6;
+            *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + np + 1;
+        }
+        creepSquadForMode = squad;
         uint8_t* nl = *(uint8_t**)(squad + 104);
         // the game's score lookup (FUN_141617a00): the first score whose TargetTags bits are all on the target; none = 0
         auto score = [](uint8_t* set, uint32_t target) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
@@ -623,6 +630,9 @@ int main() {
           "match rules: creep morale on offense 1 -> 2, the match length 1800 -> 2400 and the morale DoT on, in the config's lists; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
+    // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
+    check(creepSquadForMode && *(int32_t*)(creepSquadForMode + 32) == 1,
+          "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");
     check(allowBool[36] == 1 && flagBool[36] == 1 && *(int32_t*)(minSel + 48) == 1 && bombsBool[36] == 0,
           "creep missiles: the squad behaviour's missile default and bot test on, the minimum distance on the bots' 200 m; another input's default untouched");
     check(maxShield->value == 900.0f, "value engine: shield config written");

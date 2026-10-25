@@ -183,7 +183,15 @@ static bool g_creepAggressive, g_creepMissiles;
 static int g_creepRadius = 2000;
 // the per-faction phase switch (creep_ai_partition, h_ctrlfield): the creep squadron's and controller's data, the shared
 // target list, and the score arrays for offense, face-off and defense; last = the last behaviour seen (-1 none)
-struct CreepPhase { uint64_t squad, ctrl, shared; uint64_t arr[3]; volatile LONG last; };
+// Bomb raids: a bomber's aux bombs load a raid behaviour (IncomSquadronAIBombingFlightBehaviour, from the bomb weapon
+// config's BehaviourBlueprint) whose target gather (FUN_14182b910) reads the squadron DATA's TargetingRules.EngagementMode
+// (+32) live: Aggressive (0) and no current target = raid the nearest bombable enemy within 10 km, a frigate in the
+// opener; any other mode = raid only the current target, which the creep's scores make the corvette or Raider at most.
+// So the mode follows the phase: Aggressive on offense, the stock mode (Defensive) otherwise. The squadron's own scorer
+// copied the rules (Aggressive) when it registered and keeps them. stockMode/aggMode: the two values; wantMode: what
+// the phase asks for; seenAt: when the controller first reported a behaviour (the squadron registers about then).
+struct CreepPhase { uint64_t squad, ctrl, shared; uint64_t arr[3]; volatile LONG last; int32_t stockMode, aggMode;
+                    volatile LONG wantMode; volatile LONG64 seenAt; };
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
@@ -1830,6 +1838,8 @@ static void creep_ai_partition(uint64_t part) {
     CreepPhase& cp = g_creepPh[fac];
     cp.arr[0] = arrs[0]; cp.arr[1] = arrs[1]; cp.arr[2] = arrs[2]; cp.last = -1;
     InterlockedExchange64((volatile LONG64*)&cp.shared, (LONG64)shared);
+    cp.stockMode = rd<int32_t>(squad, 32); cp.aggMode = rd<int32_t>(squad, 112);
+    InterlockedExchange(&cp.wantMode, cp.stockMode); InterlockedExchange64(&cp.seenAt, 0);
     InterlockedExchange64((volatile LONG64*)&cp.ctrl, (LONG64)ctrl);
     InterlockedExchange64((volatile LONG64*)&cp.squad, (LONG64)squad);
     int32_t mode = rd<int32_t>(squad, 112);
@@ -1857,6 +1867,8 @@ static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
         int p = bi == 1 ? 0 : bi == 2 ? 1 : bi == 4 ? 3 : bi == 5 ? 4 : 2;   // 3 (and anything unexpected): face-off
         int role = creep_role(f, p);
         InterlockedExchange64((volatile LONG64*)(cp.shared + 24), (LONG64)cp.arr[role]);
+        InterlockedExchange(&cp.wantMode, role == 0 ? cp.aggMode : cp.stockMode);
+        InterlockedCompareExchange64(&cp.seenAt, (LONG64)GetTickCount64(), 0);
         if (InterlockedExchange(&cp.last, bi) != bi)
             status("creep: %s creep: behaviour %d (phase %s), %s targets", kCreepFaction[f], bi,
                    bi == 1 ? "0" : bi == 2 ? "1" : bi == 4 ? "3" : bi == 5 ? "4" : "2, 5 or 6", role == 0 ? "offense" : role == 2 ? "defense" : "face-off");
@@ -2140,6 +2152,38 @@ static void creep_scan() {
 // scan, ahead of the first creep launch. Field ids (djb2-xor of the names): AllowMissileFiring 1336394533, InValue
 // 1658462601, DefaultValue 2066049125, Value 225375086, IsBot 215512070, MinTargetDistance -1814841251, Out 193453899.
 // BoolEntityData 0x144a58840: DefaultValue +36. SelectFloatEntityData: InputSelect +48.
+// On the 2-second scan: put each creep squadron's data EngagementMode where the phase wants it (see CreepPhase), once
+// the squadron has had time to register with the Aggressive rules (a few seconds after its controller first reported a
+// behaviour), and only while its creep logic prefab is still loaded (the pointers belong to that level).
+static void creep_mode_scan() {
+    if (!g_creepAggressive) return;
+    bool loaded[2] = {}; char leaf[128];
+    walk_partitions([&](uint64_t insts, uint16_t n) {
+        uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
+        inst_leaf(root, leaf, sizeof leaf);
+        if (_strnicmp(leaf, "pf_pvp_creeplogic", 17)) return;
+        uint64_t objs = rd<uint64_t>(root, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
+        for (uint32_t k = 0; k < no && k < 4096; k++) {
+            uint64_t o = rd<uint64_t>(objs, k * 8);
+            for (int f = 0; f < 2; f++) if (o && o == g_creepPh[f].squad) loaded[f] = true;
+        }
+    });
+#ifdef PROBE_TEST
+    const ULONGLONG settle = 1000;
+#else
+    const ULONGLONG settle = 5000;
+#endif
+    for (int f = 0; f < 2; f++) {
+        CreepPhase& cp = g_creepPh[f];
+        ULONGLONG seen = (ULONGLONG)cp.seenAt;
+        if (!loaded[f] || !seen || GetTickCount64() - seen < settle) continue;
+        int32_t want = cp.wantMode;
+        if (rd<int32_t>(cp.squad, 32) == want) continue;
+        if (leaf_write(cp.squad + 32, true, want))
+            status("creep: %s squadron: %s", kCreepFaction[f], want == cp.aggMode
+                ? "bomb raids on the nearest enemy capital ship (offense)" : "bomb raids only on their current target");
+    }
+}
 static void creep_behaviour_scan() {
     if (!g_creepMissiles) return;
     bool fleet = false; uint64_t bhv[8]; int nb = 0; char leaf[128];
@@ -2183,7 +2227,7 @@ static void creep_behaviour_scan() {
 static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t a4) {
     o_gstick(gs, a2, a3, a4);
     { static ULONGLONG lastScan; ULONGLONG nowScan = GetTickCount64();
-      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_scan(); creep_behaviour_scan(); } }
+      if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_scan(); creep_behaviour_scan(); creep_mode_scan(); } }
     // phases: 0 waiting for the delay; 1 startup data loading; 2 game config loading; 3 spawned (or given up)
     static ULONGLONG first, phaseStart, lastNote; static int phase; static bool announced, pumping;
     static uint32_t handle; static const char* bundle;
