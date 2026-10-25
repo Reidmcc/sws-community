@@ -133,12 +133,14 @@ int main() {
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x14057dd20ll - 0x1417db400ll);
       put(0x1417db3f7, site, sizeof site); }
-    // the squadron's field-change handler (FUN_1417a0cf0): its real 16-byte prologue (it ends on cmp eax, imm32), then the
-    // epilogue; and the target-score lookup (FUN_141617a00): its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
-    if (map(0x1417a0000, 0x10000) != (void*)0x1417a0000 || map(0x141610000, 0x10000) != (void*)0x141610000) { printf("FAIL  could not map the squadron regions\n"); return 1; }
-    const uint8_t sqfield[] = {0x40,0x53,0x48,0x83,0xec,0x70,0x8b,0x02,0x48,0x8b,0xd9,0x3d,0x94,0x22,0x95,0xaa,
-                               0x48,0x83,0xc4,0x70, 0x5b, 0xc3};
-    put(0x1417a0cf0, sqfield, sizeof sqfield);
+    // the AI controller's field-change handler (FUN_1416feaf0): its real 15-byte prologue, then its BehaviourIndex store
+    // (mov rax, [rdx+8]; mov edx, [rax]; mov [rcx+0xb4], edx) and the epilogue; and the target-score lookup (FUN_141617a00):
+    // its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
+    if (map(0x1416f0000, 0x10000) != (void*)0x1416f0000 || map(0x141610000, 0x10000) != (void*)0x141610000) { printf("FAIL  could not map the AI regions\n"); return 1; }
+    const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
+                                 0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
+                                 0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
+    put(0x1416feaf0, ctrlfield, sizeof ctrlfield);
     const uint8_t scorelk[] = {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x40,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff,
                                0x0f,0x57,0xc0, 0x48,0x83,0xc4,0x40, 0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
     put(0x141617a00, scorelk, sizeof scorelk);
@@ -415,9 +417,10 @@ int main() {
     {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition
         // creator. Its property connections: the phase (FrontlineIndex, 862952468) into a debug display (field 5685821) and
         // into the SelectInt that picks the path (858290427); its squadron (0x144a028c0) is Defensive within 500 m, its
-        // override Aggressive (0), one target list (+104) of the stock creep's five scores. Afterwards the debug connection
-        // drives the squadron's list index (93732099), and the squadron has seven lists: Imperial offense in phases 0 and 1,
-        // face-off in 2, 5 and 6, defense in 3 and 4. The stock list itself is left as it was.
+        // override Aggressive (0), one target list (+104) of the stock creep's five scores; the SelectInt's Out feeds the
+        // controller's BehaviourIndex. Afterwards every phase's entry is one shared list, whose scores follow the
+        // controller's behaviour: Imperial offense at behaviours 1 and 2, defense at 4 and 5, face-off at 3. The stock list
+        // itself is left as it was.
         auto dc = [](size_t size) { uint8_t* o = fake_alloc(16 + size) + 16; *(uint64_t*)o = 0x143999000; *(uint32_t*)(o + 16) = 1; return o; };
         const uint32_t tags[5] = { 262144, 36, 20, 2, 524292 }; const float prios[5] = { 5, 3, 2, 2, 3 };
         uint8_t* sArr = fake_alloc(16 + 5 * 8) + 16; *(uint32_t*)(sArr - 4) = 5;
@@ -428,10 +431,12 @@ int main() {
         *(int32_t*)(squad + 32) = 1; *(float*)(squad + 40) = 500.0f; *(int32_t*)(squad + 112) = 0; *(uint8_t*)(squad + 139) = 1;
         *(uint8_t**)(squad + 104) = lst;
         uint8_t* debugDisp = fake_alloc(0x100); uint8_t* selInt = fake_alloc(0x40); uint8_t* iface = fake_alloc(0x40);
-        uint8_t* pcArr = fake_alloc(16 + 2 * 32) + 16; *(uint32_t*)(pcArr - 4) = 2;
+        uint8_t* ctrlData = fake_alloc(0x100);
+        uint8_t* pcArr = fake_alloc(16 + 3 * 32) + 16; *(uint32_t*)(pcArr - 4) = 3;
+        *(uint8_t**)(pcArr + 64) = selInt; *(uint8_t**)(pcArr + 72) = ctrlData; *(int32_t*)(pcArr + 80) = 193453899; *(int32_t*)(pcArr + 84) = 875081154;
         *(uint8_t**)pcArr = iface; *(uint8_t**)(pcArr + 8) = debugDisp; *(int32_t*)(pcArr + 16) = 862952468; *(int32_t*)(pcArr + 20) = 5685821; *(int32_t*)(pcArr + 24) = 3;
         *(uint8_t**)(pcArr + 32) = iface; *(uint8_t**)(pcArr + 40) = selInt; *(int32_t*)(pcArr + 48) = 862952468; *(int32_t*)(pcArr + 52) = 858290427;
-        uint8_t* objArr = fake_alloc(16 + 3 * 8) + 16; *(uint32_t*)(objArr - 4) = 3;
+        uint8_t* objArr = fake_alloc(16 + 4 * 8) + 16; *(uint32_t*)(objArr - 4) = 4; ((uint8_t**)objArr)[3] = ctrlData;
         ((uint8_t**)objArr)[0] = debugDisp; ((uint8_t**)objArr)[1] = squad; ((uint8_t**)objArr)[2] = selInt;
         uint8_t* bp = fake_alloc(0x80); *(uint64_t*)(bp + 8) = 0;
         *(const char**)(bp + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_CreepLogic_Exploit_TieFighters";
@@ -452,25 +457,25 @@ int main() {
         uint8_t* L[7] = {}; for (int p = 0; lists && p < 7; p++) L[p] = ((uint8_t**)nl)[p];
         bool shared = lists && L[0] && L[0] == L[1] && L[0] == L[2] && L[0] == L[3] && L[0] == L[4] && L[0] == L[5] && L[0] == L[6];
         bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4 && score(L[0], turret) == 5;
-        // the phase arrives through the squadron's field-change handler, as the repointed connection delivers it
-        uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = squad;
-        int32_t phaseVal = 0; uint8_t chg[16] = {}; *(int32_t*)chg = 93732099; *(int32_t**)(chg + 8) = &phaseVal;
-        typedef void(__fastcall* sqf_t)(uint8_t*, uint8_t*);
-        ((sqf_t)0x1417a0cf0)(ent, chg);   // phase 0: a Rebel zone, Imperial offense
-        bool offense = shared && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
-        phaseVal = 3; ((sqf_t)0x1417a0cf0)(ent, chg);   // an Imperial zone: defense
+        // the phase arrives as the controller's behaviour: the controller entity's field-change handler stores it
+        uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = ctrlData;
+        int32_t bi = 1; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
+        typedef void(__fastcall* cf_t)(uint8_t*, uint8_t*);
+        ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 1 = phase 0, a Rebel zone: Imperial offense
+        bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
+        bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
         bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 2;
-        phaseVal = 6; ((sqf_t)0x1417a0cf0)(ent, chg);   // transition: the opener's scores again
+        bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
         bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
-        uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; phaseVal = 0; ((sqf_t)0x1417a0cf0)(other, chg);
-        bool untouched = shared && score(L[0], frigate) == 0;   // another entity's field change leaves the creep alone
-        check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1417a0cf0 == 0xFF,
-              "aggressive creep: one shared target list, its scores switched by the phase through the squadron's field handler (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
-        check(*(uint8_t**)(pcArr + 8) == squad && *(int32_t*)(pcArr + 20) == 93732099 && *(int32_t*)(pcArr + 16) == 862952468 &&
+        uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
+        bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
+        check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,
+              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
+        check(*(uint8_t**)(pcArr + 8) == debugDisp && *(int32_t*)(pcArr + 20) == 5685821 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
               *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
               *(uint32_t*)(sArr - 4) == 5 && *(uint32_t*)(((uint8_t**)sArr)[3] + 40) == 2 && *(uint8_t**)(stockSet + 24) == sArr,
-              "aggressive creep: the phase drives the list index, the squadron is Aggressive within the profile's 1200 m, the path connection and the stock list untouched");
+              "aggressive creep: the squadron is Aggressive within the profile's 1200 m; its connections and the stock list untouched");
     }
     {   // ship scale (#20): the Y-wing's blueprint partition (StarshipBlueprint "Game/Gameplay/Starships/Ywing/Starship_Ywing"
         // and its StarshipEntityData) arrives through the partition creator; the StandIn profile's shipscale_ywing.scale=0.5

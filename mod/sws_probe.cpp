@@ -181,9 +181,9 @@ static bool g_creepAggressive, g_creepMissiles;
 // [creep] radius: how far aggressive creep look for targets, in metres (500..3000; 2000 is the bots' value). In the
 // fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
 static int g_creepRadius = 2000;
-// the per-faction phase switch (creep_ai_partition, h_sqfield): the creep squadron's data, its shared target list, and the
-// score arrays for offense, face-off and defense; last = the last phase seen (-1 none)
-struct CreepPhase { uint64_t squad, shared; uint64_t arr[3]; volatile LONG last; };
+// the per-faction phase switch (creep_ai_partition, h_ctrlfield): the creep squadron's and controller's data, the shared
+// target list, and the score arrays for offense, face-off and defense; last = the last behaviour seen (-1 none)
+struct CreepPhase { uint64_t squad, ctrl, shared; uint64_t arr[3]; volatile LONG last; };
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
@@ -1745,12 +1745,12 @@ static void model_scale_partition(uint64_t part) {
 // (notes/creep-ai.md). The maps place the creep logic prefabs PF_PvP_CreepLogic_Exploit_XWings / _TieFighters, which take
 // the match's phase, FrontlineIndex (field 862952468: 0 Rebel zone 2, 1 Rebel zone 1, 2 face-off, 3 Imperial zone 1,
 // 4 Imperial zone 2, 5 overtime, 6 transition), and also feed it to a debug display (PropertyDebugEntityData, field
-// 5685821). That property connection (the blueprint's +40, 32-byte entries: Source +0, Target +8, SourceFieldId +16,
-// TargetFieldId +20, count at -4) is pointed at the creep squadron's TargetPrioritisationSettingsIndex (93732099)
-// instead, the way the campaign's levels drive that index from their logic, and the squadron (IncomSquadronAISquadron-
-// EntityData 0x144a028c0, in the blueprint's Objects at +72) gets seven target lists (TargetPrioritisationSettingsList
-// +104), one per phase: offense (the enemy frigates, then their flagship), face-off and transition (the small capital
-// ship), defense (no enemy capital ship). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
+// 5685821) and, through a SelectInt, to the controller's BehaviourIndex (the path for the phase; the blueprint's
+// PropertyConnections at +40, 32-byte entries: Source +0, Target +8, SourceFieldId +16, TargetFieldId +20, count at -4).
+// The squadron (IncomSquadronAISquadronEntityData 0x144a028c0, in the blueprint's Objects at +72) reads its target list
+// only once, as it registers, so all seven entries of its TargetPrioritisationSettingsList (+104) are one shared list
+// whose scores h_ctrlfield swaps as the controller's behaviour follows the phase: offense (the enemy frigates, then their
+// flagship), face-off and transition (the small capital ship), defense (no enemy capital ship). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
 // and adds frigate (tag bit 29), flagship (22) and small capital ship (28) scores. The squadron engages as its own
 // EngagementModeOverride (+112, Aggressive) says, within [creep] radius (2000 m by default; TargetingRules +32: EngagementMode +32, search radius
 // +40). Done as the prefab's partition loads, before a squadron is built from it. The lists and scores are copies of the
@@ -1784,14 +1784,14 @@ static void creep_ai_partition(uint64_t part) {
     uint64_t squad = 0; int squads = 0;
     for (uint32_t k = 0; k < no && k < 4096; k++) { uint64_t o = rd<uint64_t>(objs, k * 8); if (o && rd<uint64_t>(o, 8) == 0x144a028c0) { squad = o; squads++; } }
     uint64_t pc = rd<uint64_t>(root, 40); uint32_t np = pc ? rd<uint32_t>(pc - 4, 0) : 0;
-    uint64_t conn = 0; int conns = 0;
+    uint64_t ctrl = 0; int conns = 0;   // the controller, the target of the SelectInt's Out -> BehaviourIndex
     for (uint32_t k = 0; k < np && k < 8192; k++)
-        if (rd<int32_t>(pc, k * 32 + 16) == 862952468 && rd<int32_t>(pc, k * 32 + 20) == 5685821) { conn = pc + k * 32ull; conns++; }
+        if (rd<int32_t>(pc, k * 32 + 16) == 193453899 && rd<int32_t>(pc, k * 32 + 20) == 875081154) { ctrl = rd<uint64_t>(pc, k * 32 + 8); conns++; }
     uint64_t list = squad ? rd<uint64_t>(squad, 104) : 0; uint32_t nl = list ? rd<uint32_t>(list - 4, 0) : 0;
     uint64_t stock = nl == 1 ? rd<uint64_t>(list, 0) : 0;
     uint64_t sarr = stock ? rd<uint64_t>(stock, 24) : 0; uint32_t ns = sarr ? rd<uint32_t>(sarr - 4, 0) : 0;
-    if (squads != 1 || conns != 1 || !stock || !ns || ns > 32) {
-        status("creep: %s isn't laid out as expected (%d squadron(s), %d phase connection(s), %u target list(s), %u score(s)); its creep keep the stock engagement",
+    if (squads != 1 || conns != 1 || !ctrl || !stock || !ns || ns > 32) {
+        status("creep: %s isn't laid out as expected (%d squadron(s), %d behaviour connection(s), %u target list(s), %u score(s)); its creep keep the stock engagement",
                leaf, squads, conns, nl, ns);
         return;
     }
@@ -1821,7 +1821,7 @@ static void creep_ai_partition(uint64_t part) {
     }
     // A squadron resolves its target list once, as it registers (FUN_1417a2220), and never reads the index again; the
     // score array inside the list is read on every evaluation. So every phase's entry is one shared list, and the phase
-    // swaps the scores inside it (h_sqfield, when the repointed connection delivers the index).
+    // swaps the scores inside it (h_ctrlfield, as the controller's behaviour follows the phase).
     uint64_t shared = arrs[0] && arrs[1] && arrs[2] ? creep_copy(stock, 32) : 0;
     uint64_t phases = shared ? creep_array(7) : 0;
     if (!phases) { status("creep: no room for %s's target lists; its creep keep the stock engagement", leaf); return; }
@@ -1830,37 +1830,38 @@ static void creep_ai_partition(uint64_t part) {
     CreepPhase& cp = g_creepPh[fac];
     cp.arr[0] = arrs[0]; cp.arr[1] = arrs[1]; cp.arr[2] = arrs[2]; cp.last = -1;
     InterlockedExchange64((volatile LONG64*)&cp.shared, (LONG64)shared);
+    InterlockedExchange64((volatile LONG64*)&cp.ctrl, (LONG64)ctrl);
     InterlockedExchange64((volatile LONG64*)&cp.squad, (LONG64)squad);
     int32_t mode = rd<int32_t>(squad, 112);
     bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
-              leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius) &&
-              write_u64(conn + 8, squad) && leaf_write(conn + 20, true, 93732099);
+              leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius);
     if (ok) status("creep: %s: aggressive within %d m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
                    "capital ship; defense: no capital ship)", leaf, g_creepRadius);
     else status("creep: %s: a write failed; its creep may keep the stock engagement", leaf);
 }
-// The squadron entity's field-change handler (FUN_1417a0cf0; change = {int field hash, ..., +8 pointer to the value})
-// handles the engagement-mode, attacker and required-tag overrides and nothing else. When the creep logic's repointed
-// phase connection delivers TargetPrioritisationSettingsIndex (93732099) to a creep squadron the mod set up, the phase's
-// scores go into that squadron's shared list. Every pack of a faction is built from the same squadron data.
-typedef void(__fastcall* sqfield_t)(uint64_t ent, const int32_t* change);
-static sqfield_t o_sqfield;
-static void __fastcall h_sqfield(uint64_t ent, const int32_t* change) {
-    if (g_creepAggressive && change && rd<int32_t>((uint64_t)change, 0) == 93732099) {
-        uint64_t data = rd<uint64_t>(ent, 0x28);
-        for (int f = 0; f < 2; f++) {
-            CreepPhase& cp = g_creepPh[f];
-            if (!data || data != cp.squad || !cp.shared) continue;
-            uint64_t vp = rd<uint64_t>((uint64_t)change, 8); int32_t p = vp ? rd<int32_t>(vp, 0) : -1;
-            if (p < 0 || p > 6) break;
-            int role = creep_role(f, p);
-            InterlockedExchange64((volatile LONG64*)(cp.shared + 24), (LONG64)cp.arr[role]);
-            if (InterlockedExchange(&cp.last, p) != p)
-                status("creep: %s squadron: phase %d, %s targets", kCreepFaction[f], p, role == 0 ? "offense" : role == 2 ? "defense" : "face-off");
-            break;
-        }
+// The phase, live: the creep logic maps FrontlineIndex to its controller's BehaviourIndex (SelectInt: phases 0..6 ->
+// behaviours 1, 2, 3, 4, 5, 3, 3; the same in both creep prefabs), and the controller entity's field-change handler
+// (FUN_1416feaf0; change = {int field hash, ..., +8 pointer to the value}) stores it at entity +0xb4. A squadron reads its
+// target list only once, as it registers, and a connection into its index is never bound; but it reads the scores inside
+// the list on every evaluation, so the phase swaps those (the shared list creep_ai_partition made).
+typedef void(__fastcall* ctrlfield_t)(uint64_t ent, const int32_t* change);
+static ctrlfield_t o_ctrlfield;
+static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
+    o_ctrlfield(ent, change);
+    if (!g_creepAggressive || !change || rd<int32_t>((uint64_t)change, 0) != 875081154) return;   // BehaviourIndex
+    uint64_t data = rd<uint64_t>(ent, 0x28);
+    for (int f = 0; f < 2; f++) {
+        CreepPhase& cp = g_creepPh[f];
+        if (!data || data != cp.ctrl || !cp.shared) continue;
+        int32_t bi = rd<int32_t>(ent, 0xb4);
+        int p = bi == 1 ? 0 : bi == 2 ? 1 : bi == 4 ? 3 : bi == 5 ? 4 : 2;   // 3 (and anything unexpected): face-off
+        int role = creep_role(f, p);
+        InterlockedExchange64((volatile LONG64*)(cp.shared + 24), (LONG64)cp.arr[role]);
+        if (InterlockedExchange(&cp.last, bi) != bi)
+            status("creep: %s creep: behaviour %d (phase %s), %s targets", kCreepFaction[f], bi,
+                   bi == 1 ? "0" : bi == 2 ? "1" : bi == 4 ? "3" : bi == 5 ? "4" : "2, 5 or 6", role == 0 ? "offense" : role == 2 ? "defense" : "face-off");
+        break;
     }
-    o_sqfield(ent, change);
 }
 // [server] creep_log=1 (diagnostic): the score lookup (FUN_141617a00: settings, the target's tags, the matched score out;
 // returns the priority in xmm0), logged once per distinct (list, tags, priority) when the list is one the mod made.
@@ -3161,9 +3162,9 @@ static Site g_sites[] = {
     {"material-lookup 0x14057dd20", 0x14057dd20, 15,
      {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02},
      (void*)h_matlookup, (void**)&o_matlookup},
-    {"squadron-field 0x1417a0cf0", 0x1417a0cf0, 16,
-     {0x40,0x53,0x48,0x83,0xec,0x70,0x8b,0x02,0x48,0x8b,0xd9,0x3d,0x94,0x22,0x95,0xaa},
-     (void*)h_sqfield, (void**)&o_sqfield},
+    {"controller-field 0x1416feaf0", 0x1416feaf0, 15,
+     {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa},
+     (void*)h_ctrlfield, (void**)&o_ctrlfield},
     {"score-lookup 0x141617a00", 0x141617a00, 21,
      {0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x40,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff},
      (void*)h_scorelookup, (void**)&o_scorelookup},
