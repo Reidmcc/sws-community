@@ -347,14 +347,18 @@ Flown by Pseudo on Yavin and Esseles; each line says what was seen.
   0x144a8c980). Y-wings fire one torpedo on the approach, then bombing runs; sometimes at other creep.
 - **The bots' handling** (5e24f4f): the same loadout copy, with the bots' movement config (`*AI_BOT`, 0x144ab56a0); for
   stock packs too, keeping their own creep configs. Pseudo: creep "much more active", "I almost got killed".
-- **Per ship type** (Esseles flight, then 90c59e4 and the opener after it): all creep went for the attacker's new
-  corvette on defense, and fighters and interceptors swarmed it and got wrecked. The squadron's candidate scorer
-  FUN_14182ade0 (12 integer arguments: the second the ship choosing, a ServerStarshipEntity (the class the scorer itself
-  checks, ClassInfo 0x1449f5d80), the eighth the list) is hooked; a ship that isn't a bomber gets a second list where the
-  corvette or Raider scores 1 instead of 4, in the opener and on defense. Bombers keep 4. A bomber is a ship whose data
-  (entity +0x28) is the Y-wing's or TIE bomber's AI StarshipEntityData (0x1449fad80, in the blueprint's partition). The
-  first build (Sissubo flight) read radar tags at a candidate's offsets instead: on the ship entity those held other
-  values (ffffffff, 83ef7678...), so nearly every ship got the bombers' list (03a49e5 fixes it; not flown yet).
+- **Per ship type**: all creep went for the attacker's new corvette on defense (Esseles), and fighters and
+  interceptors swarmed it and got wrecked. The squadron's candidate scorer FUN_14182ade0 (12 integer arguments: the
+  second the ship choosing, the eighth the list; the scorer itself type-checks the ship against ServerStarshipEntity,
+  ClassInfo 0x1449f5d80) is hooked; a ship that isn't a bomber gets a second list where the corvette or Raider scores 1
+  instead of 4, in the opener and on defense. Bombers keep 4. Telling bombers apart took three tries:
+  - radar tags read at a candidate's offsets (+0x5d0 | +0x5cc | [+0x30]+0x38): garbage on the ship (ffffffff,
+    83ef7678...), so nearly every ship got the bombers' list (Sissubo flight);
+  - a data pointer at +0x28: small numbers, not pointers, so every ship got the other list (next flight);
+  - the spawn: the server's starship spawn (FUN_1416bcab0, hooked) is handed the spawn entity, whose data (+0x38) is the
+    spawn point (StarshipSpawnReferenceObjectData) - measured: it matches the spawn points creep_scan rewrites - and
+    returns the ship. Ships spawned from the Y-wing and TIE bomber packs' spawn points are kept; the scorer checks the
+    ship against them. Not flown yet.
 - **App:** the mouse wheel over a focused dropdown changed its selection, so scrolling down to the hull and shield
   boxes rolled the pack dropdowns to their last ship (U-wing, Reaper) and saved it (30070e7). Reproduced with
   `--test-wheel`; the wheel on a closed dropdown now scrolls the page.

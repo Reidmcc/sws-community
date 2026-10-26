@@ -369,12 +369,7 @@ int main() {
     uint8_t* layer = fake_alloc(0x80); *(uint64_t*)(layer + 8) = 0x144a56c40; *(uint64_t*)(layer + 48) = (uint64_t)(lcArr + 16);
     auto onePart = [](uint8_t* root) { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = root; uint8_t* p = fake_alloc(0x40);
                                        *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
-    // the Y-wing AI blueprint's partition also holds its StarshipEntityData (0x1449fad80): a ship whose data it is, is a bomber
-    uint8_t* ywingData = fake_alloc(0x200); *(uint64_t*)(ywingData + 8) = 0x1449fad80;
-    uint8_t* ywingPart = nullptr;
-    { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = ywingAi; in[1] = ywingData; ywingPart = fake_alloc(0x40);
-      *(uint8_t***)(ywingPart + 0x20) = in; *(uint16_t*)(ywingPart + 0x28) = 2; }
-    parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = ywingPart; parts[5] = onePart(awingAi);
+    parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = onePart(ywingAi); parts[5] = onePart(awingAi);
     // creep missiles ([creep] missiles=1): bhv_aisquadron_basic_imperial's wiring, cut down. The AllowMissileFiring input
     // (1336394533) into a PropertyDefaultValue's InValue (1658462601), whose DefaultValue (2066049125) a Bool feeds; a Bool
     // into a node that DogfighterInfo.IsBot (215512070) also feeds (the bot test); the SelectFloat (InputSelect +48) whose
@@ -700,9 +695,9 @@ int main() {
           "match rules: creep morale on offense 1 -> 2 (list entry and typed attribute), the match length 1800 -> 2400 and the morale DoT on; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
-    {   // per ship type, after the scans have found the bombers: a Y-wing (its data the Y-wing AI's StarshipEntityData)
-        // keeps the squadron's list, any other ship gets one that scores the corvette or Raider 1, in the opener and on
-        // defense; a list that isn't the creep's passes through
+    {   // per ship type: a ship the starship spawn made from the Y-wing pack's spawn point (pack 1, kept by the scans) keeps
+        // the squadron's list; a ship from the stock pack's spawn point gets one that scores the corvette or Raider 1, in
+        // the opener and on defense; a list that isn't the creep's passes through
         auto score = [](uint8_t* set, uint32_t target) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
                                                          for (uint32_t k = 0; k < n; k++) { uint8_t* s = ((uint8_t**)a)[k]; uint32_t m = *(uint32_t*)(s + 40);
                                                                                             if ((m & target) == m) return *(float*)(s + 44); }
@@ -710,8 +705,12 @@ int main() {
         const uint32_t smallcap = (1u << 28) | 2;
         typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
         typedef void(__fastcall* cf_t)(uint8_t*, uint8_t*);
-        uint8_t* bomberShip = fake_alloc(0x600); *(uint8_t**)(bomberShip + 0x28) = ywingData;
-        uint8_t* fighterShip = fake_alloc(0x600); *(uint8_t**)(fighterShip + 0x28) = fake_alloc(0x200);
+        typedef uint64_t(__fastcall* sp_t)(uint8_t*, uint64_t);
+        auto spawnFrom = [](uint8_t* spawnRef) { uint8_t* ship = fake_alloc(0x600); uint8_t* ent = fake_alloc(0x100);
+                                                 *(uint8_t**)(ent + 0x38) = spawnRef; *(uint8_t**)(ent + 0x10) = ship;
+                                                 ((sp_t)0x1416bcab0)(ent, 0); return ship; };
+        uint8_t* bomberShip = spawnFrom(creepSpawn[0][1]);    // Rebel pack 1: Y-wings
+        uint8_t* fighterShip = spawnFrom(creepSpawn[1][0]);   // Rebel pack 2: stock X-wings
         auto listFor = [&](uint8_t* ship, uint8_t* list) { g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, 0, (uint64_t)list, 0, 0, 0, 0); return (uint8_t*)g_scorerList; };
         uint8_t* bl = creepList ? listFor(bomberShip, creepList) : nullptr; uint8_t* fl = creepList ? listFor(fighterShip, creepList) : nullptr;
         bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 4 && score(fl, smallcap) == 1;
