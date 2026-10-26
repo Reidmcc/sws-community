@@ -326,7 +326,7 @@ new ones. The flight decides the open question in 4: whether priority 0 keeps cr
 
 ## 8. Shipped (2026-10-26; creep-rework, flown)
 
-Flown by Pseudo on Yavin and Esseles; each line says what was seen.
+Flown by Pseudo on Yavin, Esseles, Sissubo and Fostar Haven; each line says what was seen.
 
 - **Bomb raids by phase** (f27be3a): bombers took appropriate targets in the opener (mostly creep, sometimes the
   Raider) and the frigates on offense.
