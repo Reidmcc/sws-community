@@ -5,6 +5,7 @@
 #include <math.h>
 #include <winsock2.h>
 #include <windows.h>
+#include <initializer_list>
 #pragma comment(lib, "ws2_32.lib")
 #include <stdio.h>
 #include <stdint.h>
@@ -375,6 +376,26 @@ int main() {
     *(const char**)(bhvRoot + 0x18) = "Game/AI/SquadronAI/Behaviours/Bhv_AISquadron_Basic_Imperial"; *(uint64_t*)(bhvRoot + 40) = (uint64_t)(bhvPcArr + 16);
     parts[6] = onePart(bhvRoot); parts[7] = onePart(creepPrefab);
     *(uint8_t***)(domain + 0x140) = parts + 8;
+    // bomber torpedoes ([creep] torpedoes=1): the Y-wing's SP collection (hull, shields) and the bots' torpedo collection
+    // (bot hull, two weapon slots, bot movement), each an Asset with its Configs at +0x20
+    auto cfgNamed = [](const char* name) { uint8_t* c = fake_alloc(0x40); *(const char**)(c + 0x18) = name; return c; };
+    uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP");
+    uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP");
+    uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB");
+    uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock");
+    uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb");
+    uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT");
+    auto collection = [&](const char* name, std::initializer_list<uint8_t*> cs) {
+        uint8_t* c = fake_alloc(16 + 0x30) + 16; *(const char**)(c + 0x18) = name;
+        uint8_t* a = fake_alloc(16 + cs.size() * 8) + 16; *(uint32_t*)(a - 4) = (uint32_t)cs.size();
+        size_t i = 0; for (uint8_t* x : cs) ((uint8_t**)a)[i++] = x;
+        *(uint8_t**)(c + 0x20) = a; return c; };
+    uint8_t* ywingSp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_SP", { spHull, spShield });
+    uint8_t* ywingTorp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_PvB_BOT_Torpedo_Bomb", { botHull, slotTorp, slotBomb, botMove });
+    {
+        uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = onePart(ywingSp); grown[9] = onePart(ywingTorp);
+        *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + 10;
+    }
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
     wcscpy_s(wcsrchr(defaultsPath, L'\\') + 1, 32, L"defaults.ini");
     {   // an earlier launch's file: a config this run never loads (must be carried over) and a stale section for one it
@@ -600,11 +621,19 @@ int main() {
     for (int i = 0; i < 150; i++) { ((void(__fastcall*)(void*, uint64_t, uint64_t, uint64_t))0x1401bfe60)(gs, 0, 0, 0); Sleep(30); }
     check(true, "ticked 4.5 s (see status log for the 3b spawn lines)");
     check(*(uint64_t*)(creepSpawn[0][0] + 0xC0) == (uint64_t)ywingAi && *(uint64_t*)(creepSpawn[0][1] + 0xC0) == (uint64_t)ywingAi &&
-          *(uint64_t*)(creepSpawn[0][0] + 0x1F0) == 0 && *(uint64_t*)(creepSpawn[0][1] + 0x1F0) == 0 &&
+          *(uint64_t*)(creepSpawn[2][0] + 0x1F0) == 0 && *(uint64_t*)(creepSpawn[2][1] + 0x1F0) == 0 &&
           *(uint64_t*)(creepSpawn[2][0] + 0xC0) == (uint64_t)awingAi && *(uint64_t*)(creepSpawn[2][1] + 0xC0) == (uint64_t)awingAi &&
           *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0x1F0) == (uint64_t)creepCfg &&
           *(uint64_t*)(decoySpawn + 0xC0) == (uint64_t)xwingAi,
-          "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings, with no loadout; pack 2 and a non-creep spawn point stay stock");
+          "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings (no loadout); pack 2 and a non-creep spawn point stay stock");
+    {   // the Y-wing pack's torpedo loadout: the SP hull and shields, then the bots' two weapon slots; nothing else
+        uint8_t* lo0 = *(uint8_t**)(creepSpawn[0][0] + 0x1F0); uint8_t* lo1 = *(uint8_t**)(creepSpawn[0][1] + 0x1F0);
+        uint8_t* arr = lo0 ? *(uint8_t**)(lo0 + 0x20) : nullptr;
+        check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 4 &&
+              ((uint8_t**)arr)[0] == spHull && ((uint8_t**)arr)[1] == spShield && ((uint8_t**)arr)[2] == slotTorp && ((uint8_t**)arr)[3] == slotBomb &&
+              *(uint32_t*)(*(uint8_t**)(ywingSp + 0x20) - 4) == 2 && *(uint32_t*)(*(uint8_t**)(ywingTorp + 0x20) - 4) == 4,
+              "creep torpedoes: the Y-wing pack carries the bots' torpedo and bomb slots with the creep's own hull and shields; the game's collections untouched");
+    }
     {   // StandIn: materialgrid.laserdamage.capitalhull=0.05. Through the hull site, a laser on the capital material and on
         // the default material (a corvette's hull) get the private copy; ion, a shield target, and any other caller don't
         uint64_t viaCap = ((matl_t)0x1417db3f7)(grid, &laserMat, &capitalMat), viaDef = ((matl_t)0x1417db3f7)(grid, &laserMat, &defaultMat);
@@ -759,7 +788,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedoes=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
