@@ -2217,8 +2217,33 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     (void)slots;
     return cOut[f][t] = coll;
 }
+// Bomber torpedoes are for capital ships ([creep] torpedoes): the AI torpedo weapons the bombers carry (the vs-AI bots'
+// StarshipWeaponConfig_HighYieldTorpedo_<YWing|TieBomber>_AI_Instalock, ClassInfo 0x1449fc370) lock through their
+// WeaponFiring (+96), a TargetLockWeaponFiringData (TargetLockType +224, 2 here; TargetTags +228, a mask the target must
+// carry all of, 0 = anything). TargetTags = 2 (the capital-ship tag, which the corvette, the Raider, the frigates and the
+// flagships carry) keeps them from locking onto creep. Those weapons are the vs-AI bots' too, so only while no bot logic
+// is loaded (Fleet Battles: pf_pvb_botlogic is loaded only with bots); with bots loaded, a filter the mod set goes back.
+static void creep_torpedo_targets(const uint64_t weapon[2], bool botsLoaded) {
+    static uint64_t set[2];   // the firing data the mod changed, to put back if bots load
+    static const char* kShip[2] = { "ywing", "tiebomber" };
+    for (int b = 0; b < 2; b++) {
+        uint64_t f = weapon[b] ? rd<uint64_t>(weapon[b], 96) : 0; if (!f) continue;
+        if (rd<int32_t>(f, 224) != 2) {
+            static bool told[2]; if (!told[b]) { told[b] = true; status("creep: the %s AI torpedo isn't a lock-on weapon as expected (type %d); its lock filter stays", kShip[b], rd<int32_t>(f, 224)); }
+            continue;
+        }
+        uint32_t now = rd<uint32_t>(f, 228);
+        if (!botsLoaded && now == 0) {
+            if (leaf_write(f + 228, true, 2)) { set[b] = f; status("creep: %s torpedoes lock only onto capital ships (the corvette, the Raider, frigates, flagships)", kShip[b]); }
+        } else if (botsLoaded && set[b] == f && now == 2) {
+            if (leaf_write(f + 228, true, 0)) { set[b] = 0; status("creep: %s torpedoes: vs-AI bots are loaded, so their lock filter is back to stock", kShip[b]); }
+        }
+    }
+}
 static void creep_scan() {
     if (!g_creepOn && !g_creepBotHandling) return;
+    uint64_t torpWeapon[2] = {}; bool botsLoaded = false;   // creep_torpedo_targets
+    static const char* kTorpWeapon[2] = { "starshipweaponconfig_highyieldtorpedo_ywing_ai_instalock", "starshipweaponconfig_highyieldtorpedo_tiebomber_ai_instalock" };
     // the loadouts' sources (creep_loadout), per faction and ship (CreepShips order), found by type and name
     struct Want { uint64_t cls; char name[96]; uint64_t* at; };
     CreepSources src[2][4] = {}; Want want[40]; int nw = 0;
@@ -2247,11 +2272,16 @@ static void creep_scan() {
     walk_partitions([&](uint64_t insts, uint16_t n) {
         uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
         uint64_t ci = rd<uint64_t>(root, 8);
+        if (g_creepTorpedoes) {   // vs-AI bot logic loaded? (then the bots' torpedo weapons stay stock)
+            inst_leaf(root, leaf, sizeof leaf);
+            if (!_strnicmp(leaf, "pf_pvb_botlogic", 15)) botsLoaded = true;
+        }
         for (uint16_t i = 0; nw && i < n; i++) {   // the loadouts' sources, by type, then name
             uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
             uint64_t oc = rd<uint64_t>(o, 8);
-            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980 && oc != 0x144ab56a0) continue;
+            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980 && oc != 0x144ab56a0 && oc != 0x1449fc370) continue;
             inst_leaf(o, leaf, sizeof leaf); _strlwr_s(leaf);
+            if (oc == 0x1449fc370) { for (int b = 0; b < 2; b++) if (!torpWeapon[b] && !strcmp(leaf, kTorpWeapon[b])) torpWeapon[b] = o; continue; }
             for (int w = 0; w < nw; w++) if (want[w].cls == oc && !*want[w].at && !strcmp(leaf, want[w].name)) *want[w].at = o;
         }
         if (ci == 0x144ade220) {   // a starship blueprint
@@ -2270,6 +2300,7 @@ static void creep_scan() {
             if (!dup && nl < 128) links[nl++] = { src, dst };
         }
     });
+    if (g_creepTorpedoes) creep_torpedo_targets(torpWeapon, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;
     for (int i = 0; i < nl; i++) {

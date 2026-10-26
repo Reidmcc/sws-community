@@ -762,7 +762,7 @@ namespace SwsSettings
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions.");
             rule(creepTorpedoes, "Y-wing and TIE bomber packs carry torpedoes as well as bombs: the weapons of the vs-AI bots' torpedo loadout, with the creep's own hull and shields. " +
-                "They fire them only with creep missiles on, above.");
+                "Their torpedoes lock only onto capital ships, so they aren't spent on creep. They fire them only with creep missiles on, above.");
             rule(creepBotHandling, "Every creep pack flies with the vs-AI bots' movement for its ship (their drift handling, roll and catch-up tuning) instead of the AI ship's own. " +
                 "Hull and shields stay the creep's.");
 

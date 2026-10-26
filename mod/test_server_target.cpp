@@ -397,6 +397,7 @@ int main() {
     // bomber torpedoes ([creep] torpedoes=1): the Y-wing's creep hull and shields (the SP configs, by their ClassInfos, not
     // top-level: inside another asset's partition, as the game keeps them) and the bots' torpedo collection (ClassInfo
     // 0x144a156a0: bot hull, two weapon slots 0x1449fc3f0, bot movement), each an Asset, the collection's Configs at +0x20
+    uint8_t* torpWeapon = nullptr; uint8_t* torpFiring = nullptr;   // the Y-wing AI torpedo, for the lock-filter check
     auto cfgNamed = [](const char* name, uint64_t cls) { uint8_t* c = fake_alloc(0x400); *(uint64_t*)(c + 8) = cls; *(const char**)(c + 0x18) = name; return c; };
     uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP", 0x144a8ca00);
     uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP", 0x144a8c980);
@@ -415,6 +416,14 @@ int main() {
         uint8_t** spInsts = (uint8_t**)fake_alloc(7 * 8); spInsts[0] = ywingSp; spInsts[1] = spHull; spInsts[2] = spShield;
         spInsts[3] = creepCfg; spInsts[4] = xCreepHull; spInsts[5] = xBotMove; spInsts[6] = botMove;
         uint8_t* spPart = fake_alloc(0x40); *(uint8_t***)(spPart + 0x20) = spInsts; *(uint16_t*)(spPart + 0x28) = 7;
+        // the Y-wing's AI torpedo (StarshipWeaponConfig 0x1449fc370): its WeaponFiring (+96) a lock-on firing data
+        // (TargetLockType +224 = 2, TargetTags +228 = 0, anything)
+        torpWeapon = fake_alloc(0x200); *(uint64_t*)(torpWeapon + 8) = 0x1449fc370;
+        *(const char**)(torpWeapon + 0x18) = "Game/Gameplay/Starships/YWing_AI/Projectiles/StarshipWeaponConfig_HighYieldTorpedo_YWing_AI_Instalock";
+        torpFiring = fake_alloc(0x200); *(int32_t*)(torpFiring + 224) = 2; *(uint8_t**)(torpWeapon + 96) = torpFiring;
+        spInsts[6] = botMove;
+        { uint8_t** in2 = (uint8_t**)fake_alloc(8 * 8); memcpy(in2, spInsts, 7 * 8); in2[7] = torpWeapon;
+          *(uint8_t***)(spPart + 0x20) = in2; *(uint16_t*)(spPart + 0x28) = 8; }
         uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = spPart; grown[9] = onePart(ywingTorp);
         *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + 10;
     }
@@ -723,6 +732,8 @@ int main() {
         check(opener && defense && pass,
               "creep per ship type: the Y-wing keeps the corvette at 4, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
     }
+    check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
+          "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
     // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
     check(creepSquadForMode && *(int32_t*)(creepSquadForMode + 32) == 1,
           "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");

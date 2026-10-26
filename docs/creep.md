@@ -59,7 +59,10 @@ or the flagship.
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
 never do). This also gives creep the bots' tail-chasing dogfighting. With **torpedoes**, Y-wing and TIE bomber packs carry
 the weapons of the vs-AI bots' torpedo loadout (torpedoes and bombs; the TIE bomber also gets flares) with the creep's
-own hull and shields. In flight, Y-wings tend to fire one torpedo on the approach and then switch to bombing runs.
+own hull and shields. Their torpedoes lock only onto capital ships (the corvette, the Raider, frigates and flagships),
+so they aren't spent on creep. Those torpedo weapons are the vs-AI bots' too, so the lock filter is only set while no
+bots are loaded, which is to say in Fleet Battles. In flight, Y-wings tend to fire one torpedo on the approach and then
+switch to bombing runs.
 
 **The bots' handling.** Every pack flies the vs-AI bots' movement for its ship (their drift, roll and catch-up tuning)
 instead of the AI ship's own, which makes creep noticeably sharper in a dogfight. Hull and shields stay the creep's.
