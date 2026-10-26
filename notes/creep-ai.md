@@ -358,7 +358,13 @@ Flown by Pseudo on Yavin, Esseles, Sissubo and Fostar Haven; each line says what
   - the spawn: the server's starship spawn (FUN_1416bcab0, hooked) is handed the spawn entity, whose data (+0x38) is the
     spawn point (StarshipSpawnReferenceObjectData) - measured: it matches the spawn points creep_scan rewrites - and
     returns the ship. Ships spawned from the Y-wing and TIE bomber packs' spawn points are kept; the scorer checks the
-    ship against them. Not flown yet.
+    ship against them. Flown on Yavin: all 20 bomber ships scored with the bombers' list and all 50 others with the
+    other list, each traced in the log to its spawn point; bombers and no other creep went for the Raider and corvette.
+- **Torpedoes for capital ships** (d9a0ce0): the AI torpedo weapons (`starshipweaponconfig_highyieldtorpedo_{ywing,
+  tiebomber}_ai_instalock`, StarshipWeaponConfig 0x1449fc370) lock through WeaponFiring (+96), a TargetLockWeaponFiring
+  data with TargetTags at +228 (a mask the target must carry all of; 0 = anything). Set to 2, the capital-ship tag, only
+  while no pf_pvb_botlogic is loaded (the bots share these weapons). Flown: no torpedoes at creep, and a Y-wing landed
+  one on the Raider in the opener.
 - **App:** the mouse wheel over a focused dropdown changed its selection, so scrolling down to the hull and shield
   boxes rolled the pack dropdowns to their last ship (U-wing, Reaper) and saved it (30070e7). Reproduced with
   `--test-wheel`; the wheel on a closed dropdown now scrolls the page.
