@@ -41,6 +41,9 @@ Double-click sws_settings.exe for everything below without editing files:
 - Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch.
 - Rules and fixes: turn the profile's exploit rules (zero-throttle pinballing, multidrifting) and map fixes (Zavian
   Abyss's middle X-wing creep pack spawning 3 ships instead of 5) on or off. Each is off unless you turn it on.
+  Creep packs: what each Fleet Battles creep pack flies, and whether creep engage aggressively (following the
+  phases), fire missiles, carry torpedoes on the bombers and fly with the vs-AI bots' handling; and creep hull and
+  shields by ship type. docs/creep.md on the project page explains each.
 - Profile and values: pick, make, copy, rename, import or delete profiles; and change
   any of the game's values (speeds, shields, hull, weapons, components...) for every ship, each with its default and the
   range it's allowed. Reset one value or all of them to default. The fingerprint at the top must match everyone else's.

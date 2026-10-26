@@ -43,6 +43,9 @@ game and load the mod's DLL into it. Some malware does the same, so the pattern 
   protocol version, so players with different rules are refused at connect instead of landing in the same match.
 - **Ship size.** Each starfighter can be made smaller or bigger, its model and its laser hitbox together (one uniform
   scale per ship, player and AI alike). [docs/ship-size.md](docs/ship-size.md) lists the sizes closest to canon.
+- **Creep.** Fleet Battles' AI creep packs can fly other ships (bombers, interceptors, dropships), engage like the
+  vs-AI bots with targets that follow the match's phases, fire missiles and torpedoes, take the bots' handling, and have
+  their hull and shields set by ship type. [docs/creep.md](docs/creep.md) has the details.
 - **Unlocks.** Every ship component and cosmetic counts as owned, for everyone.
 - **No EA error 327.** The "lost connection to EA servers" event, which also locked the loadout screen, is suppressed.
 
@@ -143,6 +146,16 @@ the AI "creep" ships are left alone.
 **Ship size** (issue #20) is one value per starfighter, `shipscale_<ship>.scale` (the app lists it as **Size** under
 each ship): it resizes the ship's model and its laser hitbox together, for the player ship and its AI versions. How it
 works, and the sizes closest to canon for every ship: [docs/ship-size.md](docs/ship-size.md).
+
+**Creep** settings are a profile's `[creep]` section (the app's **Creep packs**, on Rules and fixes): each pack's ship,
+aggressive phase-following creep and their engagement range, missiles, bomber torpedoes and the bots' handling, plus
+creep hull and shields by ship type as ordinary values. What each does and how: [docs/creep.md](docs/creep.md).
+
+**Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
+creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
+the kickoff and phase sizes of the morale bar, its optional drain over time, the match and kickoff timers, respawn time and
+the passive-to-aggressive creep ratio; Dogfight's score to win, match time and pickup timings. Keys look like
+`incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileondefense` ("tow" is the tug-of-war morale bar).
 
 **Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
 a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match
