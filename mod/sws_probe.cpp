@@ -1795,7 +1795,7 @@ static void model_scale_partition(uint64_t part) {
 // The squadron (IncomSquadronAISquadronEntityData 0x144a028c0, in the blueprint's Objects at +72) reads its target list
 // only once, as it registers, so all seven entries of its TargetPrioritisationSettingsList (+104) are one shared list
 // whose scores h_ctrlfield swaps as the controller's behaviour follows the phase: offense (the enemy frigates, then their
-// flagship), face-off and transition (the small capital ship), defense (no enemy capital ship). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
+// flagship), face-off and transition (the small capital ship), defense (the small capital ship: the attacker brings a new corvette or Raider each offense). Each keeps the stock scores apart from the generic capital-ship one (tag 2),
 // and adds frigate (tag bit 29), flagship (22) and small capital ship (28) scores. The squadron engages as its own
 // EngagementModeOverride (+112, Aggressive) says, within [creep] radius (2000 m by default; TargetingRules +32: EngagementMode +32, search radius
 // +40). Done as the prefab's partition loads, before a squadron is built from it. The lists and scores are copies of the
@@ -1846,7 +1846,7 @@ static void creep_ai_partition(uint64_t part) {
     struct Extra { uint32_t tags; float prio[3]; };   // priority on offense, face-off, defense
     static const Extra kExtra[3] = { { 1u << 29, { 4, 0, 0 } },     // the frigates
                                      { 1u << 22, { 3, 0, 0 } },     // the flagship, once the frigates are gone
-                                     { 1u << 28, { 2, 4, 2 } } };   // the small capital ship: the corvette or the Raider
+                                     { 1u << 28, { 2, 4, 4 } } };   // the small capital ship: the corvette or the Raider
     uint64_t arrs[3] = {};
     for (int r = 0; r < 3; r++) {
         uint64_t arr = creep_array(ns + 3), tmpl = 0; uint32_t m = 0; if (!arr) break;
@@ -1883,7 +1883,7 @@ static void creep_ai_partition(uint64_t part) {
     bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
               leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius);
     if (ok) status("creep: %s: aggressive within %d m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
-                   "capital ship; defense: no capital ship)", leaf, g_creepRadius);
+                   "capital ship; defense: the small capital ship)", leaf, g_creepRadius);
     else status("creep: %s: a write failed; its creep may keep the stock engagement", leaf);
 }
 // The phase, live: the creep logic maps FrontlineIndex to its controller's BehaviourIndex (SelectInt: phases 0..6 ->

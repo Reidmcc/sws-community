@@ -511,13 +511,13 @@ int main() {
         ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 1 = phase 0, a Rebel zone: Imperial offense
         bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
         bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
-        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 2;
+        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4;
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
         bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
         bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
         check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,
-              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (offense: frigates 4, flagship 3; face-off: the small capital ship; defense: no capital ship)");
+              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (offense: frigates 4, flagship 3; face-off and defense: the small capital ship)");
         check(*(uint8_t**)(pcArr + 8) == debugDisp && *(int32_t*)(pcArr + 20) == 5685821 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
               *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
