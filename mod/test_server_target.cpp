@@ -325,7 +325,16 @@ int main() {
     uint8_t* xwingAi = bpRoot("Game/Gameplay/Starships/XWing_AI/Starship_XWing_AI");
     uint8_t* ywingAi = bpRoot("Game/Gameplay/Starships/Ywing_AI/Starship_Ywing_AI");
     uint8_t* awingAi = bpRoot("Game/Gameplay/Starships/AWing_AI/Starship_AWing_AI");
-    uint8_t* creepCfg = fake_alloc(0x40);
+    // the stock creep collection the stock packs' spawn points name (StarshipConfigCollection 0x144a156a0, Configs +0x20:
+    // the creep X-wing's hull), and the bots' X-wing and Y-wing movement (StarshipMovementConfig 0x144ab56a0), for
+    // [creep] bot_handling
+    uint8_t* xCreepHull = fake_alloc(0x400); *(uint64_t*)(xCreepHull + 8) = 0x144a8ca00;
+    *(const char**)(xCreepHull + 0x18) = "Game/Gameplay/Starships/XWing_AI/Config/StarshipHealthDamageData_XWing_AI";
+    uint8_t* creepCfg = fake_alloc(16 + 0x40) + 16; *(uint64_t*)(creepCfg + 8) = 0x144a156a0;
+    *(const char**)(creepCfg + 0x18) = "Game/Gameplay/Starships/XWing_AI/Config/StarshipConfigCollection_XWing_AI";
+    { uint8_t* a = fake_alloc(16 + 8) + 16; *(uint32_t*)(a - 4) = 1; ((uint8_t**)a)[0] = xCreepHull; *(uint8_t**)(creepCfg + 0x20) = a; }
+    uint8_t* xBotMove = fake_alloc(0x400); *(uint64_t*)(xBotMove + 8) = 0x144ab56a0;
+    *(const char**)(xBotMove + 0x18) = "Game/Gameplay/Starships/XWing_AI/Config/StarshipMovementConfig_XWingAI_BOT";
     uint8_t* creepPrefab = fake_alloc(0x40); *(const char**)(creepPrefab + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_CreepLogic_Exploit_XWings";
     uint8_t* otherPrefab = fake_alloc(0x40); *(const char**)(otherPrefab + 0x18) = "Game/Levels/PvP/Prefab/Frontline/PF_PvP_FrontlineState";
     uint8_t* creepSpawn[3][2]; uint8_t* place[3];
@@ -385,7 +394,7 @@ int main() {
     uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB", 0);
     uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock", 0x1449fc3f0);
     uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb", 0x1449fc3f0);
-    uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT", 0);
+    uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT", 0x144ab56a0);
     auto collection = [&](const char* name, std::initializer_list<uint8_t*> cs) {
         uint8_t* c = fake_alloc(16 + 0x30) + 16; *(uint64_t*)(c + 8) = 0x144a156a0; *(const char**)(c + 0x18) = name;
         uint8_t* a = fake_alloc(16 + cs.size() * 8) + 16; *(uint32_t*)(a - 4) = (uint32_t)cs.size();
@@ -394,8 +403,9 @@ int main() {
     uint8_t* ywingSp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_SP", { spHull, spShield });
     uint8_t* ywingTorp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_PvB_BOT_Torpedo_Bomb", { botHull, slotTorp, slotBomb, botMove });
     {
-        uint8_t** spInsts = (uint8_t**)fake_alloc(3 * 8); spInsts[0] = ywingSp; spInsts[1] = spHull; spInsts[2] = spShield;
-        uint8_t* spPart = fake_alloc(0x40); *(uint8_t***)(spPart + 0x20) = spInsts; *(uint16_t*)(spPart + 0x28) = 3;
+        uint8_t** spInsts = (uint8_t**)fake_alloc(7 * 8); spInsts[0] = ywingSp; spInsts[1] = spHull; spInsts[2] = spShield;
+        spInsts[3] = creepCfg; spInsts[4] = xCreepHull; spInsts[5] = xBotMove; spInsts[6] = botMove;
+        uint8_t* spPart = fake_alloc(0x40); *(uint8_t***)(spPart + 0x20) = spInsts; *(uint16_t*)(spPart + 0x28) = 7;
         uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = spPart; grown[9] = onePart(ywingTorp);
         *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + 10;
     }
@@ -626,16 +636,23 @@ int main() {
     check(*(uint64_t*)(creepSpawn[0][0] + 0xC0) == (uint64_t)ywingAi && *(uint64_t*)(creepSpawn[0][1] + 0xC0) == (uint64_t)ywingAi &&
           *(uint64_t*)(creepSpawn[2][0] + 0x1F0) == 0 && *(uint64_t*)(creepSpawn[2][1] + 0x1F0) == 0 &&
           *(uint64_t*)(creepSpawn[2][0] + 0xC0) == (uint64_t)awingAi && *(uint64_t*)(creepSpawn[2][1] + 0xC0) == (uint64_t)awingAi &&
-          *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0x1F0) == (uint64_t)creepCfg &&
+          *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0xC0) == (uint64_t)xwingAi &&
           *(uint64_t*)(decoySpawn + 0xC0) == (uint64_t)xwingAi,
           "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings (no loadout); pack 2 and a non-creep spawn point stay stock");
     {   // the Y-wing pack's torpedo loadout: the SP hull and shields, then the bots' two weapon slots; nothing else
         uint8_t* lo0 = *(uint8_t**)(creepSpawn[0][0] + 0x1F0); uint8_t* lo1 = *(uint8_t**)(creepSpawn[0][1] + 0x1F0);
         uint8_t* arr = lo0 ? *(uint8_t**)(lo0 + 0x20) : nullptr;
-        check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 4 &&
+        check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 5 &&
               ((uint8_t**)arr)[0] == spHull && ((uint8_t**)arr)[1] == spShield && ((uint8_t**)arr)[2] == slotTorp && ((uint8_t**)arr)[3] == slotBomb &&
+              ((uint8_t**)arr)[4] == botMove &&
               *(uint32_t*)(*(uint8_t**)(ywingSp + 0x20) - 4) == 2 && *(uint32_t*)(*(uint8_t**)(ywingTorp + 0x20) - 4) == 4,
-              "creep torpedoes: the Y-wing pack carries the bots' torpedo and bomb slots with the creep's own hull and shields; the game's collections untouched");
+              "creep torpedoes and handling: the Y-wing pack carries the bots' torpedo and bomb slots and their movement, with the creep's own hull and shields; the game's collections untouched");
+        // the stock X-wing pack (with [creep] bot_handling): its own creep hull and the bots' movement; its ship unchanged
+        uint8_t* st = *(uint8_t**)(creepSpawn[1][0] + 0x1F0); uint8_t* sa = st ? *(uint8_t**)(st + 0x20) : nullptr;
+        check(st && st != creepCfg && st == *(uint8_t**)(creepSpawn[1][1] + 0x1F0) && sa && *(uint32_t*)(sa - 4) == 2 &&
+              ((uint8_t**)sa)[0] == xCreepHull && ((uint8_t**)sa)[1] == xBotMove && *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi &&
+              *(uint32_t*)(*(uint8_t**)(creepCfg + 0x20) - 4) == 1,
+              "creep handling: the stock X-wing pack flies the bots' movement with its own creep hull; the stock collection untouched");
     }
     {   // StandIn: materialgrid.laserdamage.capitalhull=0.05. Through the hull site, a laser on the capital material and on
         // the default material (a corvette's hull) get the private copy; ion, a shield target, and any other caller don't
@@ -697,7 +714,7 @@ int main() {
     check(*(float*)(pips + 16 + 3 * 24 + 8) == 1.5f && *(float*)(pips + 16 + 2 * 24 + 8) == 3.5f && *(float*)(pips + 16 + 4 * 24 + 8) == 3.0f,
           "value engine: one member of one element of a value-type array written (subclass resolved)");
     {
-        char buf[16384] = {}; FILE* f = nullptr; size_t n = 0;
+        static char buf[1 << 18]; memset(buf, 0, sizeof buf); FILE* f = nullptr; size_t n = 0;
         if (_wfopen_s(&f, defaultsPath, L"rb") == 0 && f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); }
         check(n && strstr(buf, "[starshipmovementconfig_xwing]") && strstr(buf, "afterburnermaxspeed=240") &&
               strstr(buf, "maxspeeds[8]=145") && strstr(buf, "[starshipshielddata_xwing]") && strstr(buf, "maxshieldhealth=800") &&
@@ -791,7 +808,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedoes=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedoes=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

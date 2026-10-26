@@ -181,6 +181,9 @@ static bool g_creepAggressive, g_creepMissiles;
 // [creep] torpedoes = 1 (creep_torpedo_loadout): Y-wing and TIE bomber packs carry torpedoes as well as bombs. In the
 // fingerprint when on.
 static bool g_creepTorpedoes;
+// [creep] bot_handling = 1 (creep_loadout): every creep pack flies with the vs-AI bots' movement config for its ship. In the
+// fingerprint when on.
+static bool g_creepBotHandling;
 // [creep] radius: how far aggressive creep look for targets, in metres (500..3000; 2000 is the bots' value). In the
 // fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
 static int g_creepRadius = 2000;
@@ -221,7 +224,7 @@ static char g_profileName[64] = "(rules.ini)";
 static uint32_t g_profileFp;
 static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
 static uint32_t profile_fingerprint() {
-    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes) return 0;
+    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes && !g_creepBotHandling) return 0;
     int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
     for (int i = 0; i < g_overrideCount; i++) order[i] = i;
     for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
@@ -237,6 +240,7 @@ static uint32_t profile_fingerprint() {
     if (g_creepAggressive && g_creepRadius != 2000) { sprintf_s(b, "creep.radius=%d;", g_creepRadius); h = fnv1a(h, b); }
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedoes=1;");
+    if (g_creepBotHandling) h = fnv1a(h, "creep.bothandling=1;");
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
     return h ? h : 1;
 }
@@ -427,12 +431,13 @@ static void load_profile(const wchar_t* dir) {
             g_creepAggressive = GetPrivateProfileIntW(L"creep", L"aggressive", 0, pf) != 0;
             g_creepMissiles = GetPrivateProfileIntW(L"creep", L"missiles", 0, pf) != 0;
             g_creepTorpedoes = GetPrivateProfileIntW(L"creep", L"torpedoes", 0, pf) != 0;
+            g_creepBotHandling = GetPrivateProfileIntW(L"creep", L"bot_handling", 0, pf) != 0;
             g_creepRadius = (int)GetPrivateProfileIntW(L"creep", L"radius", 2000, pf);
             if (g_creepRadius < 500 || g_creepRadius > 3000) {
                 int was = g_creepRadius; g_creepRadius = g_creepRadius < 500 ? 500 : 3000;
                 status("profile: [creep] radius = %d is outside 500..3000; clamped to %d", was, g_creepRadius);
             }
-            if ((g_creepAggressive || g_creepTorpedoes) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
             g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
@@ -467,6 +472,7 @@ static void load_profile(const wchar_t* dir) {
     if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase", g_creepRadius);
     if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
     if (g_creepTorpedoes) status("  creep: Y-wing and TIE bomber packs carry torpedoes");
+    if (g_creepBotHandling) status("  creep: every pack flies with the vs-AI bots' handling");
     for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (%s)", g_overrides[i].key, g_overrides[i].value,
         !strncmp(g_overrides[i].key, "shipscale_", 10) ? "the ship's size, applied as its blueprint loads, issue #20"
         : !strncmp(g_overrides[i].key, "materialgrid.", 13) ? "laser and ion damage against capital ships, applied at each hit"
@@ -2101,52 +2107,79 @@ template <typename F> static void walk_partitions(F fn) {
         leave(dom + 0x70);
     }
 }
-// A torpedo loadout for a bomber pack: a copy of the vs-AI bots' torpedo collection (StarshipConfigCollection, ClassInfo
-// 0x144a156a0: an Asset with Configs at +0x20, pointers, count at -4) whose Configs are the creep's own hull and shields
-// (the single-player AI configs, StarshipHealthDamageData 0x144a8ca00 / StarshipShieldData 0x144a8c980, *_AI_SP, which
-// carry the creep durability) and the bots' weapon slots (StarshipWeaponSlotConfig 0x1449fc3f0: torpedoes and bombs).
-// The bots' own hull, shields, movement and hull component stay out, so creep keep creep durability and handling. The
-// sources are found by type and name among all of a level's objects (not only its top-level assets: 2026-10-26 the
-// first build looked only at those and found nothing). Kept for the process's life in the creep pool, rebuilt when the
-// sources change.
-static uint64_t creep_torpedo_loadout(int which, uint64_t pvb, uint64_t hull, uint64_t shields, const char* ship) {
-    static uint64_t cPvb[2], cHull[2], cShields[2], cOut[2]; static bool told[2];
-    if (cPvb[which] == pvb && cHull[which] == hull && cShields[which] == shields && (cOut[which] || told[which])) return cOut[which];
-    cPvb[which] = pvb; cHull[which] = hull; cShields[which] = shields; cOut[which] = 0; told[which] = true;
-    if (!pvb || !hull || !g_creepPool) {
-        status("creep: %s torpedo loadout: %s isn't loaded in this level; its packs fly without torpedoes", ship,
-               !pvb ? "the vs-AI bots' torpedo collection" : !hull ? "the creep hull config" : "the creep pool");
-        return 0;
+// A creep pack's loadout (creep_loadout), when torpedoes or the bots' handling ask for one: a copy of the faction's stock
+// creep collection (StarshipConfigCollection, ClassInfo 0x144a156a0: an Asset with Configs at +0x20, pointers, count at
+// -4) whose Configs are
+//   - the creep's hull and shields: a stock pack's own creep configs (that collection's), a changed pack's single-player
+//     AI configs (StarshipHealthDamageData 0x144a8ca00 / StarshipShieldData 0x144a8c980, *_AI_SP: the creep durability);
+//   - with [creep] torpedoes, for Y-wings and TIE bombers: the weapon slots of the vs-AI bots' torpedo loadout
+//     (StarshipWeaponSlotConfig 0x1449fc3f0 in that collection: torpedoes, bombs, flares);
+//   - with [creep] bot_handling: the vs-AI bots' movement config for the ship (StarshipMovementConfig 0x144ab56a0,
+//     *AI_BOT), in place of the AI blueprint's own.
+// The bots' hull, shields and hull component stay out, so creep keep creep durability. The sources are found by type
+// and name among all of a level's objects. Kept for the process's life in the creep pool, rebuilt when a source changes.
+struct CreepSources { uint64_t stockColl, hull, shields, torpColl, botMove; };
+static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoes, bool handling) {
+    static CreepSources cSrc[2][4]; static uint64_t cOut[2][4]; static bool cTold[2][4], cTorp[2][4], cHand[2][4];
+    const char* ship = kCreepShips[f][t];
+    if (!memcmp(&cSrc[f][t], &s, sizeof s) && cTorp[f][t] == torpedoes && cHand[f][t] == handling && (cOut[f][t] || cTold[f][t])) return cOut[f][t];
+    cSrc[f][t] = s; cTorp[f][t] = torpedoes; cHand[f][t] = handling; cOut[f][t] = 0; cTold[f][t] = true;
+    const char* missing = !g_creepPool ? "the creep pool" : !s.stockColl ? "the stock creep collection" : t && !s.hull ? "the creep hull config" : nullptr;
+    if (missing) { status("creep: %s loadout: %s isn't loaded in this level; its packs keep their usual loadout", ship, missing); return 0; }
+    // what's missing of the extras drops only that extra
+    if (torpedoes && !s.torpColl) { status("creep: %s loadout: the vs-AI bots' torpedo collection isn't loaded in this level; no torpedoes", ship); torpedoes = false; }
+    if (handling && !s.botMove) { status("creep: %s loadout: the vs-AI bots' movement config isn't loaded in this level; the usual handling", ship); handling = false; }
+    if (!torpedoes && !handling) return 0;
+    uint64_t keep[16]; uint32_t nk = 0, slots = 0; bool torp = false; char leaf[128];
+    if (!t) {   // a stock pack: its own creep configs
+        uint64_t sa = rd<uint64_t>(s.stockColl, 0x20); uint32_t sn = sa ? rd<uint32_t>(sa - 4, 0) : 0;
+        for (uint32_t k = 0; sn <= 8 && k < sn; k++) { uint64_t c = rd<uint64_t>(sa, k * 8); if (c && nk < 16) keep[nk++] = c; }
+    } else { keep[nk++] = s.hull; if (s.shields) keep[nk++] = s.shields; }
+    if (torpedoes) {
+        uint64_t pa = rd<uint64_t>(s.torpColl, 0x20); uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0;
+        for (uint32_t k = 0; pn <= 16 && k < pn; k++) {
+            uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != 0x1449fc3f0) continue;
+            inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
+            if (strstr(leaf, "torpedo")) torp = true;
+            if (nk < 16) { keep[nk++] = c; slots++; }
+        }
     }
-    uint64_t pa = rd<uint64_t>(pvb, 0x20); uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0;
-    uint64_t keep[16]; uint32_t nk = 0; bool torp = false;
-    keep[nk++] = hull; if (shields) keep[nk++] = shields;
-    char leaf[128];
-    for (uint32_t k = 0; pn <= 16 && k < pn; k++) {   // the bots' loadout: its weapon slots
-        uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != 0x1449fc3f0) continue;
-        inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
-        if (strstr(leaf, "torpedo")) torp = true;
-        if (nk < 16) keep[nk++] = c;
-    }
-    uint64_t coll = torp ? creep_copy(pvb, 40) : 0, arr = coll ? creep_array(nk) : 0;
+    if (handling && nk < 16) keep[nk++] = s.botMove;
+    uint64_t coll = nk && (!torpedoes || torp) ? creep_copy(s.stockColl, 40) : 0, arr = coll ? creep_array(nk) : 0;
     if (!arr) {
-        status("creep: %s torpedo loadout: the bots' collection isn't laid out as expected (%u configs, %s); its packs fly without torpedoes",
-               ship, pn, torp ? "no room" : "no torpedo slot");
+        status("creep: %s loadout: the collections aren't laid out as expected (%s); its packs keep their usual loadout", ship,
+               !nk ? "no hull config" : torpedoes && !torp ? "no torpedo slot" : "no room");
         return 0;
     }
     for (uint32_t k = 0; k < nk; k++) *(uint64_t*)(arr + k * 8ull) = keep[k];
     *(uint64_t*)(coll + 0x20) = arr;
-    status("creep: %s packs carry torpedoes: %u weapon slot(s) from the vs-AI bots' torpedo loadout, with the creep's hull%s", ship,
-           nk - (shields ? 2 : 1), shields ? " and shields" : "");
-    return cOut[which] = coll;
+    status("creep: %s loadout: the creep's hull%s%s%s", ship, (t ? s.shields : 0) || (!t && f == 0) ? " and shields" : "",
+           torpedoes ? ", the vs-AI bots' torpedo loadout's weapon slots" : "", handling ? ", the vs-AI bots' handling" : "");
+    (void)slots;
+    return cOut[f][t] = coll;
 }
 static void creep_scan() {
-    if (!g_creepOn) return;
-    // the torpedo loadouts' sources ([creep] torpedoes): the bots' torpedo collection and the SP collection, per bomber
-    static const char* kTorpPvb[2] = { "starshipconfigcollection_ywing_ai_pvb_bot_torpedo_bomb", "starshipconfigcollection_tiebomber_ai_pvb_bot_bomb_torpedo_heavyhull" };
-    static const char* kTorpHull[2] = { "starshiphealthdamagedata_ywing_ai_sp", "starshiphealthdamagedata_tiebomber_ai_sp" };
-    static const char* kTorpShields[2] = { "starshipshielddata_ywing_ai_sp", nullptr };
-    uint64_t torpPvb[2] = {}, torpHull[2] = {}, torpShields[2] = {};
+    if (!g_creepOn && !g_creepBotHandling) return;
+    // the loadouts' sources (creep_loadout), per faction and ship (CreepShips order), found by type and name
+    struct Want { uint64_t cls; char name[96]; uint64_t* at; };
+    CreepSources src[2][4] = {}; Want want[40]; int nw = 0;
+    bool needLoadouts = g_creepTorpedoes || g_creepBotHandling;
+    static const char* kStockColl[2] = { "starshipconfigcollection_xwing_ai", "starshipconfigcollection_tiefighter_ai" };
+    static const char* kTorpColl[2] = { "starshipconfigcollection_ywing_ai_pvb_bot_torpedo_bomb", "starshipconfigcollection_tiebomber_ai_pvb_bot_bomb_torpedo_heavyhull" };
+    static const char* kBotMove[2][4] = { { "starshipmovementconfig_xwingai_bot", "starshipmovementconfig_ywingai_bot", "starshipmovementconfig_awing_ai_bot", "starshipmovementconfig_uwing_ai_bot" },
+        { "starshipmovementconfig_tiefighterai_bot", "starshipmovementconfig_tiebomberai_bot", "starshipmovementconfig_tieinterceptorai_bot", "starshipmovementconfig_tiereaperai_bot" } };
+    static const bool kHasShields[2][4] = { { true, true, true, true }, { false, false, false, true } };
+    auto addWant = [&](uint64_t cls, const char* name, uint64_t* at) { if (nw < 40) { Want& w = want[nw++]; w.cls = cls; strcpy_s(w.name, name); w.at = at; } };
+    for (int f = 0; needLoadouts && f < 2; f++) for (int t = 0; t < 4; t++) {
+        char nm[96];
+        addWant(0x144a156a0, kStockColl[f], &src[f][t].stockColl);
+        if (t) {
+            sprintf_s(nm, "starshiphealthdamagedata_%s_ai_sp", kCreepShips[f][t]); addWant(0x144a8ca00, nm, &src[f][t].hull);
+            if (kHasShields[f][t]) { sprintf_s(nm, "starshipshielddata_%s_ai_sp", kCreepShips[f][t]); addWant(0x144a8c980, nm, &src[f][t].shields); }
+        }
+        if (t == 1) addWant(0x144a156a0, kTorpColl[f], &src[f][t].torpColl);
+        addWant(0x144ab56a0, kBotMove[f][t], &src[f][t].botMove);
+    }
     static const char* kBlueprint[2][4] = { { "Starship_XWing_AI", "Starship_YWing_AI", "Starship_AWing_AI", "Starship_UWing_AI" },
         { "Starship_TieFighter_AI", "Starship_TieBomber_AI", "Starship_TieInterceptor_AI", "Starship_TieReaper_AI" } };
     uint64_t bp[2][4] = {};
@@ -2155,16 +2188,12 @@ static void creep_scan() {
     walk_partitions([&](uint64_t insts, uint16_t n) {
         uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
         uint64_t ci = rd<uint64_t>(root, 8);
-        for (uint16_t i = 0; g_creepTorpedoes && i < n; i++) {   // the torpedo loadouts' sources, by type, then name
+        for (uint16_t i = 0; nw && i < n; i++) {   // the loadouts' sources, by type, then name
             uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
             uint64_t oc = rd<uint64_t>(o, 8);
-            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980) continue;
+            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980 && oc != 0x144ab56a0) continue;
             inst_leaf(o, leaf, sizeof leaf); _strlwr_s(leaf);
-            for (int b = 0; b < 2; b++) {
-                if (oc == 0x144a156a0 && !torpPvb[b] && !strcmp(leaf, kTorpPvb[b])) torpPvb[b] = o;
-                if (oc == 0x144a8ca00 && !torpHull[b] && !strcmp(leaf, kTorpHull[b])) torpHull[b] = o;
-                if (oc == 0x144a8c980 && kTorpShields[b] && !torpShields[b] && !strcmp(leaf, kTorpShields[b])) torpShields[b] = o;
-            }
+            for (int w = 0; w < nw; w++) if (want[w].cls == oc && !*want[w].at && !strcmp(leaf, want[w].name)) *want[w].at = o;
         }
         if (ci == 0x144ade220) {   // a starship blueprint
             inst_leaf(root, leaf, sizeof leaf);
@@ -2212,16 +2241,20 @@ static void creep_scan() {
             Pack& p = packs[idx[k]]; int t = g_creepPack[f][k];
             if (once(p.src)) status("creep: %s pack %d at (%.0f, %.0f, %.0f), %d spawn points: %s", kCreepFaction[f], k + 1, p.c[0], p.c[1], p.c[2], p.n,
                                     t ? kCreepShips[f][t] : "stock");
-            if (!t) continue;
-            uint64_t target = bp[f][t];
-            if (!target) { if (once(p.src ^ 1)) status("creep: %s pack %d: %s isn't loaded in this level; the pack stays stock", kCreepFaction[f], k + 1, kBlueprint[f][t]); continue; }
-            uint64_t loadout = 0;   // no loadout (the blueprint's defaults), or the bombers' torpedo loadout
-            int bomber = f == 0 && t == 1 ? 0 : f == 1 && t == 1 ? 1 : -1;   // Y-wing, TIE bomber
-            if (g_creepTorpedoes && bomber >= 0) loadout = creep_torpedo_loadout(bomber, torpPvb[bomber], torpHull[bomber], torpShields[bomber], kCreepShips[f][t]);
+            bool torpedoes = g_creepTorpedoes && t == 1;   // the Y-wing and the TIE bomber
+            if (!t && !g_creepBotHandling) continue;   // a stock pack stays as the level has it
+            uint64_t target = t ? bp[f][t] : 0;
+            if (t && !target) { if (once(p.src ^ 1)) status("creep: %s pack %d: %s isn't loaded in this level; the pack stays stock", kCreepFaction[f], k + 1, kBlueprint[f][t]); continue; }
+            // a changed pack: no loadout (the blueprint's defaults) unless torpedoes or the bots' handling ask for one;
+            // a stock pack (only with the bots' handling): its creep configs and the bots' movement
+            uint64_t loadout = torpedoes || g_creepBotHandling ? creep_loadout(f, t, src[f][t], torpedoes, g_creepBotHandling) : 0;
+            if (!t && !loadout) continue;
             for (int d = 0; d < p.n; d++) {
-                if (rd<uint64_t>(p.dst[d], 0xC0) == target && rd<uint64_t>(p.dst[d], 0x1F0) == loadout) continue;
-                if (write_u64(p.dst[d] + 0xC0, target) && write_u64(p.dst[d] + 0x1F0, loadout))
-                    status("creep: %s pack %d spawn point %llx now spawns %s%s", kCreepFaction[f], k + 1, p.dst[d], kCreepShips[f][t], loadout ? " with torpedoes" : "");
+                uint64_t ship = t ? target : rd<uint64_t>(p.dst[d], 0xC0);
+                if (rd<uint64_t>(p.dst[d], 0xC0) == ship && rd<uint64_t>(p.dst[d], 0x1F0) == loadout) continue;
+                if (write_u64(p.dst[d] + 0xC0, ship) && write_u64(p.dst[d] + 0x1F0, loadout))
+                    status("creep: %s pack %d spawn point %llx now spawns %s%s%s", kCreepFaction[f], k + 1, p.dst[d], kCreepShips[f][t],
+                           torpedoes && loadout ? " with torpedoes" : "", g_creepBotHandling && loadout ? " with the bots' handling" : "");
             }
         }
         if (m != 3 && once(0xC0EE0000ull + f)) status("creep: %d %s packs in this level (3 expected); only the first 3 follow the profile", m, kCreepFaction[f]);

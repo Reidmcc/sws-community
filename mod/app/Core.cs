@@ -201,7 +201,7 @@ namespace SwsSettings
         public readonly int[,] Creep = new int[2, 3];
         // [creep] aggressive: creep engage like the vs-AI bots, with targets by phase; missiles: creep fire missiles and
         // torpedoes (the DLL's creep_ai_partition and creep_behaviour_scan); each in the fingerprint only when on
-        public bool CreepAggressive, CreepMissiles, CreepTorpedoes;
+        public bool CreepAggressive, CreepMissiles, CreepTorpedoes, CreepBotHandling;
         public int CreepRadius = 2000;   // [creep] radius, metres, 500..3000 as the DLL clamps it
         public readonly SortedDictionary<string, double> Values = new SortedDictionary<string, double>(StringComparer.Ordinal);
         public bool BuiltIn { get { return Name == "Default"; } }
@@ -233,6 +233,7 @@ namespace SwsSettings
             p.CreepAggressive = Ini.GetInt(file, "creep", "aggressive", 0) != 0;
             p.CreepMissiles = Ini.GetInt(file, "creep", "missiles", 0) != 0;
             p.CreepTorpedoes = Ini.GetInt(file, "creep", "torpedoes", 0) != 0;
+            p.CreepBotHandling = Ini.GetInt(file, "creep", "bot_handling", 0) != 0;
             p.CreepRadius = Math.Max(500, Math.Min(3000, Ini.GetInt(file, "creep", "radius", 2000)));
             foreach (var e in Ini.Section(file, "values"))
             {
@@ -259,7 +260,7 @@ namespace SwsSettings
             for (int f = 0; f < 2; f++)
                 for (int k = 0; k < 3; k++)
                     sb.Append(CreepFaction[f] + "_pack" + (k + 1) + "=" + CreepShips[f][Creep[f, k]] + "\r\n");
-            sb.Append("aggressive=" + (CreepAggressive ? 1 : 0) + "\r\nmissiles=" + (CreepMissiles ? 1 : 0) + "\r\ntorpedoes=" + (CreepTorpedoes ? 1 : 0) + "\r\n");
+            sb.Append("aggressive=" + (CreepAggressive ? 1 : 0) + "\r\nmissiles=" + (CreepMissiles ? 1 : 0) + "\r\ntorpedoes=" + (CreepTorpedoes ? 1 : 0) + "\r\nbot_handling=" + (CreepBotHandling ? 1 : 0) + "\r\n");
             if (CreepRadius != 2000) sb.Append("radius=" + CreepRadius + "\r\n");
             sb.Append("\r\n[values]\r\n");
             foreach (var kv in Values) sb.Append(kv.Key + "=" + Num.G9(kv.Value) + "\r\n");
@@ -301,15 +302,15 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
         public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values, int[,] creep = null,
-                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false)
+                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false)
         {
-            bool anyCreep = creepAggressive || creepMissiles || creepTorpedoes;
+            bool anyCreep = creepAggressive || creepMissiles || creepTorpedoes || creepBotHandling;
             if (creep != null) foreach (int t in creep) if (t != 0) anyCreep = true;
             if (!pinball && !multidrift && !zavianCreep && values.Count == 0 && !anyCreep) return 0;
             uint h = 2166136261u;
@@ -322,6 +323,7 @@ namespace SwsSettings
             if (creepAggressive && creepRadius != 2000) h = Fnv(h, "creep.radius=" + creepRadius + ";");
             if (creepMissiles) h = Fnv(h, "creep.missiles=1;");
             if (creepTorpedoes) h = Fnv(h, "creep.torpedoes=1;");
+            if (creepBotHandling) h = Fnv(h, "creep.bothandling=1;");
             foreach (var kv in values) h = Fnv(h, kv.Key + "=" + Num.G9(kv.Value) + ";");
             return h == 0 ? 1 : h;
         }
