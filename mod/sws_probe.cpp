@@ -1925,31 +1925,33 @@ static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
     }
 }
 // Per ship type: a squadron scores its candidates for each of its ships in FUN_14182ade0 (twelve integer or pointer
-// arguments: the second is the ship choosing, the eighth the target list). When the list is a creep squadron's and the
-// ship isn't bomber-class, it gets the other creep's list instead. The class is in the ship's own radar tags, read the way
-// the scorer reads a candidate's (+0x5d0 | +0x5cc | [+0x30]+0x38): bit 24 = bomber-class (Y-wing, TIE bomber), 25
-// fighter, 26 interceptor, 27 support.
+// arguments: the second the ship choosing, a ServerStarshipEntity, the eighth the target list). When the list is a creep
+// squadron's and the ship isn't a bomber, it gets the other creep's list instead. A bomber is a ship whose data (entity
+// +0x28) is the StarshipEntityData (0x1449fad80) of the Y-wing's or TIE bomber's AI blueprint, collected on the 2-second
+// scan (creep_mode_scan). (2026-10-26: the first build read radar tags at a candidate's offsets; the ship entity keeps
+// other things there, so the check misread, and nearly every ship got the bombers' list.)
+static volatile uint64_t g_bomberData[8];   // the bomber AI blueprints' StarshipEntityData, 0 = none
 typedef void(__fastcall* scorer_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
                                    uint64_t, uint64_t, uint64_t);
 static scorer_t o_scorer;
-static uint32_t creep_ship_tags(uint64_t ship) {
-    return rd<uint32_t>(ship, 0x5d0) | rd<uint32_t>(ship, 0x5cc) | rd<uint32_t>(rd<uint64_t>(ship, 0x30), 0x38);
-}
 static void __fastcall h_scorer(uint64_t a1, uint64_t ship, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7,
                                 uint64_t list, uint64_t a9, uint64_t a10, uint64_t a11, uint64_t a12) {
-    if (g_creepAggressive && ship && list)
+    if (g_creepAggressive && ship && list && g_bomberData[0])
         for (int f = 0; f < 2; f++) {
             const CreepPhase& cp = g_creepPh[f];
             if (list != cp.shared || !cp.sharedF) continue;
-            uint32_t tags = creep_ship_tags(ship);
-            bool bomber = (tags & (1u << 24)) != 0;
-            if (tags && !bomber) list = cp.sharedF;
-            if (g_creepLog) {   // once per distinct ship tags: which list it got
-                static uint32_t seen[64]; static int ns; static SRWLOCK lk = SRWLOCK_INIT;
+            uint64_t data = rd<uint64_t>(ship, 0x28);
+            bool bomber = false; for (int i = 0; i < 8 && g_bomberData[i] && !bomber; i++) bomber = data == g_bomberData[i];
+            if (!bomber) list = cp.sharedF;
+            if (g_creepLog) {   // once per distinct ship data: which list it got
+                static uint64_t seen[64]; static int ns; static SRWLOCK lk = SRWLOCK_INIT;
                 AcquireSRWLockExclusive(&lk);
-                bool dup = false; for (int i = 0; i < ns && !dup; i++) dup = seen[i] == tags;
-                if (!dup && ns < 64) { seen[ns++] = tags; status("creep targets: a %s creep ship with tags %08x scores with the %s list", kCreepFaction[f], tags,
-                                                                  list == cp.sharedF ? "other creep's" : "bombers'"); }
+                bool dup = false; for (int i = 0; i < ns && !dup; i++) dup = seen[i] == data;
+                if (!dup && ns < 64) {
+                    seen[ns++] = data;
+                    status("creep targets: a %s creep ship (data %p, %s) scores with the %s list", kCreepFaction[f], (void*)data,
+                           rd<uint64_t>(data, 8) == 0x1449fad80 ? "a StarshipEntityData" : "NOT a StarshipEntityData", bomber ? "bombers'" : "other creep's");
+                }
                 ReleaseSRWLockExclusive(&lk);
             }
             break;
@@ -2324,9 +2326,17 @@ static void creep_scan() {
 static void creep_mode_scan() {
     if (!g_creepAggressive) return;
     bool loaded[2] = {}; char leaf[128];
+    uint64_t bomberData[8] = {}; int nb = 0;   // h_scorer's bombers: the Y-wing's and TIE bomber's AI StarshipEntityData
     walk_partitions([&](uint64_t insts, uint16_t n) {
         uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
         inst_leaf(root, leaf, sizeof leaf);
+        if (rd<uint64_t>(root, 8) == 0x144ade220 && (!_stricmp(leaf, "starship_ywing_ai") || !_stricmp(leaf, "starship_tiebomber_ai"))) {
+            for (uint16_t i = 0; i < n && nb < 8; i++) {
+                uint64_t o = rd<uint64_t>(insts, i * 8ull);
+                if (o && rd<uint64_t>(o, 8) == 0x1449fad80) bomberData[nb++] = o;
+            }
+            return;
+        }
         if (_strnicmp(leaf, "pf_pvp_creeplogic", 17)) return;
         uint64_t objs = rd<uint64_t>(root, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
         for (uint32_t k = 0; k < no && k < 4096; k++) {
@@ -2334,6 +2344,7 @@ static void creep_mode_scan() {
             for (int f = 0; f < 2; f++) if (o && o == g_creepPh[f].squad) loaded[f] = true;
         }
     });
+    for (int i = 0; i < 8; i++) if (g_bomberData[i] != bomberData[i]) InterlockedExchange64((volatile LONG64*)&g_bomberData[i], (LONG64)bomberData[i]);
 #ifdef PROBE_TEST
     const ULONGLONG settle = 1000;
 #else

@@ -369,7 +369,12 @@ int main() {
     uint8_t* layer = fake_alloc(0x80); *(uint64_t*)(layer + 8) = 0x144a56c40; *(uint64_t*)(layer + 48) = (uint64_t)(lcArr + 16);
     auto onePart = [](uint8_t* root) { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = root; uint8_t* p = fake_alloc(0x40);
                                        *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
-    parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = onePart(ywingAi); parts[5] = onePart(awingAi);
+    // the Y-wing AI blueprint's partition also holds its StarshipEntityData (0x1449fad80): a ship whose data it is, is a bomber
+    uint8_t* ywingData = fake_alloc(0x200); *(uint64_t*)(ywingData + 8) = 0x1449fad80;
+    uint8_t* ywingPart = nullptr;
+    { uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = ywingAi; in[1] = ywingData; ywingPart = fake_alloc(0x40);
+      *(uint8_t***)(ywingPart + 0x20) = in; *(uint16_t*)(ywingPart + 0x28) = 2; }
+    parts[2] = onePart(layer); parts[3] = onePart(xwingAi); parts[4] = ywingPart; parts[5] = onePart(awingAi);
     // creep missiles ([creep] missiles=1): bhv_aisquadron_basic_imperial's wiring, cut down. The AllowMissileFiring input
     // (1336394533) into a PropertyDefaultValue's InValue (1658462601), whose DefaultValue (2066049125) a Bool feeds; a Bool
     // into a node that DogfighterInfo.IsBot (215512070) also feeds (the bot test); the SelectFloat (InputSelect +48) whose
@@ -464,6 +469,7 @@ int main() {
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
+    uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
     {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition
         // creator. Its property connections: the phase (FrontlineIndex, 862952468) into a debug display (field 5685821) and
         // into the SelectInt that picks the path (858290427); its squadron (0x144a028c0) is Defensive within 500 m, its
@@ -500,7 +506,7 @@ int main() {
             uint8_t** grown = (uint8_t**)fake_alloc((np + 1) * 8); memcpy(grown, cur, np * 8); grown[np] = part6;
             *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + np + 1;
         }
-        creepSquadForMode = squad;
+        creepSquadForMode = squad; creepList = *(uint8_t**)(*(uint8_t**)(squad + 104)); creepCtrlData = ctrlData;
         uint8_t* nl = *(uint8_t**)(squad + 104);
         // the game's score lookup (FUN_141617a00): the first score whose TargetTags bits are all on the target; none = 0
         auto score = [](uint8_t* set, uint32_t target) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
@@ -521,30 +527,8 @@ int main() {
         bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
         bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
         bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4;
-        {   // per ship type on defense: a bomber-class ship keeps the squadron's list, a fighter gets one that scores the
-            // corvette or Raider below the starfighters
-            typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-            uint8_t* bomberShip = fake_alloc(0x600); *(uint32_t*)(bomberShip + 0x5d0) = (1u << 24) | (1u << 11) | 4;
-            uint8_t* fighterShip = fake_alloc(0x600); *(uint32_t*)(fighterShip + 0x5d0) = (1u << 25) | (1u << 9) | 4;
-            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)bomberShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
-            uint8_t* forBomber = (uint8_t*)g_scorerList;
-            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fighterShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
-            uint8_t* forFighter = (uint8_t*)g_scorerList;
-            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fighterShip, 0, 0, 0, 0, 0, (uint64_t)debugDisp, 0, 0, 0, 0);
-            uint8_t* otherList = (uint8_t*)g_scorerList;
-            check(forBomber == L[0] && forFighter && forFighter != L[0] && score(forFighter, smallcap) == 1 && score(forFighter, frigate) == 0 &&
-                  score(forFighter, turret) == 5 && otherList == debugDisp && *(uint8_t*)0x14182ade0 == 0xFF,
-                  "creep per ship type: on defense a bomber keeps the corvette at 4, a fighter scores it 1; a list that isn't the creep's passes through");
-        }
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
         bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
-        {   // the opener per ship type too: the fighter's list scores the corvette 1, the bombers' 4
-            typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-            uint8_t* fShip = fake_alloc(0x600); *(uint32_t*)(fShip + 0x5d0) = (1u << 25) | 4;
-            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
-            uint8_t* fl = (uint8_t*)g_scorerList;
-            back = back && fl && fl != L[0] && score(fl, smallcap) == 1;
-        }
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
         bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
         check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,
@@ -716,6 +700,30 @@ int main() {
           "match rules: creep morale on offense 1 -> 2 (list entry and typed attribute), the match length 1800 -> 2400 and the morale DoT on; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
+    {   // per ship type, after the scans have found the bombers: a Y-wing (its data the Y-wing AI's StarshipEntityData)
+        // keeps the squadron's list, any other ship gets one that scores the corvette or Raider 1, in the opener and on
+        // defense; a list that isn't the creep's passes through
+        auto score = [](uint8_t* set, uint32_t target) { uint8_t* a = *(uint8_t**)(set + 24); uint32_t n = *(uint32_t*)(a - 4);
+                                                         for (uint32_t k = 0; k < n; k++) { uint8_t* s = ((uint8_t**)a)[k]; uint32_t m = *(uint32_t*)(s + 40);
+                                                                                            if ((m & target) == m) return *(float*)(s + 44); }
+                                                         return 0.0f; };
+        const uint32_t smallcap = (1u << 28) | 2;
+        typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+        typedef void(__fastcall* cf_t)(uint8_t*, uint8_t*);
+        uint8_t* bomberShip = fake_alloc(0x600); *(uint8_t**)(bomberShip + 0x28) = ywingData;
+        uint8_t* fighterShip = fake_alloc(0x600); *(uint8_t**)(fighterShip + 0x28) = fake_alloc(0x200);
+        auto listFor = [&](uint8_t* ship, uint8_t* list) { g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, 0, (uint64_t)list, 0, 0, 0, 0); return (uint8_t*)g_scorerList; };
+        uint8_t* bl = creepList ? listFor(bomberShip, creepList) : nullptr; uint8_t* fl = creepList ? listFor(fighterShip, creepList) : nullptr;
+        bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 4 && score(fl, smallcap) == 1;
+        uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = creepCtrlData;
+        int32_t bi = 4; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
+        ((cf_t)0x1416feaf0)(ent, chg);   // defense
+        bool defense = fl && score(listFor(bomberShip, creepList), smallcap) == 4 && score(listFor(fighterShip, creepList), smallcap) == 1;
+        bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // back to face-off
+        bool pass = listFor(fighterShip, ywingAi) == ywingAi;
+        check(opener && defense && pass,
+              "creep per ship type: the Y-wing keeps the corvette at 4, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
+    }
     // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
     check(creepSquadForMode && *(int32_t*)(creepSquadForMode + 32) == 1,
           "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");
