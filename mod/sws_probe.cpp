@@ -2101,44 +2101,52 @@ template <typename F> static void walk_partitions(F fn) {
         leave(dom + 0x70);
     }
 }
-// A torpedo loadout for a bomber pack: a StarshipConfigCollection (Asset; Configs +0x20, pointers, count at -4) copied
-// from the ship's single-player AI collection (*_AI_SP: its hull and shields, which carry the creep durability), its
-// Configs the SP ones plus the weapon slot configs of the vs-AI bots' torpedo loadout (SlotConfig_*: torpedoes and bombs).
-// The bots' own hull, shields, movement and hull component stay out, so creep keep creep durability and handling. Kept
-// for the process's life in the creep pool; rebuilt when the level's assets change.
-static uint64_t creep_torpedo_loadout(int which, uint64_t pvb, uint64_t sp, const char* ship) {
-    static uint64_t cPvb[2], cSp[2], cOut[2];
-    if (!pvb || !sp || !g_creepPool) return 0;
-    if (cPvb[which] == pvb && cSp[which] == sp) return cOut[which];
-    cPvb[which] = pvb; cSp[which] = sp; cOut[which] = 0;
-    char leaf[128];
-    uint64_t pa = rd<uint64_t>(pvb, 0x20), sa = rd<uint64_t>(sp, 0x20);
-    uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0, sn = sa ? rd<uint32_t>(sa - 4, 0) : 0;
-    uint64_t keep[16]; uint32_t nk = 0; bool torp = false, ok = pn && pn <= 16 && sn && sn <= 4;
-    for (uint32_t k = 0; ok && k < sn; k++) {   // the SP collection: hull and shields only
-        uint64_t c = rd<uint64_t>(sa, k * 8); inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
-        if (!c || (strncmp(leaf, "starshiphealthdamagedata_", 25) && strncmp(leaf, "starshipshielddata_", 19))) ok = false; else keep[nk++] = c;
+// A torpedo loadout for a bomber pack: a copy of the vs-AI bots' torpedo collection (StarshipConfigCollection, ClassInfo
+// 0x144a156a0: an Asset with Configs at +0x20, pointers, count at -4) whose Configs are the creep's own hull and shields
+// (the single-player AI configs, StarshipHealthDamageData 0x144a8ca00 / StarshipShieldData 0x144a8c980, *_AI_SP, which
+// carry the creep durability) and the bots' weapon slots (StarshipWeaponSlotConfig 0x1449fc3f0: torpedoes and bombs).
+// The bots' own hull, shields, movement and hull component stay out, so creep keep creep durability and handling. The
+// sources are found by type and name among all of a level's objects (not only its top-level assets: 2026-10-26 the
+// first build looked only at those and found nothing). Kept for the process's life in the creep pool, rebuilt when the
+// sources change.
+static uint64_t creep_torpedo_loadout(int which, uint64_t pvb, uint64_t hull, uint64_t shields, const char* ship) {
+    static uint64_t cPvb[2], cHull[2], cShields[2], cOut[2]; static bool told[2];
+    if (cPvb[which] == pvb && cHull[which] == hull && cShields[which] == shields && (cOut[which] || told[which])) return cOut[which];
+    cPvb[which] = pvb; cHull[which] = hull; cShields[which] = shields; cOut[which] = 0; told[which] = true;
+    if (!pvb || !hull || !g_creepPool) {
+        status("creep: %s torpedo loadout: %s isn't loaded in this level; its packs fly without torpedoes", ship,
+               !pvb ? "the vs-AI bots' torpedo collection" : !hull ? "the creep hull config" : "the creep pool");
+        return 0;
     }
-    for (uint32_t k = 0; ok && k < pn; k++) {   // the bots' loadout: its weapon slots
-        uint64_t c = rd<uint64_t>(pa, k * 8); if (!c) continue;
+    uint64_t pa = rd<uint64_t>(pvb, 0x20); uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0;
+    uint64_t keep[16]; uint32_t nk = 0; bool torp = false;
+    keep[nk++] = hull; if (shields) keep[nk++] = shields;
+    char leaf[128];
+    for (uint32_t k = 0; pn <= 16 && k < pn; k++) {   // the bots' loadout: its weapon slots
+        uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != 0x1449fc3f0) continue;
         inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
-        if (strncmp(leaf, "slotconfig_", 11)) continue;
         if (strstr(leaf, "torpedo")) torp = true;
         if (nk < 16) keep[nk++] = c;
     }
-    uint64_t coll = ok && torp ? creep_copy(sp, 40) : 0, arr = coll ? creep_array(nk) : 0;
-    if (!arr) { status("creep: %s torpedo loadout: the collections aren't laid out as expected; its packs fly without torpedoes", ship); return 0; }
+    uint64_t coll = torp ? creep_copy(pvb, 40) : 0, arr = coll ? creep_array(nk) : 0;
+    if (!arr) {
+        status("creep: %s torpedo loadout: the bots' collection isn't laid out as expected (%u configs, %s); its packs fly without torpedoes",
+               ship, pn, torp ? "no room" : "no torpedo slot");
+        return 0;
+    }
     for (uint32_t k = 0; k < nk; k++) *(uint64_t*)(arr + k * 8ull) = keep[k];
     *(uint64_t*)(coll + 0x20) = arr;
-    status("creep: %s packs carry torpedoes: %u slot config(s) from the vs-AI bots' torpedo loadout, with the creep's hull and shields", ship, nk - sn);
+    status("creep: %s packs carry torpedoes: %u weapon slot(s) from the vs-AI bots' torpedo loadout, with the creep's hull%s", ship,
+           nk - (shields ? 2 : 1), shields ? " and shields" : "");
     return cOut[which] = coll;
 }
 static void creep_scan() {
     if (!g_creepOn) return;
     // the torpedo loadouts' sources ([creep] torpedoes): the bots' torpedo collection and the SP collection, per bomber
     static const char* kTorpPvb[2] = { "starshipconfigcollection_ywing_ai_pvb_bot_torpedo_bomb", "starshipconfigcollection_tiebomber_ai_pvb_bot_bomb_torpedo_heavyhull" };
-    static const char* kTorpSp[2] = { "starshipconfigcollection_ywing_ai_sp", "starshipconfigcollection_tiebomber_ai_sp" };
-    uint64_t torpPvb[2] = {}, torpSp[2] = {};
+    static const char* kTorpHull[2] = { "starshiphealthdamagedata_ywing_ai_sp", "starshiphealthdamagedata_tiebomber_ai_sp" };
+    static const char* kTorpShields[2] = { "starshipshielddata_ywing_ai_sp", nullptr };
+    uint64_t torpPvb[2] = {}, torpHull[2] = {}, torpShields[2] = {};
     static const char* kBlueprint[2][4] = { { "Starship_XWing_AI", "Starship_YWing_AI", "Starship_AWing_AI", "Starship_UWing_AI" },
         { "Starship_TieFighter_AI", "Starship_TieBomber_AI", "Starship_TieInterceptor_AI", "Starship_TieReaper_AI" } };
     uint64_t bp[2][4] = {};
@@ -2147,11 +2155,15 @@ static void creep_scan() {
     walk_partitions([&](uint64_t insts, uint16_t n) {
         uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
         uint64_t ci = rd<uint64_t>(root, 8);
-        if (g_creepTorpedoes) {
-            inst_leaf(root, leaf, sizeof leaf); _strlwr_s(leaf);
+        for (uint16_t i = 0; g_creepTorpedoes && i < n; i++) {   // the torpedo loadouts' sources, by type, then name
+            uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
+            uint64_t oc = rd<uint64_t>(o, 8);
+            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980) continue;
+            inst_leaf(o, leaf, sizeof leaf); _strlwr_s(leaf);
             for (int b = 0; b < 2; b++) {
-                if (!torpPvb[b] && !strcmp(leaf, kTorpPvb[b])) torpPvb[b] = root;
-                if (!torpSp[b] && !strcmp(leaf, kTorpSp[b])) torpSp[b] = root;
+                if (oc == 0x144a156a0 && !torpPvb[b] && !strcmp(leaf, kTorpPvb[b])) torpPvb[b] = o;
+                if (oc == 0x144a8ca00 && !torpHull[b] && !strcmp(leaf, kTorpHull[b])) torpHull[b] = o;
+                if (oc == 0x144a8c980 && kTorpShields[b] && !torpShields[b] && !strcmp(leaf, kTorpShields[b])) torpShields[b] = o;
             }
         }
         if (ci == 0x144ade220) {   // a starship blueprint
@@ -2205,7 +2217,7 @@ static void creep_scan() {
             if (!target) { if (once(p.src ^ 1)) status("creep: %s pack %d: %s isn't loaded in this level; the pack stays stock", kCreepFaction[f], k + 1, kBlueprint[f][t]); continue; }
             uint64_t loadout = 0;   // no loadout (the blueprint's defaults), or the bombers' torpedo loadout
             int bomber = f == 0 && t == 1 ? 0 : f == 1 && t == 1 ? 1 : -1;   // Y-wing, TIE bomber
-            if (g_creepTorpedoes && bomber >= 0) loadout = creep_torpedo_loadout(bomber, torpPvb[bomber], torpSp[bomber], kCreepShips[f][t]);
+            if (g_creepTorpedoes && bomber >= 0) loadout = creep_torpedo_loadout(bomber, torpPvb[bomber], torpHull[bomber], torpShields[bomber], kCreepShips[f][t]);
             for (int d = 0; d < p.n; d++) {
                 if (rd<uint64_t>(p.dst[d], 0xC0) == target && rd<uint64_t>(p.dst[d], 0x1F0) == loadout) continue;
                 if (write_u64(p.dst[d] + 0xC0, target) && write_u64(p.dst[d] + 0x1F0, loadout))

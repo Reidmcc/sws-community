@@ -376,24 +376,27 @@ int main() {
     *(const char**)(bhvRoot + 0x18) = "Game/AI/SquadronAI/Behaviours/Bhv_AISquadron_Basic_Imperial"; *(uint64_t*)(bhvRoot + 40) = (uint64_t)(bhvPcArr + 16);
     parts[6] = onePart(bhvRoot); parts[7] = onePart(creepPrefab);
     *(uint8_t***)(domain + 0x140) = parts + 8;
-    // bomber torpedoes ([creep] torpedoes=1): the Y-wing's SP collection (hull, shields) and the bots' torpedo collection
-    // (bot hull, two weapon slots, bot movement), each an Asset with its Configs at +0x20
-    auto cfgNamed = [](const char* name) { uint8_t* c = fake_alloc(0x40); *(const char**)(c + 0x18) = name; return c; };
-    uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP");
-    uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP");
-    uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB");
-    uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock");
-    uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb");
-    uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT");
+    // bomber torpedoes ([creep] torpedoes=1): the Y-wing's creep hull and shields (the SP configs, by their ClassInfos, not
+    // top-level: inside another asset's partition, as the game keeps them) and the bots' torpedo collection (ClassInfo
+    // 0x144a156a0: bot hull, two weapon slots 0x1449fc3f0, bot movement), each an Asset, the collection's Configs at +0x20
+    auto cfgNamed = [](const char* name, uint64_t cls) { uint8_t* c = fake_alloc(0x400); *(uint64_t*)(c + 8) = cls; *(const char**)(c + 0x18) = name; return c; };
+    uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP", 0x144a8ca00);
+    uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP", 0x144a8c980);
+    uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB", 0);
+    uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock", 0x1449fc3f0);
+    uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb", 0x1449fc3f0);
+    uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT", 0);
     auto collection = [&](const char* name, std::initializer_list<uint8_t*> cs) {
-        uint8_t* c = fake_alloc(16 + 0x30) + 16; *(const char**)(c + 0x18) = name;
+        uint8_t* c = fake_alloc(16 + 0x30) + 16; *(uint64_t*)(c + 8) = 0x144a156a0; *(const char**)(c + 0x18) = name;
         uint8_t* a = fake_alloc(16 + cs.size() * 8) + 16; *(uint32_t*)(a - 4) = (uint32_t)cs.size();
         size_t i = 0; for (uint8_t* x : cs) ((uint8_t**)a)[i++] = x;
         *(uint8_t**)(c + 0x20) = a; return c; };
     uint8_t* ywingSp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_SP", { spHull, spShield });
     uint8_t* ywingTorp = collection("Game/Gameplay/Starships/YWing_AI/Config/StarshipConfigCollection_YWing_AI_PvB_BOT_Torpedo_Bomb", { botHull, slotTorp, slotBomb, botMove });
     {
-        uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = onePart(ywingSp); grown[9] = onePart(ywingTorp);
+        uint8_t** spInsts = (uint8_t**)fake_alloc(3 * 8); spInsts[0] = ywingSp; spInsts[1] = spHull; spInsts[2] = spShield;
+        uint8_t* spPart = fake_alloc(0x40); *(uint8_t***)(spPart + 0x20) = spInsts; *(uint16_t*)(spPart + 0x28) = 3;
+        uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = spPart; grown[9] = onePart(ywingTorp);
         *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + 10;
     }
     wchar_t defaultsPath[MAX_PATH]; GetModuleFileNameW(nullptr, defaultsPath, MAX_PATH);
