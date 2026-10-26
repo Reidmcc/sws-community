@@ -48,7 +48,7 @@ bots do, and their targets follow the match's phase:
 
 | Phase | Capital ships the creep go for |
 |---|---|
-| Opener, transitions | the enemy corvette or Raider |
+| Opener, transitions | the enemy corvette or Raider: bombers go for it first; fighters, interceptors and dropships only once no starfighter is in reach |
 | Their side on offense | the enemy frigates, then the flagship once the frigates are gone |
 | Their side on defense | the enemy corvette or Raider (the attacker brings a new one each offense phase): bombers go for it first; fighters, interceptors and dropships only once no starfighter is in reach |
 

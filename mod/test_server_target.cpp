@@ -538,6 +538,13 @@ int main() {
         }
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
         bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
+        {   // the opener per ship type too: the fighter's list scores the corvette 1, the bombers' 4
+            typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+            uint8_t* fShip = fake_alloc(0x600); *(uint32_t*)(fShip + 0x5d0) = (1u << 25) | 4;
+            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
+            uint8_t* fl = (uint8_t*)g_scorerList;
+            back = back && fl && fl != L[0] && score(fl, smallcap) == 1;
+        }
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
         bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
         check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,

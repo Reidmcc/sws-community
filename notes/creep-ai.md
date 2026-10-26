@@ -326,7 +326,7 @@ new ones. The flight decides the open question in 4: whether priority 0 keeps cr
 
 ## 8. Shipped (2026-10-26; creep-rework, flown)
 
-All flown on Yavin by Pseudo; each line says what was seen.
+Flown by Pseudo on Yavin and Esseles; each line says what was seen.
 
 - **Bomb raids by phase** (f27be3a): bombers took appropriate targets in the opener (mostly creep, sometimes the
   Raider) and the frigates on offense.
@@ -347,6 +347,11 @@ All flown on Yavin by Pseudo; each line says what was seen.
   0x144a8c980). Y-wings fire one torpedo on the approach, then bombing runs; sometimes at other creep.
 - **The bots' handling** (5e24f4f): the same loadout copy, with the bots' movement config (`*AI_BOT`, 0x144ab56a0); for
   stock packs too, keeping their own creep configs. Pseudo: creep "much more active", "I almost got killed".
+- **Per ship type** (Esseles flight, then 90c59e4 and the opener after it): all creep went for the attacker's new
+  corvette on defense, and fighters and interceptors swarmed it and got wrecked. The squadron's candidate scorer
+  FUN_14182ade0 (12 integer arguments: the second the ship choosing, the eighth the list) is hooked; a ship that isn't
+  bomber-class (its radar tags, read like a candidate's: +0x5d0 | +0x5cc | [+0x30]+0x38, bit 24) gets a second list
+  where the corvette or Raider scores 1 instead of 4, in the opener and on defense. Bombers keep 4.
 - **App:** the mouse wheel over a focused dropdown changed its selection, so scrolling down to the hull and shield
   boxes rolled the pack dropdowns to their last ship (U-wing, Reaper) and saved it (30070e7). Reproduced with
   `--test-wheel`; the wheel on a closed dropdown now scrolls the page.

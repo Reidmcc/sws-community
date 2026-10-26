@@ -1849,10 +1849,10 @@ static void creep_ai_partition(uint64_t part) {
     static const Extra kExtra[3] = { { 1u << 29, { 4, 0, 0 } },     // the frigates
                                      { 1u << 22, { 3, 0, 0 } },     // the flagship, once the frigates are gone
                                      { 1u << 28, { 2, 4, 4 } } };   // the small capital ship: the corvette or the Raider
-    // On defense the attacker brings a new corvette or Raider: the bombers go for it at the opener's priority; the other
-    // creep (fighters, interceptors, dropships) only below the starfighters, so they don't swarm it (Pseudo, 2026-10-26:
-    // fighters and interceptors swarmed it and got wrecked).
-    static const float kSmallcapDefenseOthers = 1;
+    // The corvette or Raider, in the opener and on defense (the attacker brings a new one each offense): the bombers go
+    // for it first; the other creep (fighters, interceptors, dropships) only below the starfighters, so they don't swarm
+    // it (Pseudo, 2026-10-26: fighters and interceptors swarmed it on defense and got wrecked; the opener the same way).
+    static const float kSmallcapOthers = 1;
     uint64_t arrs[3] = {}, arrsF[3] = {};
     for (int v = 0; v < 2; v++)
         for (int r = 0; r < 3; r++) {
@@ -1862,7 +1862,7 @@ static void creep_ai_partition(uint64_t part) {
                 uint64_t s = creep_copy(tmpl, 48); if (!s) { tmpl = 0; break; }
                 *(uint64_t*)(s + 24) = 0; *(uint64_t*)(s + 32) = 0;
                 *(uint32_t*)(s + 40) = kExtra[e].tags;
-                *(float*)(s + 44) = v == 1 && r == 2 && kExtra[e].tags == 1u << 28 ? kSmallcapDefenseOthers : kExtra[e].prio[r];
+                *(float*)(s + 44) = v == 1 && r != 0 && kExtra[e].tags == 1u << 28 ? kSmallcapOthers : kExtra[e].prio[r];
                 *(uint64_t*)(arr + m++ * 8ull) = s;
             }
             if (!tmpl) break;
@@ -1894,7 +1894,7 @@ static void creep_ai_partition(uint64_t part) {
     bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
               leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius);
     if (ok) status("creep: %s: aggressive within %d m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
-                   "capital ship; defense: the small capital ship, bombers first)", leaf, g_creepRadius);
+                   "capital ship, bombers first; defense: the same)", leaf, g_creepRadius);
     else status("creep: %s: a write failed; its creep may keep the stock engagement", leaf);
 }
 // The phase, live: the creep logic maps FrontlineIndex to its controller's BehaviourIndex (SelectInt: phases 0..6 ->

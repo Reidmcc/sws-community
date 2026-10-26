@@ -747,7 +747,7 @@ namespace SwsSettings
                 col.Controls.Add(row);
             }
             rule(creepAggressive, "Creep engage enemies within the range below (2,000 m is the vs-AI bots' value), instead of only what their path brings near. Their targets follow the phase: " +
-                "on offense the enemy frigates, then the flagship once the frigates are gone; in the opener the enemy corvette or Raider; on defense the corvette or Raider for the bombers, and starfighters first for the rest. " +
+                "on offense the enemy frigates, then the flagship once the frigates are gone; in the opener and on defense the enemy corvette or Raider for the bombers, starfighters first for the rest. " +
                 "Players and other creep stay targets throughout.");
             {
                 var row = Theme.Row(6); row.Margin = new Padding(28, 2, 0, 6);
