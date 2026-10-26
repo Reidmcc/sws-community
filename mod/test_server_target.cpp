@@ -102,6 +102,22 @@ int main() {
     put(0x1416a7cf0, bounds, sizeof bounds); put(0x1416a87c0, integ, sizeof integ);
     put(0x1401ae7d0, ctor, sizeof ctor); put(0x1401aac90, spawn, sizeof spawn); put(0x1401bf4d0, clock, sizeof clock);
     put(0x1418f2930, chooser, sizeof chooser);
+    // loadouts (the loadout probe, loadout_log=1): the presets setter FUN_1418f58f0, its real 19-byte prologue, then a body
+    // that records the presets it was given at 0x1418f8000 and the real epilogue; and the save FUN_1419001c0, its real
+    // 20-byte prologue, then a body that sets the store's presets the way the real one does (setter(manager+0x10 store,
+    // presets, 1, 0)) and its pops
+    {
+        const uint8_t pset[] = {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xf0,0x00,0x00,0x00,
+                                0x48,0x89,0xd0, 0x48,0xa3, 0x00,0x80,0x8f,0x41,0x01,0x00,0x00,0x00,
+                                0x48,0x81,0xc4,0xf0,0x00,0x00,0x00, 0x41,0x5f,0x41,0x5e,0x5f,0xc3};
+        put(0x1418f58f0, pset, sizeof pset);
+        if (map(0x141900000, 0x10000) != (void*)0x141900000) { printf("FAIL  could not map the loadout-save region\n"); return 1; }
+        const uint8_t psave[] = {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xc0,0xfc,0xff,0xff,
+                                 0x48,0x83,0xec,0x20, 0x48,0x8b,0x49,0x10, 0x41,0xb8,0x01,0x00,0x00,0x00, 0x45,0x31,0xc9,
+                                 0x48,0xb8, 0xf0,0x58,0x8f,0x41,0x01,0x00,0x00,0x00, 0xff,0xd0, 0x48,0x83,0xc4,0x20,
+                                 0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+        put(0x1419001c0, psave, sizeof psave);
+    }
     // 3b: GameSimulation tick (real 14-byte prologue + epilogue), and simplified helpers
     const uint8_t gstick[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x50,
                               0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d,0xc3};
@@ -577,6 +593,23 @@ int main() {
         check(approx(r[0] * k[0], 1.0f) && approx(r[5] * k[5], 1.0f) && approx(r[10] * k[10], 1.0f) && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
               o[0] == 1.0f && o[14] == 2.0f,
               "ship scale: the cockpit keeps its original size and place under the scaled root part; the part's other children untouched");
+    }
+    {   // loadout_log: a save with two pilot loadouts and one in the third set (the ship set empty). The runner checks the
+        // log names the save, the set call with the counts, and both pilot nodes (the first with its text field).
+        uint8_t* presets = fake_alloc(0xc0); uint8_t* store = fake_alloc(0x40); uint8_t* mgr = fake_alloc(0x40);
+        *(int32_t*)(store + 0x20) = 2; *(uint8_t**)(mgr + 0x10) = store;
+        uint8_t* a = fake_alloc(0x100); uint8_t* b = fake_alloc(0x100); uint8_t* c = fake_alloc(0x100);
+        static const char kFaction[] = "Rebel";
+        uint8_t* anchor = presets + 0x10;   // pilot set at +8: anchor at +0x10 {right, left, parent}, size at +0x30
+        *(uint8_t**)(a + 0x00) = b; *(uint8_t**)(a + 0x10) = anchor; *(uint8_t**)(b + 0x10) = a;
+        *(uint8_t**)(anchor + 0x00) = b; *(uint8_t**)(anchor + 0x08) = a; *(uint8_t**)(anchor + 0x10) = a; *(int32_t*)(presets + 0x30) = 2;
+        *(const char**)(a + 0x20) = kFaction; *(uint32_t*)(a + 0x30) = 0x1234; *(uint32_t*)(b + 0x30) = 0x5678;
+        uint8_t* anchor3 = presets + 0x80;  // third set at +0x78: anchor at +0x80, size at +0xa0
+        *(uint8_t**)(c + 0x10) = anchor3; *(uint8_t**)(anchor3 + 0x00) = c; *(uint8_t**)(anchor3 + 0x08) = c; *(uint8_t**)(anchor3 + 0x10) = c;
+        *(int32_t*)(presets + 0xa0) = 1; *(uint32_t*)(c + 0x28) = 0x9abc;
+        ((void(__fastcall*)(uint64_t, uint64_t))0x1419001c0)((uint64_t)mgr, (uint64_t)presets);
+        check(*(uint8_t*)0x1419001c0 == 0xFF && *(uint8_t*)0x1418f58f0 == 0xFF && *(uint64_t*)0x1418f8000 == (uint64_t)presets,
+              "loadouts: the save and the presets setter are hooked, and the presets pass through to the game's setter");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)

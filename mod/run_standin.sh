@@ -64,6 +64,13 @@ DLLFP=$( [ -n "$LOG" ] && grep -oE "profile: 'StandIn'.*fingerprint [0-9a-f]{8}"
 APPFP=$( cd "$B" && ./sws_settings_test.exe "$(cygpath -w "$B")" StandIn | grep -oE "fingerprint [0-9a-f]{8}" | grep -oE "[0-9a-f]{8}$" | head -1 )
 if [ -n "$DLLFP" ] && [ "$DLLFP" = "$APPFP" ]; then echo "PASS  the settings app and the DLL agree on the StandIn fingerprint ($APPFP)"
 else echo "FAIL  fingerprints differ: DLL '${DLLFP:-none}', settings app '${APPFP:-none}'"; STATUS=1; fi
+# loadout_log=1 (server_standin.ini): the stand-in's loadout save, the setter it calls, and the two pilot loadouts
+if [ -n "$LOG" ] && grep -q "loadouts: SAVE to EA from .* (connection 2)" "$LOG" \
+    && grep -q "loadouts: set by .*, state 1, status 0, connection 2: pilot 2, ship 0, third 1" "$LOG" \
+    && grep -q 'loadouts:   pilot\[0\] +20="Rebel" +28=00000000,00000000 +30=00001234' "$LOG" \
+    && grep -q "loadouts:   pilot\[1\] .* +30=00005678" "$LOG" && grep -q "loadouts:   third\[0\] .* +28=00009abc" "$LOG"; then
+    echo "PASS  loadout_log logged the save, the presets it set, and each loadout"
+else echo "FAIL  loadout_log lines missing or wrong in the log"; STATUS=1; fi
 # spawn_log=1 (server_standin.ini): the stand-in's two starship spawns, one that made a ship and one that didn't
 if [ -n "$LOG" ] && grep -q "spawn: entity .* -> ship 5a5a0001" "$LOG" && grep -q "spawn: entity .* -> NOTHING SPAWNED" "$LOG"; then
     echo "PASS  spawn_log logged both starship spawns and their outcome"

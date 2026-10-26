@@ -647,6 +647,7 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_loadoutLog = false;       // [server] loadout_log: 1 = log the loadouts the game loads from EA and saves (2026-10-26 probe)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
@@ -693,6 +694,7 @@ static void read_server_ini() {
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_creepLog = GetPrivateProfileIntW(L"server", L"creep_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -3074,6 +3076,72 @@ static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
     HeapFree(GetProcessHeap(), 0, buf);   // the store copied the items
 }
 
+// Loadout probe (2026-10-26, [server] loadout_log=1; for local loadouts: what the game loads from EA and what it saves).
+// The client keeps its online presets in the online data model ("store", [[0x1441c5f28]+8]), as three EASTL sets: pilot
+// loadouts at +8, ship loadouts at +0x40, and a third at +0x78 (FUN_1419001c0 writes per-faction default ship, preset and
+// pilot from somewhere in the same object). A set's anchor is at set+8 {right +0, left +8, parent +0x10}, its size at
+// set+0x28; a node is {right +0, left +8, parent +0x10, colour +0x18, value +0x20}.
+//   FUN_1418f58f0(store, presets, state, status) sets them: from EA's inventory reply (FUN_1418fd3d0), and from a save.
+//   FUN_1419001c0(manager, presets): the online inventory manager's save (vtable 0x143686860, slot 0xb0; the manager is the
+//   online client's +0x2058, its store at +0x10): sets the store's presets (state 1), posts ClientOnlineLoadoutUpdated, and
+//   sends the loadouts to EA as marketplace items (component 0x80c; pilot BODY_SHAPE, VOICE, ANIM_*; ship Countermeasure,
+//   Shields, Engine, Primary_Weapon, Secondary_Weapon, Auxiliary, Flair_*, ShipVisual, ShipDecal; Default{Ship,Preset,Pilot}
+//   {Imperial,Rebel}).
+// The probe logs each call and every node's value words raw, so a flight shows the layout and whether EA keeps a save.
+static uint64_t ld_next(uint64_t n) {   // EASTL rbtree increment
+    uint64_t r = rd<uint64_t>(n, 0);
+    if (r) { n = r; for (uint64_t l; (l = rd<uint64_t>(n, 8)) != 0;) n = l; return n; }
+    uint64_t p = rd<uint64_t>(n, 0x10);
+    for (int g = 0; p && n == rd<uint64_t>(p, 0) && g < 64; g++) { n = p; p = rd<uint64_t>(n, 0x10); }
+    if (rd<uint64_t>(n, 0) != p) n = p;
+    return n;
+}
+static void ld_text(uint64_t p, char* out, size_t cap) {   // a short printable string at p, or empty
+    out[0] = 0; if (p < 0x10000) return;
+    size_t i = 0;
+    for (; i + 1 < cap; i++) { char c = rd<char>(p, (uint32_t)i); if (!c) break; if (c < 32 || c > 126) { out[0] = 0; return; } out[i] = c; }
+    out[i] = 0;
+}
+static void ld_dump(const char* what, uint64_t presets) {
+    static const char* kSet[3] = { "pilot", "ship", "third" };
+    static const uint32_t kOff[3] = { 0x08, 0x40, 0x78 };
+    status("loadouts: %s: %s %d, %s %d, %s %d", what, kSet[0], rd<int32_t>(presets, kOff[0] + 0x28), kSet[1],
+           rd<int32_t>(presets, kOff[1] + 0x28), kSet[2], rd<int32_t>(presets, kOff[2] + 0x28));
+    for (int s = 0; s < 3; s++) {
+        uint64_t anchor = presets + kOff[s] + 8, n = rd<uint64_t>(anchor, 8);
+        for (int k = 0; n && n != anchor && k < 120; k++, n = ld_next(n)) {
+            char line[700]; int w = sprintf_s(line, "loadouts:   %s[%d]", kSet[s], k);
+            char txt[48];
+            for (uint32_t o = 0x20; o < 0x98 && w > 0 && w < (int)sizeof line - 40; o += 8) {
+                uint64_t q = rd<uint64_t>(n, o);
+                ld_text(q, txt, sizeof txt);
+                if (txt[0]) w += sprintf_s(line + w, sizeof line - w, " +%x=\"%s\"", o, txt);
+                else w += sprintf_s(line + w, sizeof line - w, " +%x=%08x,%08x", o, (uint32_t)q, (uint32_t)(q >> 32));
+            }
+            status("%s", line);
+        }
+    }
+}
+typedef void(__fastcall* presetset_t)(uint64_t store, uint64_t presets, uint32_t state, uint32_t st);
+static presetset_t o_presetset;
+static void __fastcall h_presetset(uint64_t store, uint64_t presets, uint32_t state, uint32_t st) {
+    if (g_loadoutLog) {
+        char what[160];
+        sprintf_s(what, "set by %llx, state %u, status %u, connection %d", (unsigned long long)(uint64_t)_ReturnAddress(), state, st,
+                  rd<int32_t>(store, 0x20));
+        ld_dump(what, presets);
+    }
+    o_presetset(store, presets, state, st);
+}
+typedef void(__fastcall* presetsave_t)(uint64_t mgr, uint64_t presets);
+static presetsave_t o_presetsave;
+static void __fastcall h_presetsave(uint64_t mgr, uint64_t presets) {
+    if (g_loadoutLog) status("loadouts: SAVE to EA from %llx (connection %d); the store update follows",
+                             (unsigned long long)(uint64_t)_ReturnAddress(), rd<int32_t>(rd<uint64_t>(mgr, 0x10), 0x20));
+    o_presetsave(mgr, presets);
+    if (g_loadoutLog) status("loadouts: save returned");
+}
+
 // Ruleset matching (2026-10-20): every connection transport is set up by FUN_140d7bb70(transport, socket, titleVersion,
 // protocolVersion) (+0x748 / +0x74c); the server refuses a client whose protocol differs (WrongProtocolVersion, checked in
 // FUN_140d798a0). The profile fingerprint (rules + value overrides, issue #2) is mixed into the protocol version on both
@@ -3364,6 +3432,12 @@ static Site g_sites[] = {
     {"inventory-set 0x14123a310", 0x14123a310, 20,
      {0x48,0x8b,0xc4,0x57,0x48,0x81,0xec,0x00,0x01,0x00,0x00,0x48,0xc7,0x44,0x24,0x28,0xfe,0xff,0xff,0xff},
      (void*)h_invset, (void**)&o_invset},
+    {"loadouts-set 0x1418f58f0", 0x1418f58f0, 19,
+     {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xf0,0x00,0x00,0x00},
+     (void*)h_presetset, (void**)&o_presetset},
+    {"loadouts-save 0x1419001c0", 0x1419001c0, 20,
+     {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xc0,0xfc,0xff,0xff},
+     (void*)h_presetsave, (void**)&o_presetsave},
     {"transport-setup 0x140d7bb70", 0x140d7bb70, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18},
      (void*)h_tinit, (void**)&o_tinit},
