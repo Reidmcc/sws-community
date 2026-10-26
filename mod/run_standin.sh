@@ -72,5 +72,9 @@ else echo "FAIL  spawn_log lines missing from the log"; STATUS=1; fi
 if [ -n "$LOG" ] && grep -q "hit: starshiphealthdamagedata_uwing: transform found in the physics component+0x80; the impact point is info+0x30" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (1.00, 2.00, 3.00) velocity ?[[:space:]]*$" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (-4.00, 0.50, 10.00) velocity (-[2-5][0-9]\.[0-9], 0\.0, 0\.0)" "$LOG"; then
     echo "PASS  hit_log found the ship's frame and logged both hits in it"
 else echo "FAIL  hit_log lines missing or wrong"; STATUS=1; fi
+# creep hull by ship type: the profile's Y-wing value wins over the creep default; the A-wing pack keeps the default
+if [ -n "$LOG" ] && grep -q "creep: ywing creep: hull 900 (the profile's), shields 600 (the creep default)" "$LOG" && grep -q "creep: awing creep: hull 125 (the creep default)" "$LOG"; then
+    echo "PASS  creep hull and shields: a profile value wins over the creep default, by ship type"
+else echo "FAIL  creep durability lines missing or wrong"; STATUS=1; fi
 [ -n "$LOG" ] && echo "log: $LOG"
 exit $STATUS
