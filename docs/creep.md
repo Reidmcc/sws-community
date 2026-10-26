@@ -50,7 +50,7 @@ bots do, and their targets follow the match's phase:
 |---|---|
 | Opener, transitions | the enemy corvette or Raider |
 | Their side on offense | the enemy frigates, then the flagship once the frigates are gone |
-| Their side on defense | the enemy corvette or Raider (the attacker brings a new one each offense phase) |
+| Their side on defense | the enemy corvette or Raider (the attacker brings a new one each offense phase): bombers go for it first; fighters, interceptors and dropships only once no starfighter is in reach |
 
 Players and other creep are targets in every phase. Bombers' bomb runs follow the same phases: on offense they raid the
 nearest enemy capital ship; otherwise only their current target, which can be the corvette or Raider but never a frigate

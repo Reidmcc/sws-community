@@ -196,7 +196,9 @@ static int g_creepRadius = 2000;
 // So the mode follows the phase: Aggressive on offense, the stock mode (Defensive) otherwise. The squadron's own scorer
 // copied the rules (Aggressive) when it registered and keeps them. stockMode/aggMode: the two values; wantMode: what
 // the phase asks for; seenAt: when the controller first reported a behaviour (the squadron registers about then).
-struct CreepPhase { uint64_t squad, ctrl, shared; uint64_t arr[3]; volatile LONG last; int32_t stockMode, aggMode;
+// shared: the bombers' list (and the squadron's own); sharedF and arrF: the other creep's, which score the enemy corvette
+// or Raider lower on defense (h_scorer hands it to any creep ship that isn't bomber-class)
+struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF[3]; volatile LONG last; int32_t stockMode, aggMode;
                     volatile LONG wantMode; volatile LONG64 seenAt; };
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
@@ -1847,33 +1849,42 @@ static void creep_ai_partition(uint64_t part) {
     static const Extra kExtra[3] = { { 1u << 29, { 4, 0, 0 } },     // the frigates
                                      { 1u << 22, { 3, 0, 0 } },     // the flagship, once the frigates are gone
                                      { 1u << 28, { 2, 4, 4 } } };   // the small capital ship: the corvette or the Raider
-    uint64_t arrs[3] = {};
-    for (int r = 0; r < 3; r++) {
-        uint64_t arr = creep_array(ns + 3), tmpl = 0; uint32_t m = 0; if (!arr) break;
-        for (uint32_t k = 0; k < ns && !tmpl; k++) tmpl = rd<uint64_t>(sarr, k * 8);
-        for (int e = 0; e < 3 && tmpl; e++) {
-            uint64_t s = creep_copy(tmpl, 48); if (!s) { tmpl = 0; break; }
-            *(uint64_t*)(s + 24) = 0; *(uint64_t*)(s + 32) = 0;
-            *(uint32_t*)(s + 40) = kExtra[e].tags; *(float*)(s + 44) = kExtra[e].prio[r];
-            *(uint64_t*)(arr + m++ * 8ull) = s;
+    // On defense the attacker brings a new corvette or Raider: the bombers go for it at the opener's priority; the other
+    // creep (fighters, interceptors, dropships) only below the starfighters, so they don't swarm it (Pseudo, 2026-10-26:
+    // fighters and interceptors swarmed it and got wrecked).
+    static const float kSmallcapDefenseOthers = 1;
+    uint64_t arrs[3] = {}, arrsF[3] = {};
+    for (int v = 0; v < 2; v++)
+        for (int r = 0; r < 3; r++) {
+            uint64_t arr = creep_array(ns + 3), tmpl = 0; uint32_t m = 0; if (!arr) break;
+            for (uint32_t k = 0; k < ns && !tmpl; k++) tmpl = rd<uint64_t>(sarr, k * 8);
+            for (int e = 0; e < 3 && tmpl; e++) {
+                uint64_t s = creep_copy(tmpl, 48); if (!s) { tmpl = 0; break; }
+                *(uint64_t*)(s + 24) = 0; *(uint64_t*)(s + 32) = 0;
+                *(uint32_t*)(s + 40) = kExtra[e].tags;
+                *(float*)(s + 44) = v == 1 && r == 2 && kExtra[e].tags == 1u << 28 ? kSmallcapDefenseOthers : kExtra[e].prio[r];
+                *(uint64_t*)(arr + m++ * 8ull) = s;
+            }
+            if (!tmpl) break;
+            for (uint32_t k = 0; k < ns; k++) {
+                uint64_t s = rd<uint64_t>(sarr, k * 8);
+                if (s && rd<uint32_t>(s, 40) != 2) *(uint64_t*)(arr + m++ * 8ull) = s;
+            }
+            *(uint32_t*)(arr - 4) = m; (v ? arrsF : arrs)[r] = arr;
         }
-        if (!tmpl) break;
-        for (uint32_t k = 0; k < ns; k++) {
-            uint64_t s = rd<uint64_t>(sarr, k * 8);
-            if (s && rd<uint32_t>(s, 40) != 2) *(uint64_t*)(arr + m++ * 8ull) = s;
-        }
-        *(uint32_t*)(arr - 4) = m; arrs[r] = arr;
-    }
     // A squadron resolves its target list once, as it registers (FUN_1417a2220), and never reads the index again; the
     // score array inside the list is read on every evaluation. So every phase's entry is one shared list, and the phase
     // swaps the scores inside it (h_ctrlfield, as the controller's behaviour follows the phase).
-    uint64_t shared = arrs[0] && arrs[1] && arrs[2] ? creep_copy(stock, 32) : 0;
-    uint64_t phases = shared ? creep_array(7) : 0;
+    uint64_t shared = arrs[0] && arrs[1] && arrs[2] && arrsF[0] && arrsF[1] && arrsF[2] ? creep_copy(stock, 32) : 0;
+    uint64_t sharedF = shared ? creep_copy(stock, 32) : 0;
+    uint64_t phases = sharedF ? creep_array(7) : 0;
     if (!phases) { status("creep: no room for %s's target lists; its creep keep the stock engagement", leaf); return; }
-    *(uint64_t*)(shared + 24) = arrs[1];   // the opener's scores until a phase arrives
+    *(uint64_t*)(shared + 24) = arrs[1]; *(uint64_t*)(sharedF + 24) = arrsF[1];   // the opener's scores until a phase arrives
     for (int p = 0; p < 7; p++) *(uint64_t*)(phases + p * 8ull) = shared;
     CreepPhase& cp = g_creepPh[fac];
     cp.arr[0] = arrs[0]; cp.arr[1] = arrs[1]; cp.arr[2] = arrs[2]; cp.last = -1;
+    cp.arrF[0] = arrsF[0]; cp.arrF[1] = arrsF[1]; cp.arrF[2] = arrsF[2];
+    InterlockedExchange64((volatile LONG64*)&cp.sharedF, (LONG64)sharedF);
     InterlockedExchange64((volatile LONG64*)&cp.shared, (LONG64)shared);
     cp.stockMode = rd<int32_t>(squad, 32); cp.aggMode = rd<int32_t>(squad, 112);
     InterlockedExchange(&cp.wantMode, cp.stockMode); InterlockedExchange64(&cp.seenAt, 0);
@@ -1883,7 +1894,7 @@ static void creep_ai_partition(uint64_t part) {
     bool ok = write_u64(squad + 104, phases) && leaf_write(squad + 124, true, 2) && leaf_write(squad + 139, false, 1, true) &&
               leaf_write(squad + 32, true, mode) && leaf_write(squad + 40, false, (double)g_creepRadius);
     if (ok) status("creep: %s: aggressive within %d m, targets by phase (offense: the frigates, then the flagship; face-off: the small "
-                   "capital ship; defense: the small capital ship)", leaf, g_creepRadius);
+                   "capital ship; defense: the small capital ship, bombers first)", leaf, g_creepRadius);
     else status("creep: %s: a write failed; its creep may keep the stock engagement", leaf);
 }
 // The phase, live: the creep logic maps FrontlineIndex to its controller's BehaviourIndex (SelectInt: phases 0..6 ->
@@ -1904,6 +1915,7 @@ static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
         int p = bi == 1 ? 0 : bi == 2 ? 1 : bi == 4 ? 3 : bi == 5 ? 4 : 2;   // 3 (and anything unexpected): face-off
         int role = creep_role(f, p);
         InterlockedExchange64((volatile LONG64*)(cp.shared + 24), (LONG64)cp.arr[role]);
+        if (cp.sharedF) InterlockedExchange64((volatile LONG64*)(cp.sharedF + 24), (LONG64)cp.arrF[role]);
         InterlockedExchange(&cp.wantMode, role == 0 ? cp.aggMode : cp.stockMode);
         InterlockedCompareExchange64(&cp.seenAt, (LONG64)GetTickCount64(), 0);
         if (InterlockedExchange(&cp.last, bi) != bi)
@@ -1911,6 +1923,38 @@ static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
                    bi == 1 ? "0" : bi == 2 ? "1" : bi == 4 ? "3" : bi == 5 ? "4" : "2, 5 or 6", role == 0 ? "offense" : role == 2 ? "defense" : "face-off");
         break;
     }
+}
+// Per ship type: a squadron scores its candidates for each of its ships in FUN_14182ade0 (twelve integer or pointer
+// arguments: the second is the ship choosing, the eighth the target list). When the list is a creep squadron's and the
+// ship isn't bomber-class, it gets the other creep's list instead. The class is in the ship's own radar tags, read the way
+// the scorer reads a candidate's (+0x5d0 | +0x5cc | [+0x30]+0x38): bit 24 = bomber-class (Y-wing, TIE bomber), 25
+// fighter, 26 interceptor, 27 support.
+typedef void(__fastcall* scorer_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                   uint64_t, uint64_t, uint64_t);
+static scorer_t o_scorer;
+static uint32_t creep_ship_tags(uint64_t ship) {
+    return rd<uint32_t>(ship, 0x5d0) | rd<uint32_t>(ship, 0x5cc) | rd<uint32_t>(rd<uint64_t>(ship, 0x30), 0x38);
+}
+static void __fastcall h_scorer(uint64_t a1, uint64_t ship, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7,
+                                uint64_t list, uint64_t a9, uint64_t a10, uint64_t a11, uint64_t a12) {
+    if (g_creepAggressive && ship && list)
+        for (int f = 0; f < 2; f++) {
+            const CreepPhase& cp = g_creepPh[f];
+            if (list != cp.shared || !cp.sharedF) continue;
+            uint32_t tags = creep_ship_tags(ship);
+            bool bomber = (tags & (1u << 24)) != 0;
+            if (tags && !bomber) list = cp.sharedF;
+            if (g_creepLog) {   // once per distinct ship tags: which list it got
+                static uint32_t seen[64]; static int ns; static SRWLOCK lk = SRWLOCK_INIT;
+                AcquireSRWLockExclusive(&lk);
+                bool dup = false; for (int i = 0; i < ns && !dup; i++) dup = seen[i] == tags;
+                if (!dup && ns < 64) { seen[ns++] = tags; status("creep targets: a %s creep ship with tags %08x scores with the %s list", kCreepFaction[f], tags,
+                                                                  list == cp.sharedF ? "other creep's" : "bombers'"); }
+                ReleaseSRWLockExclusive(&lk);
+            }
+            break;
+        }
+    o_scorer(a1, ship, a3, a4, a5, a6, a7, list, a9, a10, a11, a12);
 }
 // [server] creep_log=1 (diagnostic): the score lookup (FUN_141617a00: settings, the target's tags, the matched score out;
 // returns the priority in xmm0), logged once per distinct (list, tags, priority) when the list is one the mod made.
@@ -3328,6 +3372,9 @@ static Site g_sites[] = {
     {"material-lookup 0x14057dd20", 0x14057dd20, 15,
      {0x40,0x53,0x48,0x83,0xec,0x20,0x41,0x8b,0x00,0x48,0x8b,0xd9,0x44,0x8b,0x02},
      (void*)h_matlookup, (void**)&o_matlookup},
+    {"creep-scorer 0x14182ade0", 0x14182ade0, 14,
+     {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55},
+     (void*)h_scorer, (void**)&o_scorer},
     {"controller-field 0x1416feaf0", 0x1416feaf0, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa},
      (void*)h_ctrlfield, (void**)&o_ctrlfield},

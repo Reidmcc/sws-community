@@ -6,6 +6,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <initializer_list>
+static volatile unsigned long long g_scorerList;   // the creep scorer stand-in's eighth argument, last call
 #pragma comment(lib, "ws2_32.lib")
 #include <stdio.h>
 #include <stdint.h>
@@ -138,6 +139,14 @@ int main() {
     // (mov rax, [rdx+8]; mov edx, [rax]; mov [rcx+0xb4], edx) and the epilogue; and the target-score lookup (FUN_141617a00):
     // its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
     if (map(0x1416f0000, 0x10000) != (void*)0x1416f0000 || map(0x141610000, 0x10000) != (void*)0x141610000) { printf("FAIL  could not map the AI regions\n"); return 1; }
+    // the squadron's candidate scorer (FUN_14182ade0): its real 14-byte prologue, then a body that stores its eighth
+    // argument (the target list; [rsp+0x68] after the prologue's five pushes) in g_scorerList, and the pops
+    const uint8_t scorerHead[] = {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55, 0x48,0x8b,0x44,0x24,0x68, 0x48,0xa3};
+    const uint8_t scorerTail[] = {0x41,0x5d, 0x41,0x5c, 0x5f, 0x5e, 0x5d, 0xc3};
+    if (map(0x141820000, 0x10000) != (void*)0x141820000) { printf("FAIL  could not map the scorer region\n"); return 1; }
+    { uint8_t code[64]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
+      uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8; memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
+      put(0x14182ade0, code, at); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
                                  0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
@@ -512,6 +521,21 @@ int main() {
         bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
         bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
         bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4;
+        {   // per ship type on defense: a bomber-class ship keeps the squadron's list, a fighter gets one that scores the
+            // corvette or Raider below the starfighters
+            typedef void(__fastcall* sc_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+            uint8_t* bomberShip = fake_alloc(0x600); *(uint32_t*)(bomberShip + 0x5d0) = (1u << 24) | (1u << 11) | 4;
+            uint8_t* fighterShip = fake_alloc(0x600); *(uint32_t*)(fighterShip + 0x5d0) = (1u << 25) | (1u << 9) | 4;
+            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)bomberShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
+            uint8_t* forBomber = (uint8_t*)g_scorerList;
+            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fighterShip, 0, 0, 0, 0, 0, (uint64_t)L[0], 0, 0, 0, 0);
+            uint8_t* forFighter = (uint8_t*)g_scorerList;
+            g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)fighterShip, 0, 0, 0, 0, 0, (uint64_t)debugDisp, 0, 0, 0, 0);
+            uint8_t* otherList = (uint8_t*)g_scorerList;
+            check(forBomber == L[0] && forFighter && forFighter != L[0] && score(forFighter, smallcap) == 1 && score(forFighter, frigate) == 0 &&
+                  score(forFighter, turret) == 5 && otherList == debugDisp && *(uint8_t*)0x14182ade0 == 0xFF,
+                  "creep per ship type: on defense a bomber keeps the corvette at 4, a fighter scores it 1; a list that isn't the creep's passes through");
+        }
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
         bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
