@@ -33,7 +33,33 @@ bot_handling=1
 ```
 
 **Ship per pack.** Any of the faction's AI ships, in any combination; dropships too. The B-wing and TIE Defender have
-no AI version, so they can't be creep. A changed pack flies its AI ship with lasers, and bombs on the bombers.
+no AI version, so they can't be creep.
+
+**What each creep ship carries.** Creep fly the AI ship's own weapons: the stock creep loadout changes only hull and
+shields, and the mod's loadouts change no weapons except the bombers' torpedoes (below). Carrying an aux isn't the
+same as using it, though: the creep's squad behaviour switches some aux off, and the mod only ever switches missiles on.
+
+| Ship | Primary | Aux 1 | Aux 2 | Countermeasure |
+|---|---|---|---|---|
+| X-wing | lasers | homing missile (**missiles**) | squad self-heal (never) | flares |
+| Y-wing | lasers | standard bombs (always) | assault shield (never) | chaff |
+| A-wing | rapid-fire lasers | anti-fighter homing missile (**missiles**) | sensor array (never) | flares |
+| U-wing | ion cannons | shield buff for allies (always) | resupply droid (never) | sensor scrambler |
+| TIE fighter | lasers | homing missile (**missiles**) | squad self-heal (never) | flares |
+| TIE bomber | lasers | standard bombs (always) | assault shield (never) | chaff |
+| TIE interceptor | rapid-fire lasers | anti-fighter homing missile (**missiles**) | sensor array (never) | flares |
+| TIE Reaper | ion cannons | shield buff for allies (always) | resupply droid (never) | sensor scrambler |
+
+- **always:** creep use it as shipped (stock creep never fly these ships, so you won't have seen it before).
+- **missiles:** only with **missiles** on; stock creep never fire it.
+- **never:** switched off in the creep's behaviour, with any settings.
+- **With torpedoes on,** Y-wing and TIE bomber packs swap their assault shield for torpedoes (fired only with
+  **missiles** on, and only at capital ships), and the TIE bomber's chaff becomes flares.
+- **Countermeasures:** creep aren't allowed them, except possibly the bombers and dropships, which the rule lets through
+  when nothing else decides; nobody has seen creep use one.
+
+The names are read from the game's weapon configs (`starshipweaponconfig_homingmissile_xwing_ai` and so on), so they
+may differ from the in-game names.
 
 **Hull and shields, by ship type.** The **Creep hull and shields** boxes set each creep ship type's hull and shields,
 for every pack flying that ship (the same ship with different hull in one match would feel strange). The defaults are
