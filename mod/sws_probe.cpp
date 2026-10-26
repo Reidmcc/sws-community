@@ -1286,6 +1286,7 @@ static gstick_t o_gstick;
 #include "bot_map.h"        // player config -> vs-AI bot configs, generated from the pvb_bot collections
 #include "schematic_attrs.h"   // match-rule attribute ids -> names (local/tools/gen_schematic_attrs.py)
 static const char* schematic_name(uint32_t id) { for (const SchematicAttr& a : kSchematicAttrs) if (a.id == id) return a.key; return nullptr; }
+static const char* schematic_camel(uint32_t id) { for (const SchematicAttr& a : kSchematicAttrs) if (a.id == id) return a.name; return nullptr; }
 // Object-graph walk (2026-10-21): each root config is walked through the type table, and every number gets a dotted key:
 // asset.field, asset.field[i], asset.field.x (Vec3), asset.sub.field (a followed sub-object, its actual class resolved from
 // its ClassInfo id), asset.field[i].member (arrays of value types). Attribute leaves (IncomAttributeFloat/Int/Vec3, Value at
@@ -1335,7 +1336,8 @@ static void build_targets() {
 }
 
 // a number the walk reached: its full key, address, type, and the attribute it belongs to (if any)
-struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; bool isBool; };
+// also: a second copy of the same value to keep equal (a list-only config's typed attribute object; 0 = none)
+struct VeLeaf { const char* key; uint64_t addr; bool isInt; uint32_t attrId; int list; int comp; bool isBool; uint64_t also; };
 typedef void (*ve_fn)(void* ctx, const VeLeaf& l);
 
 // the actual class of a followed sub-object: the most specific type of its family whose id range holds its ClassInfo id
@@ -1405,13 +1407,25 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
             break; }
         case 13: {   // a list-only config's registration list (IncomSchematicAttributesConfig: Fleet Battles' and
             // Dogfight's match rules): 8-byte entries {u32 attribute id, value at +4}, each named by its attribute
+            // The same value is also in a typed attribute object, Attributes (+0x60, IncomAttributeFloat/Int/Bool: Value at
+            // +0x20), named by the parallel AttributeNameHash (+0x68, u32: djb2-xor of the attribute's name). The match
+            // logic's attributes entity reads the registered list when it finds it and falls back to that object (the
+            // stock 3/1 creep morale came back that way), so both are written.
             key[n] = 0;
             uint64_t arr = rd<uint64_t>(a, 0); int cnt = arr ? (int)rd<uint32_t>(arr - 4, 0) : 0; if (cnt > 256) cnt = 0;
+            uint64_t attrs = rd<uint64_t>(obj, 0x60), hashes = rd<uint64_t>(obj, 0x68);
+            uint32_t na = attrs ? rd<uint32_t>(attrs - 4, 0) : 0, nh = hashes ? rd<uint32_t>(hashes - 4, 0) : 0;
+            if (na > 256 || na != nh) na = 0;
             for (int j = 0; j < cnt; j++) {
-                const char* nm = schematic_name(rd<uint32_t>(arr, 8 * j)); if (!nm) continue;
+                uint32_t id = rd<uint32_t>(arr, 8 * j);
+                const char* nm = schematic_name(id); if (!nm) continue;
                 size_t m = strlen(key); if (m + strlen(nm) + 2 >= cap) continue;
                 sprintf_s(key + m, cap - m, ".%s", nm);
-                VeLeaf l{ key, arr + 8ull * j + 4, f.type == 1, 0, 0, 0, f.type == 2 }; fn(ctx, l); key[m] = 0;
+                uint64_t also = 0; uint32_t want = 5381;
+                for (const char* p = schematic_camel(id); p && *p; p++) want = (want * 33) ^ (uint8_t)*p;
+                for (uint32_t k = 0; k < na && !also; k++)
+                    if (rd<uint32_t>(hashes, 4 * k) == want) { uint64_t o = rd<uint64_t>(attrs, 8 * k); if (o) also = o + 0x20; }
+                VeLeaf l{ key, arr + 8ull * j + 4, f.type == 1, 0, 0, 0, f.type == 2, also }; fn(ctx, l); key[m] = 0;
             }
             break; }
         case 10: {   // a component's AttributeModifier list: each Float modifier, named by its attribute
@@ -1486,13 +1500,17 @@ static void apply_leaf(void* c, const VeLeaf& l) {
         double regNow = reg ? read_num(reg, l.isInt, l.isBool) : 0;
         bool same = l.isInt ? llround(now) == llround(target) : (float)now == (float)target;
         bool regSame = !reg || (l.isInt ? llround(regNow) == llround(target) : (float)regNow == (float)target);
-        if (same && regSame) continue;
-        bool ok = leaf_write(l.addr, l.isInt, target, l.isBool) && (!reg || leaf_write(reg, l.isInt, target, l.isBool));
+        double alsoNow = l.also ? read_num(l.also, l.isInt, l.isBool) : 0;
+        bool alsoSame = !l.also || (l.isInt ? llround(alsoNow) == llround(target) : (float)alsoNow == (float)target);
+        if (same && regSame && alsoSame) continue;
+        bool ok = leaf_write(l.addr, l.isInt, target, l.isBool) && (!reg || leaf_write(reg, l.isInt, target, l.isBool)) &&
+                  (!l.also || leaf_write(l.also, l.isInt, target, l.isBool));
         if (!v.logged) {
             v.logged = true;
             status("values: %s %.9g -> %.9g%s%s%s", l.key, now, l.isInt ? (double)llround(target) : (double)(float)target,
                    v.botOf[0] ? " (vs-AI bot, following the player)" : "",
-                   l.list ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry)") : "", ok ? "" : " WRITE FAILED");
+                   l.list ? (reg ? " (attribute and its list entry)" : " (attribute; no list entry)") : l.also ? " (list entry and its attribute)" : "",
+                   ok ? "" : " WRITE FAILED");
         }
     }
 }

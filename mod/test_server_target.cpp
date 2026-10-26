@@ -302,6 +302,12 @@ int main() {
     uint8_t* rInt = fake_alloc(16 + 8); *(uint32_t*)(rInt + 12) = 1; *(uint32_t*)(rInt + 16) = 1469253729u; *(int32_t*)(rInt + 20) = 1800;
     uint8_t* rBool = fake_alloc(16 + 8); *(uint32_t*)(rBool + 12) = 1; *(uint32_t*)(rBool + 16) = 3123731505u; rBool[20] = 0;
     *(uint64_t*)(rules + 0x38) = (uint64_t)(rBool + 16); *(uint64_t*)(rules + 0x40) = (uint64_t)(rFloat + 16); *(uint64_t*)(rules + 0x48) = (uint64_t)(rInt + 16);
+    // and its typed attribute objects (Attributes +0x60, Value +0x20) named by AttributeNameHash (+0x68, djb2-xor of the
+    // name): creep morale on offense ("ToWPointsGainedForCreepKillWhileOnOffense", 2625382658) and on defense (419017642)
+    uint8_t* aOff = fake_alloc(0x30); *(float*)(aOff + 0x20) = 1.0f; uint8_t* aDef = fake_alloc(0x30); *(float*)(aDef + 0x20) = 3.0f;
+    uint8_t* rAttrs = fake_alloc(16 + 2 * 8); *(uint32_t*)(rAttrs + 12) = 2; *(uint8_t**)(rAttrs + 16) = aDef; *(uint8_t**)(rAttrs + 24) = aOff;
+    uint8_t* rHash = fake_alloc(16 + 2 * 4); *(uint32_t*)(rHash + 12) = 2; *(uint32_t*)(rHash + 16) = 419017642u; *(uint32_t*)(rHash + 20) = 2625382658u;
+    *(uint64_t*)(rules + 0x60) = (uint64_t)(rAttrs + 16); *(uint64_t*)(rules + 0x68) = (uint64_t)(rHash + 16);
     uint8_t** insts2 = (uint8_t**)fake_alloc(64); insts2[0] = creep.inst; insts2[1] = shield; insts2[2] = weapon; insts2[3] = sd.inst; insts2[4] = dot; insts2[5] = rules;
     uint8_t* part1 = fake_alloc(0x40); *(uint8_t***)(part1 + 0x20) = insts1; *(uint16_t*)(part1 + 0x28) = 6;
     uint8_t* part2 = fake_alloc(0x40); *(uint8_t***)(part2 + 0x20) = insts2; *(uint16_t*)(part2 + 0x28) = 6;
@@ -626,8 +632,8 @@ int main() {
     check(*(float*)(player.inst + 0x2ec) == 10000.0f && player.reg[1] == 1.0f, "value engine: fields without an override untouched");
     check(bot.ab->value == 250.0f, "value engine: vs-AI bot follows the player where their defaults match");
     check(*(float*)(rFloat + 20) == 2.0f && *(float*)(rFloat + 28) == 3.0f && *(float*)(rFloat + 36) == 9.0f &&
-          *(int32_t*)(rInt + 20) == 2400 && rBool[20] == 1,
-          "match rules: creep morale on offense 1 -> 2, the match length 1800 -> 2400 and the morale DoT on, in the config's lists; the rest untouched");
+          *(int32_t*)(rInt + 20) == 2400 && rBool[20] == 1 && *(float*)(aOff + 0x20) == 2.0f && *(float*)(aDef + 0x20) == 3.0f,
+          "match rules: creep morale on offense 1 -> 2 (list entry and typed attribute), the match length 1800 -> 2400 and the morale DoT on; the rest untouched");
     check(bot.drift->value == 3.0f && bot.reg[5] == 3.0f, "value engine: vs-AI bot scaled where its default differs (1.5 x 5/2.5 = 3)");
     check(creep.ab->value == 240.0f && creep.drift->value == 2.5f, "value engine: creep config untouched");
     // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
