@@ -349,9 +349,12 @@ Flown by Pseudo on Yavin and Esseles; each line says what was seen.
   stock packs too, keeping their own creep configs. Pseudo: creep "much more active", "I almost got killed".
 - **Per ship type** (Esseles flight, then 90c59e4 and the opener after it): all creep went for the attacker's new
   corvette on defense, and fighters and interceptors swarmed it and got wrecked. The squadron's candidate scorer
-  FUN_14182ade0 (12 integer arguments: the second the ship choosing, the eighth the list) is hooked; a ship that isn't
-  bomber-class (its radar tags, read like a candidate's: +0x5d0 | +0x5cc | [+0x30]+0x38, bit 24) gets a second list
-  where the corvette or Raider scores 1 instead of 4, in the opener and on defense. Bombers keep 4.
+  FUN_14182ade0 (12 integer arguments: the second the ship choosing, a ServerStarshipEntity (the class the scorer itself
+  checks, ClassInfo 0x1449f5d80), the eighth the list) is hooked; a ship that isn't a bomber gets a second list where the
+  corvette or Raider scores 1 instead of 4, in the opener and on defense. Bombers keep 4. A bomber is a ship whose data
+  (entity +0x28) is the Y-wing's or TIE bomber's AI StarshipEntityData (0x1449fad80, in the blueprint's partition). The
+  first build (Sissubo flight) read radar tags at a candidate's offsets instead: on the ship entity those held other
+  values (ffffffff, 83ef7678...), so nearly every ship got the bombers' list (03a49e5 fixes it; not flown yet).
 - **App:** the mouse wheel over a focused dropdown changed its selection, so scrolling down to the hull and shield
   boxes rolled the pack dropdowns to their last ship (U-wing, Reaper) and saved it (30070e7). Reproduced with
   `--test-wheel`; the wheel on a closed dropdown now scrolls the page.
