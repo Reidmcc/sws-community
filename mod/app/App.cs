@@ -62,6 +62,22 @@ namespace SwsSettings
                     TextRenderer.DrawText(e.Graphics, c.Items[e.Index].ToString(), c.Font, e.Bounds, sel ? Color.White : Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
                 };
             }
+            // The mouse wheel over a closed dropdown scrolls the page it's on, not the dropdown's choice: Windows changes a
+            // focused combo box's selection on the wheel, so scrolling the Rules page past the creep packs (to reach the
+            // creep hull and shields below them) quietly changed the packs' ships (Pseudo's flight, 2026-10-26).
+            c.MouseWheel += (s, e) =>
+            {
+                if (c.DroppedDown) return;
+                var h = e as HandledMouseEventArgs; if (h != null) h.Handled = true;
+                for (Control p = c.Parent; p != null; p = p.Parent)
+                {
+                    var sc = p as ScrollableControl;
+                    if (sc == null || !sc.AutoScroll || !sc.VerticalScroll.Visible) continue;
+                    int y = -sc.AutoScrollPosition.Y - e.Delta;
+                    sc.AutoScrollPosition = new Point(-sc.AutoScrollPosition.X, Math.Max(0, y));
+                    break;
+                }
+            };
             return c;
         }
         public static CheckBox Check(string text) { return new DarkCheck { Text = text, Font = Body, Margin = new Padding(0, 4, 18, 0) }; }
@@ -198,6 +214,27 @@ namespace SwsSettings
         }
 
         // --test-edit: type <text> into a value cell and press Enter, the way the grid handles it, then report what stuck
+        // --test-wheel: the mouse wheel over each creep pack dropdown, focused, on the Rules page; reports whether any
+        // pack's ship changed (it mustn't) and the profile file's [creep] packs before and after
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+        public string TestWheel()
+        {
+            ShowPage(PageRules); Application.DoEvents();
+            var sb = new System.Text.StringBuilder();
+            for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++)
+            {
+                var box = creepBoxes[f, k]; int before = box.SelectedIndex;
+                box.Focus(); Application.DoEvents();
+                for (int n = 0; n < 3; n++)
+                {
+                    SendMessage(box.Handle, 0x020A, (IntPtr)((-120) << 16), IntPtr.Zero);   // WM_MOUSEWHEEL, one notch down
+                    Application.DoEvents();
+                }
+                sb.Append(f == 0 ? "rebel" : "imperial").Append(" pack ").Append(k + 1).Append(": ").Append(before).Append(" -> ").Append(box.SelectedIndex)
+                  .Append(before == box.SelectedIndex ? " unchanged" : " CHANGED").Append("\r\n");
+            }
+            return sb.ToString();
+        }
         public string TestEdit(string asset, string field, string text)
         {
             ShowPage(PageValues);
@@ -1034,6 +1071,11 @@ namespace SwsSettings
                 form.Shown += (s, e) => { string r; try { r = form.TestLaunch(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             // --test-edit <report> <asset> <field> <text>: one cell edit as the grid does it, reported to a file
+            if (args.Length >= 2 && args[0] == "--test-wheel")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestWheel(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
+            }
             if (args.Length >= 5 && args[0] == "--test-edit")
             {
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
