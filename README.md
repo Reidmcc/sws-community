@@ -13,16 +13,18 @@ game folder, and follow the `README.txt` inside. Players need only that folder; 
 
 ### Antivirus warnings
 
-Windows Defender currently flags the mod as `Trojan:Win32/Wacatac.H!ml`. Chrome uses Defender's verdict, so it may refuse
-the download outright, and Defender may remove `sws_server.dll` when you unzip. This is a false positive: the `!ml` means
-a machine-learning guess, not a match against known malware. It reacts to what the launcher does, which is start your
-game and load the mod's DLL into it. Some malware does the same, so the pattern alone looks suspicious.
+Windows Defender may flag the mod as malware. It flagged v0.2.1 as `Trojan:Win32/Wacatac.H!ml`; v0.3.0 and v0.4.0
+scan clean, but its guess can change from one version to the next. When it does flag the mod, Chrome uses Defender's
+verdict, so it may refuse the download outright, and Defender may remove `sws_server.dll` when you unzip. That's a false
+positive: the `!ml` means a machine-learning guess, not a match against known malware. It reacts to what the launcher
+does, which is start your game and load the mod's DLL into it. Some malware does the same, so the pattern alone looks
+suspicious.
 
-- **It's being reported to Microsoft** as a false positive. Once they clear it, Defender's normal updates fix it for
-  everyone, with nothing for you to do.
+- **Flagged versions get reported to Microsoft** as false positives. Once they clear one, Defender's normal updates fix
+  it for everyone, with nothing for you to do. If yours flags a version, please tell us in an issue.
 - **You can check what you're running:** the source is all here, and each release lists its files' SHA-256 hashes.
 - **If the download is blocked,** there's no setting we'd suggest changing to get around it. Please wait for Microsoft's
-  review.
+  review, or use the previous release meanwhile.
 - **If you already have the files** and Defender removes them, you can choose to allow just the mod's folder: Windows
   Security → Virus & threat protection → Manage settings → Exclusions. That's your call. Please don't turn your
   antivirus off.
