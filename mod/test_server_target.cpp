@@ -769,6 +769,7 @@ int main() {
                                 "incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileonoffense=2;",
                                 "materialgrid.laserdamage.capitalhull=0.05;",
                                 "shipscale_tiefighter.scale=1.5;", "shipscale_ywing.scale=0.5;",
+                                "starshiphealthdamagedata_ywing_ai_sp.maxhullhealth=900;",
                                 "starshipmovementconfig_stardestroyer.afterburnermaxspeed=400;",
                                 "starshipmovementconfig_xwing.afterburneraxisturnrate.y=7;",
                                 "starshipmovementconfig_xwing.afterburnermaxspeed=250;",

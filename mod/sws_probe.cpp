@@ -351,6 +351,8 @@ static void clamp_overrides() {
 // them, not co-op's or vs-AI's bots). Those get the stock creep's share of the player ship's: Rebel hull 1/4 and shields
 // 1/2 (creep X-wing 300/400 against the player's 1200/800), Imperial hull 0.32 (creep TIE fighter 500 against 1550) and
 // shields 1/2. The *_ai_sp configs already carry the creep's collision caps (10000). Player values from the game data.
+// These are only defaults: a profile value for the same key (the settings app's creep hull and shields, by ship type)
+// is kept, and is part of the fingerprint like any other value.
 struct CreepDurability { const char* ship; double hull, shields; };
 static const CreepDurability kCreepDurability[] = {
     { "ywing", 300, 600 },   // player 1200 / 1200
@@ -371,11 +373,16 @@ static void creep_durability() {
         bool used = false;
         for (int f = 0; f < 2; f++) for (int p = 0; p < 3; p++) if (g_creepPack[f][p] && !strcmp(kCreepShips[f][g_creepPack[f][p]], d.ship)) used = true;
         if (!used) continue;
-        char key[128];
-        sprintf_s(key, "starshiphealthdamagedata_%s_ai_sp.maxhullhealth", d.ship); add_override(key, d.hull);
-        if (d.shields > 0) { sprintf_s(key, "starshipshielddata_%s_ai_sp.maxshieldhealth", d.ship); add_override(key, d.shields); }
-        if (d.shields > 0) status("creep: %s creep get creep durability: hull %g, shields %g", d.ship, d.hull, d.shields);
-        else status("creep: %s creep get creep durability: hull %g", d.ship, d.hull);
+        char key[128]; double hull = d.hull, shields = d.shields; bool hullSet = false, shieldsSet = false;
+        auto keep = [&](const char* k, double& v) {   // the profile's own value wins over the creep default
+            for (int i = 0; i < g_overrideCount; i++) if (!strcmp(g_overrides[i].key, k)) { v = g_overrides[i].value; return true; }
+            add_override(k, v); return false;
+        };
+        sprintf_s(key, "starshiphealthdamagedata_%s_ai_sp.maxhullhealth", d.ship); hullSet = keep(key, hull);
+        if (d.shields > 0) { sprintf_s(key, "starshipshielddata_%s_ai_sp.maxshieldhealth", d.ship); shieldsSet = keep(key, shields); }
+        if (d.shields > 0) status("creep: %s creep: hull %g (%s), shields %g (%s)", d.ship, hull, hullSet ? "the profile's" : "the creep default",
+                                  shields, shieldsSet ? "the profile's" : "the creep default");
+        else status("creep: %s creep: hull %g (%s)", d.ship, hull, hullSet ? "the profile's" : "the creep default");
     }
 }
 static wchar_t g_dllDir[MAX_PATH];

@@ -132,6 +132,7 @@ namespace SwsSettings
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
+        readonly TextBox[,] creepHull = new TextBox[2, 4], creepShields = new TextBox[2, 4];
         static readonly int[] CreepRadii = { 1000, 1200, 1500, 2000, 2500, 3000 };
         readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         static readonly string[][] CreepShipNames = { new[] { "X-wing (stock)", "Y-wing", "A-wing", "U-wing" },
@@ -231,7 +232,11 @@ namespace SwsSettings
             if (mode == "ship") { tree.SelectedNode = ship; foreach (TreeNode sys in ship.Nodes) if (sys.Text.StartsWith("Engine") || sys.Text.StartsWith("Primary")) sys.Expand(); return; }
             if (ship.Nodes.Count > 0) tree.SelectedNode = ship.Nodes[0];   // Movement: one config, shown directly
         }
-        public void ShowRulesForShot() { ShowPage(PageRules); }
+        public void ShowRulesForShot(bool end = false)
+        {
+            ShowPage(PageRules);
+            if (end) { Height = 1500; Application.DoEvents(); }   // tall enough to show the whole page (render mode only)
+        }
         void ShowPage(int page)
         {
             playPage.Visible = page == PagePlay; rulesPage.Visible = page == PageRules; valuesPage.Visible = page == PageValues;
@@ -273,6 +278,7 @@ namespace SwsSettings
                 if (!creepRadius.Items.Contains(want)) creepRadius.Items.Add(want);
                 creepRadius.SelectedItem = want; creepRadius.Enabled = !profile.BuiltIn && profile.CreepAggressive;
             }
+            for (int f = 0; f < 2; f++) for (int k = 0; k < 4; k++) { ShowCreepDurability(f, k); }
             rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
             rulesNote.Text = profile.BuiltIn ? "Default is the game as shipped: every rule and fix off. Duplicate it on Profile and values to make your own." : "";
             loading = false;
@@ -293,6 +299,39 @@ namespace SwsSettings
                 (defaults.Assets.Count == 0 ? "defaults.ini is missing: launch the game once with the mod to list the values. " : "") +
                 changed + " changed value" + (changed == 1 ? "" : "s") + (effective.Notes.Count > 0 ? ". " + string.Join(" ", effective.Notes.Take(3)) : "");
             RefreshPlay();
+        }
+        // a creep hull or shields box: shows the profile's value (in the changed colour) or the default (muted); on leaving
+        // it, a number different from the default is kept within the field's limit, and empty or the default removes it
+        TextBox DurabilityBox(Func<string> key, Func<double> def, int f, int k, string what)
+        {
+            var tb = new TextBox { Width = 58, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body, Margin = new Padding(0, 3, 0, 0) };
+            new ToolTip().SetToolTip(tb, (f == 0 ? CreepShipNames[0][k] : CreepShipNames[1][k]).Replace(" (stock)", "") + " creep " + what + ": " + key());
+            Action commit = () => {
+                if (loading || profile.BuiltIn) return;
+                string k2 = key(); string txt = tb.Text.Trim(); double v;
+                if (txt.Length == 0 || !double.TryParse(txt, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v) || v == def())
+                    profile.Values.Remove(k2);
+                else
+                {
+                    int dot = k2.IndexOf('.'); var l = limits.Find(k2.Substring(0, dot), k2.Substring(dot + 1));
+                    profile.Values[k2] = Limits.Clamp(l, v);
+                }
+                SaveProfile();
+                for (int ff = 0; ff < 2; ff++) for (int kk = 0; kk < 4; kk++) ShowCreepDurability(ff, kk);
+            };
+            tb.Leave += (s, e) => commit();
+            tb.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { commit(); e.SuppressKeyPress = true; } };
+            return tb;
+        }
+        void ShowCreepDurability(int f, int k)
+        {
+            Action<TextBox, string, double> show = (tb, key, def) => {
+                if (tb == null || key == null) return;
+                double v; bool set = profile.Values.TryGetValue(key, out v);
+                tb.Text = Num.Show(set ? v : def); tb.ForeColor = set ? Theme.Changed : Theme.Muted; tb.Enabled = !profile.BuiltIn;
+            };
+            show(creepHull[f, k], Profile.CreepHullKeys[f][k], Profile.CreepHullDefaults[f][k]);
+            show(creepShields[f, k], Profile.CreepShieldKeys[f][k], Profile.CreepShieldDefaults[f][k]);
         }
         void SaveProfile()
         {
@@ -684,6 +723,33 @@ namespace SwsSettings
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions.");
 
+            {   // creep hull and shields, by ship type
+                var durHead = Theme.Label("Creep hull and shields", Theme.Body, Theme.Text); durHead.Margin = new Padding(0, 14, 0, 0); col.Controls.Add(durHead);
+                var note = Theme.Label("By ship type, for every pack flying that ship. The defaults are the stock creep's: about a quarter of the player ship's hull and " +
+                    "half its shields. Clear a box to go back to the default. Part of the fingerprint when changed.", Theme.Small, Theme.Muted);
+                note.MaximumSize = new Size(900, 0); col.Controls.Add(note);
+                for (int f = 0; f < 2; f++)
+                {
+                    var row = Theme.Row(6); row.Margin = new Padding(0, 8, 0, 0);
+                    row.Controls.Add(new Label { Text = f == 0 ? "Rebel" : "Imperial", AutoSize = true, Font = Theme.Body, ForeColor = Theme.Text, Margin = new Padding(0, 6, 12, 0), MinimumSize = new Size(70, 0) });
+                    for (int k = 0; k < 4; k++)
+                    {
+                        string ship = CreepShipNames[f][k].Replace(" (stock)", "");
+                        row.Controls.Add(new Label { Text = ship, AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(k == 0 ? 0 : 14, 8, 6, 0) });
+                        int ff = f, kk = k;
+                        creepHull[f, k] = DurabilityBox(() => Profile.CreepHullKeys[ff][kk], () => Profile.CreepHullDefaults[ff][kk], ff, kk, "hull");
+                        row.Controls.Add(creepHull[f, k]);
+                        if (Profile.CreepShieldKeys[f][k] != null)
+                        {
+                            creepShields[f, k] = DurabilityBox(() => Profile.CreepShieldKeys[ff][kk], () => Profile.CreepShieldDefaults[ff][kk], ff, kk, "shields");
+                            row.Controls.Add(new Label { Text = "/", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(2, 8, 2, 0) });
+                            row.Controls.Add(creepShields[f, k]);
+                        }
+                    }
+                    col.Controls.Add(row);
+                }
+            }
+
             creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
             creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
@@ -947,6 +1013,7 @@ namespace SwsSettings
                 {
                     if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : args[2] == "values-match" ? "match" : "system");
                     if (args.Length >= 3 && args[2] == "rules") form.ShowRulesForShot();
+                    if (args.Length >= 3 && args[2] == "rules-end") form.ShowRulesForShot(true);
                     Application.DoEvents();
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();

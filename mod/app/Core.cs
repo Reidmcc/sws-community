@@ -182,6 +182,21 @@ namespace SwsSettings
         public bool FixZavianCreep;         // in the fingerprint only when on, so profiles without it keep theirs
         // [creep] <faction>_pack<1-3>: each creep pack's ship, an index into CreepShips; 0 = the stock ship (the DLL's creep_scan)
         public static readonly string[][] CreepShips = { new[] { "xwing", "ywing", "awing", "uwing" }, new[] { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
+        // Creep hull and shields by ship type (the DLL's kCreepDurability): profile values on the configs that ship's creep
+        // use. Stock X-wing and TIE fighter packs fly their creep configs (*_ai); a changed pack flies the single-player AI
+        // configs (*_ai_sp), which the DLL gives the stock creep's share of the player ship's unless the profile sets them.
+        // Index matches CreepShips; shield key null = the ship has no shields. Defaults as the game or the DLL sets them.
+        public static readonly string[][] CreepHullKeys = {
+            new[] { "starshiphealthdamagedata_xwing_ai.maxhullhealth", "starshiphealthdamagedata_ywing_ai_sp.maxhullhealth",
+                    "starshiphealthdamagedata_awing_ai_sp.maxhullhealth", "starshiphealthdamagedata_uwing_ai_sp.maxhullhealth" },
+            new[] { "starshiphealthdamagedata_tiefighter_ai.maxhullhealth", "starshiphealthdamagedata_tiebomber_ai_sp.maxhullhealth",
+                    "starshiphealthdamagedata_tieinterceptor_ai_sp.maxhullhealth", "starshiphealthdamagedata_tiereaper_ai_sp.maxhullhealth" } };
+        public static readonly string[][] CreepShieldKeys = {
+            new[] { "starshipshielddata_xwing_ai.maxshieldhealth", "starshipshielddata_ywing_ai_sp.maxshieldhealth",
+                    "starshipshielddata_awing_ai_sp.maxshieldhealth", "starshipshielddata_uwing_ai_sp.maxshieldhealth" },
+            new string[] { null, null, null, "starshipshielddata_tiereaper_ai_sp.maxshieldhealth" } };
+        public static readonly double[][] CreepHullDefaults = { new double[] { 300, 300, 125, 250 }, new double[] { 500, 710, 250, 323 } };
+        public static readonly double[][] CreepShieldDefaults = { new double[] { 400, 600, 250, 500 }, new double[] { 0, 0, 0, 500 } };
         public static readonly string[] CreepFaction = { "rebel", "imperial" };
         public readonly int[,] Creep = new int[2, 3];
         // [creep] aggressive: creep engage like the vs-AI bots, with targets by phase; missiles: creep fire missiles and
