@@ -1023,15 +1023,55 @@ namespace SwsSettings
         {
             var lines = output.Replace("\r", "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0 && !x.StartsWith("Community server mod launcher")).ToList();
             string note = string.Join(" ", lines.Where(x => x.StartsWith("Note:")));
-            if (code == 0 && lines.Any(x => x.StartsWith("Started pid")))
+            string started = lines.FirstOrDefault(x => x.StartsWith("Started pid"));
+            if (code == 0 && started != null)
             {
                 launchStatus.ForeColor = Theme.Good;
-                launchStatus.Text = "The game is starting." + (note.Length > 0 ? " " + note : "");
+                launchStatus.Text = "The game is running." + (note.Length > 0 ? " " + note : "");
+                int pid; var parts = started.Split(' ');
+                if (parts.Length > 2 && int.TryParse(parts[2], out pid)) WatchGame(pid);
                 return;
             }
             launchStatus.ForeColor = Theme.Warn;
             launchStatus.Text = "The game wasn't started.";
             Theme.Ask(this, "The game wasn't started", string.Join("\n", lines.DefaultIfEmpty("The launcher stopped without saying why (exit code " + code + ").")), null, false, "OK", 220);
+        }
+        // The status line under Launch says the game is running until that process exits, then clears. A later launch
+        // takes over the line, so an older watcher only clears it if no launch has happened since.
+        int launchGeneration;
+        void WatchGame(int pid)
+        {
+            int mine = ++launchGeneration;
+            var t = new System.Threading.Thread(() =>
+            {
+                try { using (var p = Process.GetProcessById(pid)) p.WaitForExit(); } catch { }   // gone already: clear now
+                try { BeginInvoke((Action)(() => { if (mine == launchGeneration) launchStatus.Text = ""; })); } catch { }   // the app may have closed
+            }) { IsBackground = true };
+            t.Start();
+        }
+        // --test-status: the status line after a launch, with stand-in "games" (ping, hidden): it says running, stays while the
+        // latest launch runs even when an earlier one exits, and clears when the latest exits
+        public string TestStatus()
+        {
+            Func<int, Process> game = secs => Process.Start(new ProcessStartInfo("ping", "-n " + secs + " 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true });
+            Func<Func<bool>, int, bool> waitFor = (cond, ms) =>
+            {
+                var sw = Stopwatch.StartNew();
+                while (!cond() && sw.ElapsedMilliseconds < ms) { Application.DoEvents(); System.Threading.Thread.Sleep(50); }
+                return cond();
+            };
+            var r = new System.Text.StringBuilder();
+            using (var a = game(2)) using (var b = game(5))
+            {
+                ShowLaunchResult(0, "Started pid " + a.Id + " with sws_server.dll queued to load at startup.");
+                ShowLaunchResult(0, "Started pid " + b.Id + " with sws_server.dll queued to load at startup.");
+                r.AppendLine("after launch: '" + launchStatus.Text + "'");
+                waitFor(() => a.HasExited, 10000); Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
+                r.AppendLine("after the earlier game exits: '" + launchStatus.Text + "'");
+                bool cleared = waitFor(() => launchStatus.Text.Length == 0, 15000);
+                r.AppendLine("after the latest exits: '" + launchStatus.Text + "' (cleared " + cleared + ", latest exited " + b.HasExited + ")");
+            }
+            return r.ToString();
         }
         // --test-launch: the launch path after the popup (settings, hidden launcher, its output), reported to a file
         public string TestLaunch()
@@ -1069,6 +1109,12 @@ namespace SwsSettings
             {
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
                 form.Shown += (s, e) => { string r; try { r = form.TestLaunch(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
+            }
+            // --test-status <report>: the status line under Launch clears when the game exits
+            if (args.Length >= 2 && args[0] == "--test-status")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestStatus(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             // --test-edit <report> <asset> <field> <text>: one cell edit as the grid does it, reported to a file
             if (args.Length >= 2 && args[0] == "--test-wheel")
