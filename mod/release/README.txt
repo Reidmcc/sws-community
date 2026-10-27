@@ -12,8 +12,11 @@ Before you start (please read)
 - You need your own copy of the game, from Steam or the EA app. Have it from Epic instead? Run sws_check.exe (it only
   reads the game's exe) and attach its report to issue #17 on the project page: that tells us whether your copy is the
   same build, the first step to supporting it.
-- The EA app's copy is new in this version. It has been tested as far as the game's menu, with the mod working there,
-  but not yet in a match. Please tell us how it goes.
+- The EA app's copy is new in this version. It has been tested in a custom match vs AI, with the mod's unlocks,
+  loadouts and creep settings working. Please tell us how it goes.
+- Known limitation on a new account (any copy): the loadout screens don't show the list of a loadout's components under
+  it. The game does the same without the mod; it seems to wait until the account has earned some customization. The
+  loadouts themselves work, all five slots included; a loadout's edit screen shows its parts.
 - The game runs without EasyAntiCheat (started directly, not through EA's launcher), so EA's official online modes are
   not available in that session. The launcher refuses to start if EasyAntiCheat is running.
 - The game still signs in to EA's account services. Loading a mod into it carries some risk to your EA account. We think
