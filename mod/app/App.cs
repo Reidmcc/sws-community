@@ -885,16 +885,31 @@ namespace SwsSettings
                 : "Tailscale isn't running on this PC, or isn't installed (tailscale.com). Without it, players need another way to reach this PC: UDP port 25200.";
             playProfile.Text = "Profile: " + profile.Name + "    fingerprint " + Effective.Show(effective != null ? effective.Fingerprint : 0);
             playWarn.Text = server.Listen != 1 ? "server.ini has listen=" + server.Listen + ": hosting needs listen=1 (the release's server.ini has it)." : "";
-            RefreshCopies();
+            if (IsHandleCreated) LookUpCopies();   // the first time, from OnShown: the window opens before the lookup
         }
         // The copies of the game the launcher finds (sws_launch --list-games), asked once. With more than one, a list to
         // choose from, remembered in sws_settings.ini ([launch] game=) and passed to the launcher as --target; with one,
-        // a line naming it.
+        // a line naming it. The lookup runs a program and waits for it (up to a minute), so it runs in the background
+        // once the window is up; Launch waits for it.
         static string CopyName(KeyValuePair<string, string> c) { return (c.Key == "ea" ? "EA app" : "Steam") + ":  " + c.Value; }
-        void RefreshCopies()
+        bool copiesAsked;
+        protected override void OnShown(EventArgs e) { LookUpCopies(); base.OnShown(e); }
+        void LookUpCopies()
         {
-            if (copies != null) return;
-            copies = new List<KeyValuePair<string, string>>();
+            if (copies != null || copiesAsked || !server.Exists) return;
+            copiesAsked = true;
+            copyTitle.Visible = copyBox.Visible = false;
+            copyNote.Text = "Looking for your copies of the game..."; copyNote.Margin = new Padding(0, 18, 8, 0);
+            var t = new System.Threading.Thread(() =>
+            {
+                var found = FindCopies();
+                try { BeginInvoke((Action)(() => ShowCopies(found))); } catch { }   // the window may have closed meanwhile
+            }) { IsBackground = true };
+            t.Start();
+        }
+        List<KeyValuePair<string, string>> FindCopies()
+        {
+            var found = new List<KeyValuePair<string, string>>();
             string launcher = Path.Combine(dir, "sws_launch.exe");
             if (File.Exists(launcher))
             {
@@ -903,9 +918,18 @@ namespace SwsSettings
                 {
                     if (!line.StartsWith("Copy: ")) continue;
                     string rest = line.Substring(6); int sp = rest.IndexOf(' ');
-                    if (sp > 0) copies.Add(new KeyValuePair<string, string>(rest.Substring(0, sp), rest.Substring(sp + 1).Trim()));
+                    if (sp > 0) found.Add(new KeyValuePair<string, string>(rest.Substring(0, sp), rest.Substring(sp + 1).Trim()));
                 }
             }
+            return found;
+        }
+        // the copies, found now (the test modes and --shot, which mustn't race the background lookup)
+        void RefreshCopies() { if (copies == null) ShowCopies(FindCopies()); }
+        public void CopiesNowForShot() { RefreshCopies(); }
+        void ShowCopies(List<KeyValuePair<string, string>> found)
+        {
+            if (copies != null) return;   // the background lookup and a test's own both finished: the first one stands
+            copies = found;
             copyBox.Items.Clear();
             foreach (var c in copies) copyBox.Items.Add(CopyName(c));
             copyTitle.Visible = copyBox.Visible = copies.Count > 1;
@@ -1024,6 +1048,7 @@ namespace SwsSettings
                 string a = addressBox.Text.Trim();
                 if (a.Length == 0 || a.Any(c => char.IsWhiteSpace(c) || c == ';')) { Theme.Tell(this, "Join", "Type the host's address first."); return; }
             }
+            if (copies == null) { Theme.Tell(this, "Launch", "Still looking for your copies of the game. Try again in a moment."); return; }
             string what = joining ? "join " + addressBox.Text.Trim() : "host " + ModeNames[Math.Max(0, modeBox.SelectedIndex)];
             var copy = ChosenCopy();
             string which = copy.HasValue && copies.Count > 1 ? (copy.Value.Key == "ea" ? "the EA app's copy of " : "the Steam copy of ") : "";
@@ -1129,6 +1154,17 @@ namespace SwsSettings
             }
             return r.ToString();
         }
+        // --test-startup: the window is up before the copy lookup is done, and the lookup then fills in the list; starts nothing
+        public string TestStartup()
+        {
+            var r = new System.Text.StringBuilder();
+            r.AppendLine("at shown: visible " + Visible + ", copies known " + (copies != null) + ", note '" + copyNote.Text + "'");
+            var sw = Stopwatch.StartNew();
+            while (copies == null && sw.ElapsedMilliseconds < 70000) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            r.AppendLine("after " + sw.ElapsedMilliseconds + " ms: copies known " + (copies != null) + " (" + (copies != null ? copies.Count : 0) + "), list shown " + copyBox.Visible + ", note '" + copyNote.Text + "'");
+            r.AppendLine("args " + LaunchArgs());
+            return r.ToString();
+        }
         // --test-copies: the copies found, the one chosen, and the launcher's arguments for it; starts nothing
         public string TestCopies()
         {
@@ -1167,6 +1203,8 @@ namespace SwsSettings
                     if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : args[2] == "values-match" ? "match" : "system");
                     if (args.Length >= 3 && args[2] == "rules") form.ShowRulesForShot();
                     if (args.Length >= 3 && args[2] == "rules-end") form.ShowRulesForShot(true);
+                    if (args.Length >= 3 && args[2] == "looking") { }   // the Play page as it first opens, before the copies are known
+                    else form.CopiesNowForShot();
                     Application.DoEvents();
                     using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size)); bmp.Save(args[1]); }
                     form.Close();
@@ -1183,6 +1221,12 @@ namespace SwsSettings
             {
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
                 form.Shown += (s, e) => { string r; try { r = form.TestCopies(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
+            }
+            // --test-startup <report>: the window opens before the copy lookup finishes (starts nothing)
+            if (args.Length >= 2 && args[0] == "--test-startup")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestStartup(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             // --test-status <report>: the status line under Launch clears when the game exits
             if (args.Length >= 2 && args[0] == "--test-status")
