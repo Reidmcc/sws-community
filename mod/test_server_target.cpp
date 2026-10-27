@@ -412,11 +412,17 @@ int main() {
     uint8_t* bhvIface = bhvObj(0x144999100); uint8_t* bhvPdv = bhvObj(0x144999101); uint8_t* bhvPdv2 = bhvObj(0x144999101);
     uint8_t* allowBool = bhvObj(0x144a58840); uint8_t* flagBool = bhvObj(0x144a58840); uint8_t* bombsBool = bhvObj(0x144a58840);
     uint8_t* orNode = bhvObj(0x144999102); uint8_t* dogInfo = bhvObj(0x144999103); uint8_t* minSel = bhvObj(0x144999104); uint8_t* rule = bhvObj(0x144999105);
+    // creep wingmen ([creep] wingmen=1): the two loadout gates' Ors take an interface field (555857281) into In4
+    // (193450870); the AllowCountermeasures input (-1073460925) into its PropertyDefaultValue, whose HasValueSet
+    // (-645606250) feeds a Not's In (5862146). The mod repoints the two In4 connections at that Not's Out (193453899).
+    uint8_t* gateOr1 = bhvObj(0x144999106); uint8_t* gateOr2 = bhvObj(0x144999106); uint8_t* cmPdv = bhvObj(0x144999101); uint8_t* cmNot = bhvObj(0x144999107);
     struct PcEntry { uint8_t* s; uint8_t* d; int32_t sf, tf; };
     const PcEntry bhvPc[] = { { bhvIface, bhvPdv, 1336394533, 1658462601 }, { allowBool, bhvPdv, 225375086, 2066049125 },
                               { minSel, rule, 193453899, -1814841251 }, { flagBool, orNode, 225375086, 193450867 },
                               { dogInfo, orNode, 215512070, 193450864 }, { bhvIface, bhvPdv2, -737100000, 1658462601 },
-                              { bombsBool, bhvPdv2, 225375086, 2066049125 } };
+                              { bombsBool, bhvPdv2, 225375086, 2066049125 },
+                              { bhvIface, gateOr1, 555857281, 193450870 }, { bhvIface, gateOr2, 555857281, 193450870 },
+                              { bhvIface, cmPdv, -1073460925, 1658462601 }, { cmPdv, cmNot, -645606250, 5862146 } };
     const int nBhvPc = sizeof bhvPc / sizeof bhvPc[0];
     uint8_t* bhvPcArr = fake_alloc(16 + nBhvPc * 32); *(uint32_t*)(bhvPcArr + 12) = nBhvPc;
     for (int i = 0; i < nBhvPc; i++) {
@@ -858,6 +864,13 @@ int main() {
           "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");
     check(allowBool[36] == 1 && flagBool[36] == 1 && *(int32_t*)(minSel + 48) == 1 && bombsBool[36] == 0,
           "creep missiles: the squad behaviour's missile default and bot test on, the minimum distance on the bots' 200 m; another input's default untouched");
+    {   // creep wingmen: both loadout gates' In4 now from the Not's Out; the other connections as they were; the run open to wingmen
+        uint8_t* e7 = bhvPcArr + 16 + 7 * 32; uint8_t* e8 = bhvPcArr + 16 + 8 * 32; uint8_t* e10 = bhvPcArr + 16 + 10 * 32;
+        check(*(uint8_t**)e7 == cmNot && *(int32_t*)(e7 + 16) == 193453899 && *(uint8_t**)(e7 + 8) == gateOr1 && *(int32_t*)(e7 + 20) == 193450870 &&
+              *(uint8_t**)e8 == cmNot && *(int32_t*)(e8 + 16) == 193453899 && *(uint8_t**)(e8 + 8) == gateOr2 &&
+              *(uint8_t**)e10 == cmPdv && *(int32_t*)(e10 + 16) == -645606250 && raidData && raidData[72] == 0,
+              "creep wingmen: the loadout gates take the creep-only Not (wingmen run the bombers' runs), and the run data is open to wingmen");
+    }
     check(maxShield->value == 900.0f, "value engine: shield config written");
     check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
@@ -982,7 +995,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedo_runs=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedo_runs=1;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

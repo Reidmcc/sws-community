@@ -152,6 +152,7 @@ namespace SwsSettings
         static readonly int[] CreepRadii = { 1000, 1200, 1500, 2000, 2500, 3000 };
         readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         readonly CheckBox creepTorpedoes = Theme.Check("Bomber creep carry torpedoes");
+        readonly CheckBox creepWingmen = Theme.Check("Creep wingmen act like their leader");
         readonly CheckBox creepBotHandling = Theme.Check("Creep fly with the vs-AI bots' handling");
         static readonly string[][] CreepShipNames = { new[] { "X-wing (stock)", "Y-wing", "A-wing", "U-wing" },
             new[] { "TIE fighter (stock)", "TIE bomber", "TIE interceptor", "TIE reaper" } };
@@ -313,8 +314,8 @@ namespace SwsSettings
             rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift; ruleZavian.Checked = profile.FixZavianCreep;
             rulePinball.Enabled = ruleMultidrift.Enabled = ruleZavian.Enabled = !profile.BuiltIn;
             for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
-            creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles; creepTorpedoes.Checked = profile.CreepTorpedoes; creepBotHandling.Checked = profile.CreepBotHandling;
-            creepAggressive.Enabled = creepMissiles.Enabled = creepTorpedoes.Enabled = creepBotHandling.Enabled = !profile.BuiltIn;
+            creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles; creepTorpedoes.Checked = profile.CreepTorpedoes; creepWingmen.Checked = profile.CreepWingmen; creepBotHandling.Checked = profile.CreepBotHandling;
+            creepAggressive.Enabled = creepMissiles.Enabled = creepTorpedoes.Enabled = creepWingmen.Enabled = creepBotHandling.Enabled = !profile.BuiltIn;
             {   // a hand-edited range that isn't in the list still shows as itself
                 string want = profile.CreepRadius.ToString("N0") + " m";
                 if (!creepRadius.Items.Contains(want)) creepRadius.Items.Add(want);
@@ -663,7 +664,7 @@ namespace SwsSettings
             {
                 p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
                 for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
-                p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepBotHandling = profile.CreepBotHandling;
+                p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepWingmen = profile.CreepWingmen; p.CreepBotHandling = profile.CreepBotHandling;
                 foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value;
             }
             p.Save(dir);
@@ -766,6 +767,8 @@ namespace SwsSettings
                 "chasing a target's tail. Applies to every pack of both factions.");
             rule(creepTorpedoes, "Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs on capital ships: a long straight run in, over the target, and out again " +
                 "before turning back for another. Their torpedoes lock only onto capital ships. They fire them only with creep missiles on, above.");
+            rule(creepWingmen, "In stock, only a creep squadron's leader attacks on its own and flies the bombers' runs; the wingmen follow it in formation. With this, " +
+                "wingmen attack, and bomber wingmen make their own runs, as the leader does. Applies to every pack of both factions.");
             rule(creepBotHandling, "Every creep pack flies with the vs-AI bots' movement for its ship (their drift handling, roll and catch-up tuning) instead of the AI ship's own. " +
                 "Hull and shields stay the creep's.");
 
@@ -799,6 +802,7 @@ namespace SwsSettings
             creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
             creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             creepTorpedoes.CheckedChanged += (s, e) => { if (!loading) { profile.CreepTorpedoes = creepTorpedoes.Checked; SaveProfile(); } };
+            creepWingmen.CheckedChanged += (s, e) => { if (!loading) { profile.CreepWingmen = creepWingmen.Checked; SaveProfile(); } };
             creepBotHandling.CheckedChanged += (s, e) => { if (!loading) { profile.CreepBotHandling = creepBotHandling.Checked; SaveProfile(); } };
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
             ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };

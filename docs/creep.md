@@ -28,6 +28,8 @@ radius=2000
 missiles=1
 ; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs
 torpedoes=1
+; 1 = creep wingmen attack and fly the bombers' runs like their squadron's leader
+wingmen=1
 ; 1 = every pack flies with the vs-AI bots' handling for its ship
 bot_handling=1
 ```
@@ -92,6 +94,12 @@ side and line afresh each time. Their torpedoes lock only onto capital ships (th
 flagships), so they aren't spent on creep. The torpedo weapons and the run flight are the vs-AI bots' too, so all of
 this is only set while no bots are loaded, which is to say in Fleet Battles. (Until v0.5.0 bombers carried torpedoes as
 well as bombs, without runs: Y-wings fired one torpedo on the approach and then switched to bombing runs.)
+
+**Wingmen like their leader.** In stock, two things are a creep squadron leader's alone: attacking on its own, and the
+weapon behaviours the squad AI runs for its aux weapons, which is where the bombers' runs come from. The wingmen follow
+the leader in formation. With **wingmen**, they attack on their own, and bomber wingmen plan and fly their own runs
+(each picks its own line across the target). The run behaviour is the vs-AI bots' too, so its part is only set while no
+bots are loaded; the bots' own gates don't change (they feed the inputs the creep-only switch reads).
 
 **The bots' handling.** Every pack flies the vs-AI bots' movement for its ship (their drift, roll and catch-up tuning)
 instead of the AI ship's own, which makes creep noticeably sharper in a dogfight. Hull and shields stay the creep's.
