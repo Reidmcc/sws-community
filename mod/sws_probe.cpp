@@ -3064,11 +3064,50 @@ static void watch_connection(uint64_t connobj) {
 // checks compare item+0x10 (u64) with a config's Identifier or its family's. With all_unlocked=1 we pass our own array:
 // the original items plus one item per id not already present (both strings = the engine's empty-string sentinel
 // 0x143f7b968, which the string code never frees).
+// Loadout preset slots (2026-10-27, all_unlocked): a ship's presets 2-5 unlock by player rank, from
+// Game/Persistence/IncomRankData's RanksOfStarshipPresets (0, 2, 14, 24, 34). A new account (rank 0) gets one preset per
+// ship; an account that played the live game had them all, so this only showed on a fresh EA app account. The game reaches
+// the asset at [[0x1441c5f00]+0xf8]: FUN_141744200, the server's preset check, reads the array at +0x30 (count at -4)
+// against the player's rank. With all_unlocked=1 the array is set to 0 everywhere, in the one shared copy, so the client's
+// slot list and the host's check both allow every preset. Checked first: it must look like the asset's array.
+static bool write_u32(uint64_t at, uint32_t v) {
+    __try { *(uint32_t*)at = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    DWORD old; if (!VirtualProtect((void*)at, 4, PAGE_READWRITE, &old)) return false;
+    bool ok = false; __try { *(uint32_t*)at = v; ok = true; } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    VirtualProtect((void*)at, 4, old, &old);
+    return ok;
+}
+static void unlock_presets() {
+    static bool done = false, told = false;
+    if (done) return;
+    uint64_t rank = rd<uint64_t>(rd<uint64_t>(G(0x1441c5f00ull), 0), 0xf8), arr = rank ? rd<uint64_t>(rank, 0x30) : 0;
+    if (!arr) { if (!told) { told = true; status("unlocks: the rank data isn't loaded yet; preset slots unchanged for now"); } return; }
+    uint32_t n = rd<uint32_t>(arr - 4, 0), v[16] = {};
+    bool shaped = n >= 1 && n <= 16;
+    for (uint32_t i = 0; shaped && i < n; i++) { v[i] = rd<uint32_t>(arr, 4 * i); shaped = v[i] < 1000 && (i ? v[i] >= v[i - 1] : v[i] == 0); }
+    done = true;
+    if (!shaped) { status("unlocks: the preset-slot ranks at %llx don't look as expected (count %u); left as they are", arr, n); return; }
+    char was[128] = ""; int w = 0, failed = 0;
+    for (uint32_t i = 0; i < n; i++) { w += sprintf_s(was + w, sizeof was - w, i ? " %u" : "%u", v[i]); if (v[i] && !write_u32(arr + 4 * i, 0)) failed++; }
+    status("unlocks: loadout preset slots needed ranks %s; %s", was, failed ? "couldn't change them" : "all available now (all_unlocked)");
+}
 typedef void(__fastcall* invset_t)(uint64_t store, uint64_t* vec);
 static invset_t o_invset;
 static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
     uint64_t b = vec ? vec[0] : 0, e = vec ? vec[1] : 0;
     int n = (b && e > b) ? (int)((e - b) / 0x38) : 0;
+    static int s_dumped = -1;   // loadout_log=1: the backend's own items, each time their number changes (2026-10-27 probe:
+    if (g_loadoutLog && n > 0 && n <= 4000 && n != s_dumped) {   // what a fresh EA account owns, against an old one)
+        s_dumped = n;
+        for (int k = 0; k < n; k++) {
+            uint64_t it = b + (uint64_t)k * 0x38; char s0[96], s1[96];
+            status("inventory:   [%d] id %llx (%llu) +18=%llx +20=%llx new %u +2c=%x +30=%x type %x '%s' '%s'", k,
+                   rd<uint64_t>(it, 0x10), rd<uint64_t>(it, 0x10), rd<uint64_t>(it, 0x18), rd<uint64_t>(it, 0x20), rd<uint8_t>(it, 0x28),
+                   rd<uint32_t>(it, 0x2c), rd<uint32_t>(it, 0x30), rd<uint32_t>(it, 0x34),
+                   safe_copy(rd<uint64_t>(it, 0), s0, sizeof s0), safe_copy(rd<uint64_t>(it, 8), s1, sizeof s1));
+        }
+    }
+    if (g_allUnlocked) unlock_presets();
     if (!g_allUnlocked || !g_unlockCount || n < 0 || n > 100000) { status("inventory: set with %d items", n); o_invset(store, vec); return; }
     size_t cap = (size_t)n + g_unlockCount;
     uint8_t* buf = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cap * 0x38);
