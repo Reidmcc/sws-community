@@ -26,7 +26,7 @@ aggressive=1
 radius=2000
 ; 1 = creep fire missiles (and torpedoes, when they carry them)
 missiles=1
-; 1 = Y-wing and TIE bomber packs carry torpedoes as well as bombs
+; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs
 torpedoes=1
 ; 1 = every pack flies with the vs-AI bots' handling for its ship
 bot_handling=1
@@ -53,8 +53,8 @@ same as using it, though: the creep's squad behaviour switches some aux off, and
 - **always:** creep use it as shipped (stock creep never fly these ships, so you won't have seen it before).
 - **missiles:** only with **missiles** on; stock creep never fire it.
 - **never:** switched off in the creep's behaviour, with any settings.
-- **With torpedoes on,** Y-wing and TIE bomber packs swap their assault shield for torpedoes (fired only with
-  **missiles** on, and only at capital ships), and the TIE bomber's chaff becomes flares.
+- **With torpedoes on,** Y-wing and TIE bomber packs carry torpedoes instead of bombs and their assault shield (fired
+  only with **missiles** on, and only at capital ships), and the TIE bomber's chaff becomes flares.
 - **Countermeasures:** creep aren't allowed them, except possibly the bombers and dropships, which the rule lets through
   when nothing else decides; nobody has seen creep use one.
 
@@ -84,11 +84,14 @@ or the flagship.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
 never do). This also gives creep the bots' tail-chasing dogfighting. With **torpedoes**, Y-wing and TIE bomber packs carry
-the weapons of the vs-AI bots' torpedo loadout (torpedoes and bombs; the TIE bomber also gets flares) with the creep's
-own hull and shields. Their torpedoes lock only onto capital ships (the corvette, the Raider, frigates and flagships),
-so they aren't spent on creep. Those torpedo weapons are the vs-AI bots' too, so the lock filter is only set while no
-bots are loaded, which is to say in Fleet Battles. In flight, Y-wings tend to fire one torpedo on the approach and then
-switch to bombing runs.
+the vs-AI bots' torpedoes instead of bombs (the TIE bomber also gets the bots' flares), with the creep's own hull and
+shields, and fly **torpedo runs** on capital ships: a straight run in from about 1,200 m, which gives them time to lock
+past the torpedoes' 500 m minimum, then across the target about 150 m above its hull and 600 m out the far side before
+turning back for the next run. The runs are the game's own bombing-run flight, set for torpedoes; it picks the target's
+side and line afresh each time. Their torpedoes lock only onto capital ships (the corvette, the Raider, frigates and
+flagships), so they aren't spent on creep. The torpedo weapons and the run flight are the vs-AI bots' too, so all of
+this is only set while no bots are loaded, which is to say in Fleet Battles. (Until v0.5.0 bombers carried torpedoes as
+well as bombs, without runs: Y-wings fired one torpedo on the approach and then switched to bombing runs.)
 
 **The bots' handling.** Every pack flies the vs-AI bots' movement for its ship (their drift, roll and catch-up tuning)
 instead of the AI ship's own, which makes creep noticeably sharper in a dogfight. Hull and shields stay the creep's.

@@ -62,6 +62,8 @@ HAND = {
     0x1412e5e50: (0x1412e8100, "same code (strict check, 38 targets agree, none disagree); missed by the size alignment"),
     0x14169cf00: (0x14169f090, "entry only: EA drops one member's SteamAPI_RegisterCallback, the rest alike"),
     0x1412df8a0: (0x1412e1ce0, "entry only: rebuilt; identity from its only caller (a verified pair, both at +0xa7)"),
+    0x1418259d0: (0x14182a170, "same code (strict check, 12/12 targets agree); a small leaf the unwind tables don't list; "
+                               "its only caller is a verified pair, both calling it at +0x1beb"),
 }
 
 # Slots of the game's own import table (the protection wrappers fill it at start, so the PE import directory doesn't

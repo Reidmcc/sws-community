@@ -322,7 +322,7 @@ namespace SwsSettings
             if (creepAggressive) h = Fnv(h, "creep.aggressive=1;");
             if (creepAggressive && creepRadius != 2000) h = Fnv(h, "creep.radius=" + creepRadius + ";");
             if (creepMissiles) h = Fnv(h, "creep.missiles=1;");
-            if (creepTorpedoes) h = Fnv(h, "creep.torpedoes=1;");
+            if (creepTorpedoes) h = Fnv(h, "creep.torpedo_runs=1;");
             if (creepBotHandling) h = Fnv(h, "creep.bothandling=1;");
             foreach (var kv in values) h = Fnv(h, kv.Key + "=" + Num.G9(kv.Value) + ";");
             return h == 0 ? 1 : h;

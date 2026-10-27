@@ -179,8 +179,9 @@ static bool g_creepOn;
 // [creep] aggressive = 1 (creep_ai_partition): creep engage like the vs-AI bots, with target priorities by phase;
 // missiles = 1 (creep_behaviour_scan): creep fire missiles and torpedoes. Each in the fingerprint when on.
 static bool g_creepAggressive, g_creepMissiles;
-// [creep] torpedoes = 1 (creep_torpedo_loadout): Y-wing and TIE bomber packs carry torpedoes as well as bombs. In the
-// fingerprint when on.
+// [creep] torpedoes = 1 (creep_loadout, creep_torpedo_runs): Y-wing and TIE bomber packs carry torpedoes instead of
+// bombs, and fly torpedo runs. In the fingerprint when on, as "creep.torpedo_runs=1" since v0.5.0's torpedoes (carried
+// as well as bombs, no runs) were a different thing.
 static bool g_creepTorpedoes;
 // [creep] bot_handling = 1 (creep_loadout): every creep pack flies with the vs-AI bots' movement config for its ship. In the
 // fingerprint when on.
@@ -203,6 +204,7 @@ struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF
                     volatile LONG wantMode; volatile LONG64 seenAt; };
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
+static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
 static int creep_role(int fac, int p) {
@@ -242,7 +244,7 @@ static uint32_t profile_fingerprint() {
     if (g_creepAggressive) h = fnv1a(h, "creep.aggressive=1;");
     if (g_creepAggressive && g_creepRadius != 2000) { sprintf_s(b, "creep.radius=%d;", g_creepRadius); h = fnv1a(h, b); }
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
-    if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedoes=1;");
+    if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedo_runs=1;");
     if (g_creepBotHandling) h = fnv1a(h, "creep.bothandling=1;");
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
     return h ? h : 1;
@@ -698,6 +700,7 @@ static void read_server_ini() {
       g_materialLog = GetPrivateProfileIntW(L"server", L"material_log", 0, ini) != 0;
       g_creepLog = GetPrivateProfileIntW(L"server", L"creep_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
+      g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -1947,6 +1950,7 @@ static void __fastcall h_ctrlfield(uint64_t ent, const int32_t* change) {
 // a candidate's offsets, then a data pointer at +0x28; the object the scorer is handed keeps neither there.)
 static volatile uint64_t g_bomberRefs[16];    // the bomber packs' spawn points (creep_scan), 0 = none
 static volatile uint64_t g_bomberShips[256];  // ships spawned from them (h_sspawn), 0 = free
+static volatile uint64_t g_bomberTarget[256]; // track_log: each one's assigned target as h_scorer last saw it (a radar-target interface)
 static void creep_note_spawn(uint64_t spawnData, uint64_t ship) {
     if (!ship || !g_creepAggressive) return;
     bool bomber = false; for (int i = 0; i < 16 && g_bomberRefs[i] && !bomber; i++) bomber = spawnData == g_bomberRefs[i];
@@ -1957,8 +1961,63 @@ static void creep_note_spawn(uint64_t spawnData, uint64_t ship) {
     }
     if (bomber) {
         if (freeAt < 0) freeAt = (int)(GetTickCount64() & 255);   // full (ships that died stay listed): reuse a slot
+        InterlockedExchange64((volatile LONG64*)&g_bomberTarget[freeAt], 0);
         InterlockedExchange64((volatile LONG64*)&g_bomberShips[freeAt], (LONG64)ship);
     }
+}
+// track_log=1 (2026-10-27, measuring how bomber creep attack capital ships): twice a second, each live bomber's world
+// position and its assigned target's go into the flight record (R_TRACK, record=1). Read as the squadron scorer does
+// (FUN_14182ade0 at 0x14182b575): a ServerStarshipEntity's component collection is at +0x40 (its +0 points back at the
+// ship), and its world matrix at collection + 0x10 + byte[+9]*0x20 + byte[+0xa]*0x40: four float4 rows, the forward
+// axis at +0x20 and the translation at +0x30. The target is the squadron's assignment for the ship, FUN_1418259d0(squad,
+// ship, 0), a radar-target interface (vtable 0x1436172f8); its owner is [[T-0x38]], its point the translation getter's
+// (vtable slot 16, FUN_1416c55b0). The assignment map belongs to the server thread, so it's read here, in the scorer, on
+// that thread, and only the result is kept. Every read is checked: the ship's vtable (0x1436184e8) and back-pointer.
+enum : uint32_t { R_TRACK = 11 };   // state = ship; f0-2 position, f3-5 forward axis, f6-8 target point, f9 distance,
+                                    // f10-11 target owner (u64), f12 1 if the owner is a ServerStarshipEntity, f13 slot
+static void track_note_target(uint64_t squad, uint64_t ship) {
+    int i = 0; while (i < 256 && g_bomberShips[i] != ship) i++;
+    if (i == 256) return;
+    typedef uint64_t(__fastcall* target_t)(uint64_t squad, uint64_t ship, bool any);
+    uint64_t t = 0;
+    __try { t = ((target_t)G(0x1418259d0ull))(squad, ship, false); } __except (EXCEPTION_EXECUTE_HANDLER) { t = 0; }
+    InterlockedExchange64((volatile LONG64*)&g_bomberTarget[i], (LONG64)t);
+}
+static bool ship_frame(uint64_t s, float pos[3], float fwd[3]) {
+    if (!s || rd<uint64_t>(s, 0) != G(0x1436184e8ull)) return false;
+    uint64_t c = rd<uint64_t>(s, 0x40); if (!c || rd<uint64_t>(c, 0) != s) return false;
+    uint64_t m = c + 0x10 + rd<uint8_t>(c, 9) * 0x20ull + rd<uint8_t>(c, 0xa) * 0x40ull;
+    for (int k = 0; k < 3; k++) { pos[k] = rdf(m, 0x30 + 4 * k); fwd[k] = rdf(m, 0x20 + 4 * k); }
+    float n = fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2];
+    return n > 0.9f && n < 1.1f;   // a unit forward axis: a live transform, not reused memory
+}
+static bool target_point(uint64_t t, float pos[3], uint64_t* owner) {
+    if (!t || rd<uint64_t>(t, 0) != G(0x1436172f8ull)) return false;
+    uint64_t c = rd<uint64_t>(t - 0x38, 0); if (!c) return false;   // (rd's offset is unsigned: step back first)
+    uint32_t ci = rd<uint8_t>(t - 0x28, 0), ti = rd<uint8_t>(c, 0x14 + ci * 0x20), na = rd<uint8_t>(c, 0xa), n9 = rd<uint8_t>(c, 9);
+    uint64_t k = ti == 0xff ? na : na + 1 + ti, p = c + 0x40 + n9 * 0x20ull + k * 0x40ull;
+    for (int j = 0; j < 3; j++) pos[j] = rdf(p, 4 * j);
+    *owner = rd<uint64_t>(c, 0);
+    return true;
+}
+static void creep_track() {
+    static ULONGLONG last, lastNote; ULONGLONG now = GetTickCount64();
+    if (!g_trackLog || now - last < 500) return;
+    last = now;
+    int live = 0, aimed = 0; float dsum = 0;
+    for (int i = 0; i < 256; i++) {
+        uint64_t s = g_bomberShips[i]; float p[3], f[3], tp[3] = {}; uint64_t owner = 0;
+        if (!s || !ship_frame(s, p, f)) continue;
+        live++;
+        bool hasT = target_point(g_bomberTarget[i], tp, &owner);
+        float d = hasT ? sqrtf((p[0] - tp[0]) * (p[0] - tp[0]) + (p[1] - tp[1]) * (p[1] - tp[1]) + (p[2] - tp[2]) * (p[2] - tp[2])) : -1.f;
+        if (hasT) { aimed++; dsum += d; }
+        Rec* r = claim(); stamp(r, R_TRACK, s);
+        for (int k = 0; k < 3; k++) { r->f[k] = p[k]; r->f[3 + k] = f[k]; r->f[6 + k] = tp[k]; }
+        r->f[9] = d; *(uint64_t*)&r->f[10] = owner; r->f[12] = owner && rd<uint64_t>(owner, 0) == G(0x1436184e8ull) ? 1.f : 0.f; r->f[13] = (float)i;
+        commit();
+    }
+    if (now - lastNote >= 10000) { lastNote = now; status("track: %d bomber creep alive, %d with a target, mean distance %.0f m", live, aimed, aimed ? dsum / aimed : 0.f); }
 }
 typedef void(__fastcall* scorer_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
                                    uint64_t, uint64_t, uint64_t);
@@ -1984,6 +2043,7 @@ static void __fastcall h_scorer(uint64_t a1, uint64_t ship, uint64_t a3, uint64_
             break;
         }
     o_scorer(a1, ship, a3, a4, a5, a6, a7, list, a9, a10, a11, a12);
+    if (g_trackLog && ship && a1) track_note_target(a1, ship);
 }
 // [server] creep_log=1 (diagnostic): the score lookup (FUN_141617a00: settings, the target's tags, the matched score out;
 // returns the priority in xmm0), logged once per distinct (list, tags, priority) when the list is one the mod made.
@@ -2204,7 +2264,7 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     if (torpedoes && !s.torpColl) { status("creep: %s loadout: the vs-AI bots' torpedo collection isn't loaded in this level; no torpedoes", ship); torpedoes = false; }
     if (handling && !s.botMove) { status("creep: %s loadout: the vs-AI bots' movement config isn't loaded in this level; the usual handling", ship); handling = false; }
     if (!torpedoes && !handling) return 0;
-    uint64_t keep[16]; uint32_t nk = 0, slots = 0; bool torp = false; char leaf[128];
+    uint64_t keep[16]; uint32_t nk = 0, slots = 0, dropped = 0; bool torp = false; char leaf[128];
     if (!t) {   // a stock pack: its own creep configs
         uint64_t sa = rd<uint64_t>(s.stockColl, 0x20); uint32_t sn = sa ? rd<uint32_t>(sa - 4, 0) : 0;
         for (uint32_t k = 0; sn <= 8 && k < sn; k++) { uint64_t c = rd<uint64_t>(sa, k * 8); if (c && nk < 16) keep[nk++] = c; }
@@ -2215,6 +2275,9 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
             uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != G(0x1449fc3f0)) continue;
             inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
             if (strstr(leaf, "torpedo")) torp = true;
+            // the bombs stay out: torpedoes replace them, flying the bombs' runs (creep_torpedo_runs). By the name's end,
+            // "slotconfig_ywing_bomb" / "slotconfig_tiebomber_bomb" ("tiebomber" alone would match the flares too)
+            size_t ll = strlen(leaf); if (ll >= 5 && !strcmp(leaf + ll - 5, "_bomb")) { dropped++; continue; }
             if (nk < 16) { keep[nk++] = c; slots++; }
         }
     }
@@ -2228,7 +2291,8 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     for (uint32_t k = 0; k < nk; k++) *(uint64_t*)(arr + k * 8ull) = keep[k];
     *(uint64_t*)(coll + 0x20) = arr;
     status("creep: %s loadout: the creep's hull%s%s%s", ship, (t ? s.shields : 0) || (!t && f == 0) ? " and shields" : "",
-           torpedoes ? ", the vs-AI bots' torpedo loadout's weapon slots" : "", handling ? ", the vs-AI bots' handling" : "");
+           torpedoes ? (dropped ? ", the vs-AI bots' torpedo loadout's weapon slots without the bombs" : ", the vs-AI bots' torpedo loadout's weapon slots (no bomb slot found to leave out)") : "",
+           handling ? ", the vs-AI bots' handling" : "");
     (void)slots;
     return cOut[f][t] = coll;
 }
@@ -2255,9 +2319,54 @@ static void creep_torpedo_targets(const uint64_t weapon[2], bool botsLoaded) {
         }
     }
 }
+// Torpedo runs ([creep] torpedoes, 2026-10-27; notes/creep-ai.md section 9). The bombers' runs are a flight behaviour,
+// IncomSquadronAIBombingFlightBehaviour, that a weapon config brings with it (BehaviourBlueprint +120; the weapon
+// component instantiates it for any weapon type, FUN_141734180) and the squad AI's loadout nodes run. It only flies:
+// approach to a point EntryDistanceToPath short of the target capital ship's run line, follow the line (BombingDistance
+// above the ship's surface, built from its damage sections) across the ship, fly on DistanceAfterBombing, then plan a new
+// run. It fires nothing; torpedoes go through the missile rule as the ship's nose comes onto the target. The bombers now
+// carry torpedoes instead of bombs (creep_loadout), the creep torpedo weapons get the same blueprint the AI bombs carry,
+// and its data is set for torpedo runs: a 1,200 m straight leg in (the 500 m lock minimum plus time to lock), the line
+// 150 m above the hull, 600 m out before turning back, the afterburner only beyond 1,350 m of the leg's start (off on the
+// leg itself). The ship copies the data when its behaviour is built, so this is done before the creep launch, on the scan.
+// The bots use the same blueprint and torpedo weapons, so only while no vs-AI bot logic is loaded; stock comes back if
+// it loads. Data layout: EntryDistanceToPath +40, PointsApproachTolerance +48, DistanceAfterBombing +52,
+// BombingDistance +56, AfterburnerThresholdDistance +68, RunOnlyForLeaders +72 (ClassInfo 0x144a48340).
+struct RunField { uint32_t off; float stock, run; };
+static const RunField kRunFields[] = { { 40, 400.f, 1200.f }, { 48, 50.f, 100.f }, { 52, 250.f, 600.f }, { 56, 50.f, 150.f }, { 68, 500.f, 1350.f } };
+static void creep_torpedo_runs(const uint64_t weapon[2], uint64_t raidBp, bool botsLoaded) {
+    static uint64_t setW[2], setBp, setData; static bool toldBp, toldData;
+    if (botsLoaded) {   // stock again for the bots
+        for (int b = 0; b < 2; b++) if (setW[b] && rd<uint64_t>(setW[b], 120) == setBp && write_u64(setW[b] + 120, 0)) setW[b] = 0;
+        if (setData) {
+            for (const RunField& f : kRunFields) leaf_write(setData + f.off, false, f.stock);
+            status("creep: vs-AI bots are loaded, so the bombing-run behaviour and the torpedoes are back to stock"); setData = 0;
+        }
+        return;
+    }
+    if (!raidBp) { if (!toldBp) { toldBp = true; status("creep: the AI bombs' run behaviour isn't loaded in this level; no torpedo runs"); } return; }
+    uint64_t data = 0, objs = rd<uint64_t>(raidBp, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
+    for (uint32_t k = 0; k < no && k < 16 && !data; k++) { uint64_t o = rd<uint64_t>(objs, k * 8); if (o && rd<uint64_t>(o, 8) == G(0x144a48340)) data = o; }
+    bool stock = data != 0, tuned = data != 0;
+    for (const RunField& f : kRunFields) { float v = rdf(data, f.off); stock = stock && v == f.stock; tuned = tuned && v == f.run; }
+    if (!data || (!stock && !tuned)) {
+        if (!toldData) { toldData = true; status("creep: the bombing-run behaviour isn't laid out as expected (%s); no torpedo runs", data ? "unexpected values" : "no run data in it"); }
+        return;
+    }
+    if (stock) {
+        bool ok = true; for (const RunField& f : kRunFields) ok = leaf_write(data + f.off, false, f.run) && ok;
+        status("creep: the bombing-run behaviour is set for torpedo runs (%s): a 1,200 m leg in, 150 m above the hull, 600 m out", ok ? "done" : "a write failed");
+    }
+    setData = data; setBp = raidBp;
+    for (int b = 0; b < 2; b++) {
+        if (!weapon[b] || rd<uint64_t>(weapon[b], 120) == raidBp) continue;
+        if (rd<uint64_t>(weapon[b], 120) != 0) { status("creep: a creep torpedo weapon already carries a behaviour; left as it is"); continue; }
+        if (write_u64(weapon[b] + 120, raidBp)) { setW[b] = weapon[b]; status("creep: %s torpedoes fly torpedo runs", b ? "TIE bomber" : "Y-wing"); }
+    }
+}
 static void creep_scan() {
     if (!g_creepOn && !g_creepBotHandling) return;
-    uint64_t torpWeapon[2] = {}; bool botsLoaded = false;   // creep_torpedo_targets
+    uint64_t torpWeapon[2] = {}, raidBp = 0; bool botsLoaded = false;   // creep_torpedo_targets, creep_torpedo_runs
     static const char* kTorpWeapon[2] = { "starshipweaponconfig_highyieldtorpedo_ywing_ai_instalock", "starshipweaponconfig_highyieldtorpedo_tiebomber_ai_instalock" };
     // the loadouts' sources (creep_loadout), per faction and ship (CreepShips order), found by type and name
     struct Want { uint64_t cls; char name[96]; uint64_t* at; };
@@ -2296,7 +2405,12 @@ static void creep_scan() {
             uint64_t oc = rd<uint64_t>(o, 8);
             if (oc != G(0x144a156a0) && oc != G(0x144a8ca00) && oc != G(0x144a8c980) && oc != G(0x144ab56a0) && oc != G(0x1449fc370)) continue;
             inst_leaf(o, leaf, sizeof leaf); _strlwr_s(leaf);
-            if (oc == G(0x1449fc370)) { for (int b = 0; b < 2; b++) if (!torpWeapon[b] && !strcmp(leaf, kTorpWeapon[b])) torpWeapon[b] = o; continue; }
+            if (oc == G(0x1449fc370)) {
+                for (int b = 0; b < 2; b++) if (!torpWeapon[b] && !strcmp(leaf, kTorpWeapon[b])) torpWeapon[b] = o;
+                // the AI bombs' run behaviour (creep_torpedo_runs): every bomb config carries the same blueprint
+                if (!raidBp && !strncmp(leaf, "starshipweaponconfig_bomb_standard_", 35)) raidBp = rd<uint64_t>(o, 120);
+                continue;
+            }
             for (int w = 0; w < nw; w++) if (want[w].cls == oc && !*want[w].at && !strcmp(leaf, want[w].name)) *want[w].at = o;
         }
         if (ci == G(0x144ade220)) {   // a starship blueprint
@@ -2315,7 +2429,7 @@ static void creep_scan() {
             if (!dup && nl < 128) links[nl++] = { src, dst };
         }
     });
-    if (g_creepTorpedoes) creep_torpedo_targets(torpWeapon, botsLoaded);
+    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;
     for (int i = 0; i < nl; i++) {
@@ -2460,6 +2574,7 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
     o_gstick(gs, a2, a3, a4);
     { static ULONGLONG lastScan; ULONGLONG nowScan = GetTickCount64();
       if (nowScan - lastScan >= 2000) { lastScan = nowScan; value_engine_scan(); creep_scan(); creep_behaviour_scan(); creep_mode_scan(); } }
+    creep_track();
     // phases: 0 waiting for the delay; 1 startup data loading; 2 game config loading; 3 spawned (or given up)
     static ULONGLONG first, phaseStart, lastNote; static int phase; static bool announced, pumping;
     static uint32_t handle; static const char* bundle;
