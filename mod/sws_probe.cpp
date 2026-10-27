@@ -709,7 +709,7 @@ static void read_server_ini() {
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
       g_bomberCapitalOnly = GetPrivateProfileIntW(L"server", L"bomber_capital_only", 0, ini) != 0;
-      if (g_bomberCapitalOnly) status("server: bomber_capital_only=1 (test): bomber creep target capital ships only");
+      if (g_bomberCapitalOnly) status("server: bomber_capital_only=1 (test): bomber creep target capital ships only, and their torpedoes lock as stock");
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -2286,13 +2286,26 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     } else { keep[nk++] = s.hull; if (s.shields) keep[nk++] = s.shields; }
     if (torpedoes) {
         uint64_t pa = rd<uint64_t>(s.torpColl, 0x20); uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0;
+        uint64_t torpWeapon = 0;   // the torpedo slot's weapon (StarshipBaseSlotConfig: Config +96, ID +104)
+        for (uint32_t k = 0; pn <= 16 && k < pn; k++) {
+            uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != G(0x1449fc3f0)) continue;
+            inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
+            if (strstr(leaf, "torpedo") && !torpWeapon) torpWeapon = rd<uint64_t>(c, 96);
+        }
         for (uint32_t k = 0; pn <= 16 && k < pn; k++) {
             uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != G(0x1449fc3f0)) continue;
             inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
             if (strstr(leaf, "torpedo")) torp = true;
-            // the bombs stay out: torpedoes replace them, flying the bombs' runs (creep_torpedo_runs). By the name's end,
-            // "slotconfig_ywing_bomb" / "slotconfig_tiebomber_bomb" ("tiebomber" alone would match the flares too)
-            size_t ll = strlen(leaf); if (ll >= 5 && !strcmp(leaf + ll - 5, "_bomb")) { dropped++; continue; }
+            // the bombs' slot ("slotconfig_ywing_bomb" / "slotconfig_tiebomber_bomb", by the name's end: "tiebomber" alone
+            // would match the flares too) carries a second torpedo instead: a copy of the slot, its Config (+96) the
+            // torpedo weapon. Left out instead, the AI ship's own default bombs filled it (flown 2026-10-27); kept as the
+            // same slot, whatever decides which aux slot it is still does.
+            size_t ll = strlen(leaf);
+            if (ll >= 5 && !strcmp(leaf + ll - 5, "_bomb")) {
+                uint64_t c2 = torpWeapon ? creep_copy(c, 112) : 0;
+                if (!c2) { dropped++; continue; }
+                *(uint64_t*)(c2 + 96) = torpWeapon; c = c2; dropped++;
+            }
             if (nk < 16) { keep[nk++] = c; slots++; }
         }
     }
@@ -2306,7 +2319,7 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     for (uint32_t k = 0; k < nk; k++) *(uint64_t*)(arr + k * 8ull) = keep[k];
     *(uint64_t*)(coll + 0x20) = arr;
     status("creep: %s loadout: the creep's hull%s%s%s", ship, (t ? s.shields : 0) || (!t && f == 0) ? " and shields" : "",
-           torpedoes ? (dropped ? ", the vs-AI bots' torpedo loadout's weapon slots without the bombs" : ", the vs-AI bots' torpedo loadout's weapon slots (no bomb slot found to leave out)") : "",
+           torpedoes ? (dropped ? ", the vs-AI bots' torpedo loadout's weapon slots with torpedoes in the bombs' slot too" : ", the vs-AI bots' torpedo loadout's weapon slots (no bomb slot found to replace)") : "",
            handling ? ", the vs-AI bots' handling" : "");
     (void)slots;
     return cOut[f][t] = coll;
@@ -2460,7 +2473,10 @@ static void creep_scan() {
             if (!dup && nl < 128) links[nl++] = { src, dst };
         }
     });
-    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
+    // With bomber_capital_only every bomber target is a capital ship already, and the lock filter (TargetTags 2) seems to
+    // stop locks on frigates and flagships (2026-10-27: one torpedo a flight since it went in, many before), so it's left
+    // stock then.
+    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
     if (g_creepWingmen) creep_wingmen_raid(raidBp, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;

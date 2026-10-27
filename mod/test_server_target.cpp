@@ -445,7 +445,8 @@ int main() {
     uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP", 0x144a8c980);
     uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB", 0);
     uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock", 0x1449fc3f0);
-    uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb", 0x1449fc3f0);
+    uint8_t* slotBomb = fake_alloc(16 + 0x400) + 16;   // with the 16 bytes (a GUID) ahead of it, which the mod's copy takes too
+    *(uint64_t*)(slotBomb + 8) = 0x1449fc3f0; *(const char**)(slotBomb + 0x18) = "Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb";
     uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT", 0x144ab56a0);
     auto collection = [&](const char* name, std::initializer_list<uint8_t*> cs) {
         uint8_t* c = fake_alloc(16 + 0x30) + 16; *(uint64_t*)(c + 8) = 0x144a156a0; *(const char**)(c + 0x18) = name;
@@ -463,6 +464,8 @@ int main() {
         torpWeapon = fake_alloc(0x200); *(uint64_t*)(torpWeapon + 8) = 0x1449fc370;
         *(const char**)(torpWeapon + 0x18) = "Game/Gameplay/Starships/YWing_AI/Projectiles/StarshipWeaponConfig_HighYieldTorpedo_YWing_AI_Instalock";
         torpFiring = fake_alloc(0x200); *(int32_t*)(torpFiring + 224) = 2; *(uint8_t**)(torpWeapon + 96) = torpFiring;
+        *(uint8_t**)(slotTorp + 96) = torpWeapon;   // the torpedo slot's weapon (StarshipBaseSlotConfig Config +96)
+        *(uint8_t**)(slotBomb + 96) = bhvObj(0x1449fc370);   // the bombs' slot: a bomb weapon
         spInsts[6] = botMove;
         // the AI bombs (StarshipWeaponConfig) carry the bombing-run blueprint (+120): an IncomSquadronAIHostBehaviourBlueprint
         // whose Objects (+72) hold a root and the run data (ClassInfo 0x144a48340) with the stock values, for the torpedo runs
@@ -781,14 +784,17 @@ int main() {
           *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0xC0) == (uint64_t)xwingAi &&
           *(uint64_t*)(decoySpawn + 0xC0) == (uint64_t)xwingAi,
           "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings (no loadout); pack 2 and a non-creep spawn point stay stock");
-    {   // the Y-wing pack's torpedo loadout: the SP hull and shields, then the bots' torpedo slot (the bomb slot left out)
+    {   // the Y-wing pack's torpedo loadout: the SP hull and shields, the bots' torpedo slot, a copy of their bombs' slot
+        // carrying the torpedo, and the bots' movement
         uint8_t* lo0 = *(uint8_t**)(creepSpawn[0][0] + 0x1F0); uint8_t* lo1 = *(uint8_t**)(creepSpawn[0][1] + 0x1F0);
         uint8_t* arr = lo0 ? *(uint8_t**)(lo0 + 0x20) : nullptr;
-        check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 4 &&
+        uint8_t* slot2 = arr ? ((uint8_t**)arr)[3] : nullptr;
+        check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 5 &&
               ((uint8_t**)arr)[0] == spHull && ((uint8_t**)arr)[1] == spShield && ((uint8_t**)arr)[2] == slotTorp &&
-              ((uint8_t**)arr)[3] == botMove &&
+              slot2 && slot2 != slotBomb && *(uint8_t**)(slot2 + 96) == torpWeapon && *(uint64_t*)(slot2 + 8) == 0x1449fc3f0 &&
+              *(uint8_t**)(slotBomb + 96) != torpWeapon && ((uint8_t**)arr)[4] == botMove &&
               *(uint32_t*)(*(uint8_t**)(ywingSp + 0x20) - 4) == 2 && *(uint32_t*)(*(uint8_t**)(ywingTorp + 0x20) - 4) == 4,
-              "creep torpedoes and handling: the Y-wing pack carries the bots' torpedo slot (not their bombs) and their movement, with the creep's own hull and shields; the game's collections untouched");
+              "creep torpedoes and handling: the Y-wing pack carries the bots' torpedo slot, their bombs' slot with a torpedo in it, and their movement, with the creep's own hull and shields; the game's collections untouched");
         // the stock X-wing pack (with [creep] bot_handling): its own creep hull and the bots' movement; its ship unchanged
         uint8_t* st = *(uint8_t**)(creepSpawn[1][0] + 0x1F0); uint8_t* sa = st ? *(uint8_t**)(st + 0x20) : nullptr;
         check(st && st != creepCfg && st == *(uint8_t**)(creepSpawn[1][1] + 0x1F0) && sa && *(uint32_t*)(sa - 4) == 2 &&
