@@ -32,6 +32,7 @@
 #include <math.h>
 #include <share.h>
 #include <intrin.h>
+#include "game_build.h"
 
 // ---------------------------------------------------------------- records
 enum : uint32_t { R_TICK = 1, R_DRIFT_PRE = 2, R_DRIFT_POST = 3, R_DRIVE = 4, R_MARK = 5, R_INFO = 6, R_BOUNDS = 7, R_INTEG = 8, R_OUTPUT = 10 };   // 9 is R_RULE (the movement rules)
@@ -790,10 +791,10 @@ static spawn_t o_spawn;
 static bool committed(uint64_t a);
 static uint64_t stack_end(uint64_t sp);
 static bool g_netWrapped;
-#define SLOT_BIND 0x14307fef0ull
-#define SLOT_SOCKET 0x14307fee0ull
-#define SLOT_WSASOCKETW 0x14307ff70ull
-#define SLOT_SENDTO 0x14307ff10ull
+#define SLOT_BIND G(0x14307fef0ull)
+#define SLOT_SOCKET G(0x14307fee0ull)
+#define SLOT_WSASOCKETW G(0x14307ff70ull)
+#define SLOT_SENDTO G(0x14307ff10ull)
 typedef int (WSAAPI* bind_t)(SOCKET, const sockaddr*, int);
 typedef SOCKET (WSAAPI* socket_t)(int, int, int);
 typedef SOCKET (WSAAPI* wsasocketw_t)(int, int, int, LPWSAPROTOCOL_INFOW, GROUP, DWORD);
@@ -804,7 +805,7 @@ static void caller_frames(void* retAddrSlot, char* out, size_t n) {
     __try {
         for (int i = 0; i < 512 && found < 10 && (uint64_t)(sp + i + 1) <= top; i++) {
             uint64_t v = sp[i];
-            if (v >= 0x140001000ull && v < 0x14307e400ull) { k += sprintf_s(out + k, n - k, " %llx", v); found++; }
+            if (v >= G(0x140001000ull) && v < G(0x14307e400ull)) { k += sprintf_s(out + k, n - k, " %llx", v); found++; }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
@@ -866,8 +867,8 @@ static void install_socket_wrappers() {
 // ---- Socket pass-through (2026-10-20): patch entries of the engine's in-memory socket manager vtable (0x1433fa218) and
 // socket vtable (0x1433fa240) in place with logging thunks that call the originals. Object layouts are untouched. Spec:
 // notes/socket-interface.md. Per-packet calls (Send, receive) are counted per socket and summarized every 5 s.
-#define VT_SOCKMGR 0x1433fa218ull
-#define VT_SOCKET  0x1433fa240ull
+#define VT_SOCKMGR G(0x1433fa218ull)
+#define VT_SOCKET  G(0x1433fa240ull)
 struct SockStat { volatile LONG64 sock; volatile LONG sends, sbytes, recvs, rbytes, empty, smax, big; int port; char peer[48]; };
 static SockStat g_sockStats[48];
 static SockStat* sock_stat(uint64_t s) {
@@ -935,8 +936,8 @@ static int udp_recv(uint64_t s, uint8_t* buf, int n, uint32_t* when) {
     if (when) {
         typedef uint32_t(__fastcall* nettick_t)();
         static int haveTick = -1;
-        if (haveTick < 0) haveTick = committed(0x140696cb0) && rd<uint32_t>(0x140696cb0, 0) == 0x28ec8348u;   // sub rsp,0x28
-        *when = haveTick ? ((nettick_t)0x140696cb0)() : timeGetTime();
+        if (haveTick < 0) haveTick = committed(G(0x140696cb0)) && rd<uint32_t>(G(0x140696cb0), 0) == 0x28ec8348u;   // sub rsp,0x28
+        *when = haveTick ? ((nettick_t)G(0x140696cb0))() : timeGetTime();
     }
     return r;
 }
@@ -1021,14 +1022,14 @@ static void install_socket_passthrough() {
     if (g_sockPatched || !committed(VT_SOCKMGR) || !committed(VT_SOCKET)) return;
     struct Entry { uint64_t vt; int idx; void* fn; void** orig; uint64_t expect; };
     static Entry p[] = {
-        {VT_SOCKMGR, 0, (void*)tm_destroy, (void**)&om_destroy, 0x140295bb0}, {VT_SOCKMGR, 1, (void*)tm_connect, (void**)&om_connect, 0x140295dd0},
-        {VT_SOCKMGR, 2, (void*)tm_listen, (void**)&om_listen, 0x140295c40},   {VT_SOCKMGR, 3, (void*)tm_create, (void**)&om_create, 0x140295f90},
-        {VT_SOCKMGR, 4, (void*)tm_dtor, (void**)&om_dtor, 0x140295b50},
-        {VT_SOCKET, 0, (void*)ts_dtor, (void**)&os_dtor, 0x140294ff0},        {VT_SOCKET, 1, (void*)ts_send, (void**)&os_send, 0x1402951c0},
-        {VT_SOCKET, 2, (void*)ts_recv, (void**)&os_recv, 0x1402933a0},        {VT_SOCKET, 5, (void*)ts_setpeer, (void**)&os_setpeer, 0x140295800},
-        {VT_SOCKET, 7, (void*)ts_pinfo, (void**)&os_pinfo, 0x140295890},
-        {VT_SOCKET, 17, (void*)ts_connect, (void**)&os_connect, 0x140295700}, {VT_SOCKET, 18, (void*)ts_listen, (void**)&os_listen, 0x1402957a0},
-        {VT_SOCKET, 19, (void*)ts_create, (void**)&os_create, 0x140295760},
+        {VT_SOCKMGR, 0, (void*)tm_destroy, (void**)&om_destroy, G(0x140295bb0)}, {VT_SOCKMGR, 1, (void*)tm_connect, (void**)&om_connect, G(0x140295dd0)},
+        {VT_SOCKMGR, 2, (void*)tm_listen, (void**)&om_listen, G(0x140295c40)},   {VT_SOCKMGR, 3, (void*)tm_create, (void**)&om_create, G(0x140295f90)},
+        {VT_SOCKMGR, 4, (void*)tm_dtor, (void**)&om_dtor, G(0x140295b50)},
+        {VT_SOCKET, 0, (void*)ts_dtor, (void**)&os_dtor, G(0x140294ff0)},        {VT_SOCKET, 1, (void*)ts_send, (void**)&os_send, G(0x1402951c0)},
+        {VT_SOCKET, 2, (void*)ts_recv, (void**)&os_recv, G(0x1402933a0)},        {VT_SOCKET, 5, (void*)ts_setpeer, (void**)&os_setpeer, G(0x140295800)},
+        {VT_SOCKET, 7, (void*)ts_pinfo, (void**)&os_pinfo, G(0x140295890)},
+        {VT_SOCKET, 17, (void*)ts_connect, (void**)&os_connect, G(0x140295700)}, {VT_SOCKET, 18, (void*)ts_listen, (void**)&os_listen, G(0x1402957a0)},
+        {VT_SOCKET, 19, (void*)ts_create, (void**)&os_create, G(0x140295760)},
     };
     const int n = (int)(sizeof p / sizeof p[0]);
 #ifndef PROBE_TEST
@@ -1083,7 +1084,7 @@ static bool pvp_match(uint64_t ls, char* gm, size_t gmsz) {
     typedef uint64_t(__fastcall* getopt_t)(uint64_t ls, const char* key);
     gm[0] = 0;
     if (!ls) return false;
-    safe_copy(((getopt_t)0x141191d50)(ls, "GameMode"), gm, gmsz);
+    safe_copy(((getopt_t)G(0x141191d50))(ls, "GameMode"), gm, gmsz);
     return !_stricmp(gm, "Frontline_Bots") || !_stricmp(gm, "Frontline") || !_stricmp(gm, "Dogfight");
 }
 static void __fastcall h_spawn(uint64_t gs, uint8_t* info) {
@@ -1164,7 +1165,10 @@ static void __fastcall h_clocksel(uint64_t gs, uint64_t* cfg) {
 // +0x28 string, +0x30 map level, +0x38..0x3a flags. Empty strings = 0x143f7b968.
 typedef void(__fastcall* strassign_t)(uint64_t* field, const char* s, uint32_t len);
 typedef void(__fastcall* setoption_t)(uint64_t ls, const char* key, const char* value);
-static const uint64_t kStrAssign = 0x14025c3f0, kSetOption = 0x141191750, kEmptyStr = 0x143f7b968, kEmptyArr = 0x14317a6f0;
+#define kStrAssign G(0x14025c3f0)   // macros, not constants: the build's address is known only once the DLL has loaded
+#define kSetOption G(0x141191750)
+#define kEmptyStr G(0x143f7b968)
+#define kEmptyArr G(0x14317a6f0)
 
 static bool helpers_ok() {
 #ifdef PROBE_TEST
@@ -1172,7 +1176,8 @@ static bool helpers_ok() {
 #else
     static const uint8_t sa[12] = {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18,0x56,0x48};
     static const uint8_t so[12] = {0x48,0x8b,0xc4,0x4c,0x89,0x40,0x18,0x48,0x89,0x48,0x08,0x55};
-    return memcmp((void*)kStrAssign, sa, 12) == 0 && memcmp((void*)kSetOption, so, 12) == 0;
+    return memcmp((void*)kStrAssign, expect_bytes(0x14025c3f0, sa, 12), 12) == 0 &&
+           memcmp((void*)kSetOption, expect_bytes(0x141191750, so, 12), 12) == 0;
 #endif
 }
 
@@ -1193,28 +1198,28 @@ typedef bool (__fastcall* bq_release_t)(uint64_t lock, uint32_t lo, uint32_t hi)
 typedef void (__fastcall* bq_pump_t)(uint64_t mgr, char a, char b);              // FUN_1401f7960, resource manager pump
 typedef void (__fastcall* bq_cs_t)(uint64_t cs);
 static uint32_t queue_bundle(const char* name) {
-    uint64_t sched = rd<uint64_t>(0x1442f7c68, 0);
+    uint64_t sched = rd<uint64_t>(G(0x1442f7c68), 0);
     if (!sched) { status("3b: bundle %s: no job scheduler", name); return 0x07000000; }
     const char* names[1] = { name };
-    InterlockedIncrement((volatile LONG*)0x1442d18c0);
+    InterlockedIncrement((volatile LONG*)G(0x1442d18c0));
     uint32_t h[4] = {};
-    ((bq_queue_t)0x14021b2b0)(h, sched, 0, names, 1, 0, 0, 0, 0);
+    ((bq_queue_t)G(0x14021b2b0))(h, sched, 0, names, 1, 0, 0, 0, 0);
     status("3b: bundle %s: queued, handle %08x", name, h[0]);
-    if ((h[0] >> 24) == 7) InterlockedDecrement((volatile LONG*)0x1442d18c0);
+    if ((h[0] >> 24) == 7) InterlockedDecrement((volatile LONG*)G(0x1442d18c0));
     return h[0];
 }
 static bool bundle_done(uint32_t h) {
     if ((h >> 24) == 7) return true;
-    return ((bq_done_t)0x14021ba60)(rd<uint64_t>(0x1442f7c68, 0), h);
+    return ((bq_done_t)G(0x14021ba60))(rd<uint64_t>(G(0x1442f7c68), 0), h);
 }
 static void release_bundle(const char* name, uint32_t h, ULONGLONG ms) {
     if ((h >> 24) == 7) return;
-    uint64_t sched = rd<uint64_t>(0x1442f7c68, 0);
+    uint64_t sched = rd<uint64_t>(G(0x1442f7c68), 0);
     uint64_t cs = sched + 0x22600 + (uint64_t)(((h & 0xffffff) >> 16) & 0xf) * 0x1180;
-    (*(bq_cs_t*)0x14307f388)(cs);
-    bool ok = ((bq_release_t)0x14021cb70)(cs, h & 0xffff, (h & 0xffffff) >> 20);
-    (*(bq_cs_t*)0x14307f2e8)(cs);
-    InterlockedDecrement((volatile LONG*)0x1442d18c0);
+    (*(bq_cs_t*)G(0x14307f388))(cs);
+    bool ok = ((bq_release_t)G(0x14021cb70))(cs, h & 0xffff, (h & 0xffffff) >> 20);
+    (*(bq_cs_t*)G(0x14307f2e8))(cs);
+    InterlockedDecrement((volatile LONG*)G(0x1442d18c0));
     status("3b: bundle %s: done after %llu ms, release %d", name, ms, (int)ok);
 }
 
@@ -1257,22 +1262,22 @@ static void do_spawn(uint64_t gs) {
     // server deadlocks (test 3b, 2026-10-19). If the job object is null or invalid, skip that queue+wait exactly as the
     // already-finished case does: 0x140b9dd89 `mov rax,[0x1441e2938]` -> `jmp 0x140b9decb`.
     {
-        uint64_t job = rd<uint64_t>(0x1441e2938, 0);
+        uint64_t job = rd<uint64_t>(G(0x1441e2938), 0);
         uint8_t valid = job ? rd<uint8_t>(job, 0) : 0;
         status("3b: server-init job object at 0x1441e2938 = %p (first byte %d)", (void*)job, (int)valid);
         if (job) {  // its first qwords, to identify what the job runs (pointers into the exe are code or vtables)
             uint64_t q[6]; for (int i = 0; i < 6; i++) q[i] = rd<uint64_t>(job, i * 8);
             status("3b: job qwords %llx %llx %llx %llx %llx %llx", q[0], q[1], q[2], q[3], q[4], q[5]);
-            for (int i = 0; i < 6; i++) if (q[i] >= 0x140001000ull && q[i] < 0x1459b0000ull)
+            for (int i = 0; i < 6; i++) if (q[i] >= G(0x140001000ull) && q[i] < G(0x1459b0000ull))
                 status("3b: job+%d -> %llx: %llx %llx %llx %llx", i * 8, q[i], rd<uint64_t>(q[i], 0), rd<uint64_t>(q[i], 8),
                        rd<uint64_t>(q[i], 16), rd<uint64_t>(q[i], 24));
         }
         static const uint8_t expect[7] = {0x48, 0x8b, 0x05, 0xa8, 0x4b, 0x64, 0x03};
         static const uint8_t jmp[7] = {0xE9, 0x3D, 0x01, 0x00, 0x00, 0x90, 0x90};
-        uint8_t* at = (uint8_t*)0x140b9dd89;
+        uint8_t* at = (uint8_t*)G(0x140b9dd89);
         MEMORY_BASIC_INFORMATION mbi{};
         if (g_spawnDedicated && (g_skipJobAlways || (g_skipNullJob && (!job || !valid)))) {
-            if (VirtualQuery(at, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT && memcmp(at, expect, 7) == 0) {
+            if (VirtualQuery(at, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT && memcmp(at, expect_bytes(0x140b9dd89, expect, 7), 7) == 0) {
                 DWORD old; VirtualProtect(at, 7, PAGE_EXECUTE_READWRITE, &old);
                 memcpy(at, jmp, 7);
                 VirtualProtect(at, 7, old, &old); FlushInstructionCache(GetCurrentProcess(), at, 7);
@@ -1283,9 +1288,9 @@ static void do_spawn(uint64_t gs) {
         }
     }
     status("3b: spawning server (dedicated=%d): gameSim=%p root='%s' lobby='%s' map='%s'", (int)info[0x26], (void*)gs, g_rootLevel, g_lobbyLevel, g_mapLevel);
-    ((spawn_t)0x1401aac90)(gs, info);  // through our spawnServer hook, so it is logged too
+    ((spawn_t)G(0x1401aac90))(gs, info);  // through our spawnServer hook, so it is logged too
     {   // ServerSettings, cached by Server::init in DAT_144331c50 (its +0xa0 DedicatedServerCpu feeds the affinity code)
-        uint64_t ss = rd<uint64_t>(0x144331c50, 0);
+        uint64_t ss = rd<uint64_t>(G(0x144331c50), 0);
         if (ss) {
             status("3b: ServerSettings %p: JobEnable=%d ThreadingEnable=%d DedicatedServerCpu=%d", (void*)ss,
                    (int)rd<uint8_t>(ss, 0xee), (int)rd<uint8_t>(ss, 0xef), (int)rd<int32_t>(ss, 0xa0));
@@ -1379,7 +1384,7 @@ static int ve_resolve(uint64_t obj, int declared) {
     int best = -1, span = 1 << 30;
     for (int t = 0; t < kVeTypeCount; t++) {
         if (kVeTypes[t].followRoot != fam || !kVeTypes[t].classInfo) continue;
-        uint16_t lo = rd<uint16_t>(kVeTypes[t].classInfo, 0x48), hi = rd<uint16_t>(kVeTypes[t].classInfo, 0x4a);
+        uint16_t lo = rd<uint16_t>(G(kVeTypes[t].classInfo), 0x48), hi = rd<uint16_t>(G(kVeTypes[t].classInfo), 0x4a);
         if (hi < lo || (uint16_t)(id - lo) > (uint16_t)(hi - lo)) continue;
         if (hi - lo < span) { span = hi - lo; best = t; }
     }
@@ -1464,7 +1469,7 @@ static void ve_walk(uint64_t obj, int type, char* key, size_t cap, int depth, ve
             char names[64][64]; uint64_t mods[64];
             for (int j = 0; j < cnt; j++) {
                 mods[j] = rd<uint64_t>(arr, 8 * j); names[j][0] = 0;
-                if (mods[j] && rd<uint64_t>(mods[j], 8) == kVeTypes[f.type].classInfo) attr_name(rd<uint64_t>(mods[j], 0x18), names[j], 64);
+                if (mods[j] && rd<uint64_t>(mods[j], 8) == G(kVeTypes[f.type].classInfo)) attr_name(rd<uint64_t>(mods[j], 0x18), names[j], 64);
             }
             for (int j = 0; j < cnt; j++) {
                 if (!names[j][0]) continue;
@@ -1626,7 +1631,7 @@ static_assert(sizeof kVeRoots / sizeof kVeRoots[0] <= 64, "raise kVeMaxRoots");
 static const int kVeMaxRoots = 64;
 static void ve_root_ranges(uint16_t* lo, uint16_t* hi) {
     for (int k = 0; k < kVeRootCount; k++) {
-        lo[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x48); hi[k] = rd<uint16_t>(kVeTypes[kVeRoots[k]].classInfo, 0x4a); }
+        lo[k] = rd<uint16_t>(G(kVeTypes[kVeRoots[k]].classInfo), 0x48); hi[k] = rd<uint16_t>(G(kVeTypes[kVeRoots[k]].classInfo), 0x4a); }
 }
 // one partition's instances (+0x20, count u16 at +0x28): each config of a root type gets process_config, under g_veLock
 static long ve_scan_partition(uint64_t part, const uint16_t* lo, const uint16_t* hi, long* inspected) {
@@ -1654,14 +1659,14 @@ static long ve_scan_partition(uint64_t part, const uint16_t* lo, const uint16_t*
 static void value_engine_scan() {
     if (!g_valuesOn) return;
     AcquireSRWLockExclusive(&g_veLock); bool ready = ve_ready(); ReleaseSRWLockExclusive(&g_veLock);
-    if (!ready || !committed(0x1442d18c8)) return;
+    if (!ready || !committed(G(0x1442d18c8))) return;
     typedef void (__fastcall* cs_t)(uint64_t cs);
-    cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
+    cs_t enter = rd<cs_t>(G(0x14307f388), 0), leave = rd<cs_t>(G(0x14307f2e8), 0);
     if (!enter || !leave) return;
     uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
     ULONGLONG t0 = GetTickCount64(); uint64_t domains[64]; int nd = 0; long inspected = 0, matched = 0;
     for (int c = 0; c < 0xbbe; c++) {
-        uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
+        uint64_t entry = rd<uint64_t>(G(0x1442d18c8), c * 8); if (!entry) continue;
         uint64_t dom = rd<uint64_t>(entry, 0x68); if (!dom) continue;
         bool dup = false; for (int i = 0; i < nd; i++) if (domains[i] == dom) dup = true;
         if (dup || nd >= 64) continue;
@@ -1742,7 +1747,7 @@ static void model_scale_partition(uint64_t part) {
     float s = 0; char ship[64] = "";
     for (uint16_t i = 0; insts && i < n && s == 0; i++) {   // the blueprint names the ship
         uint64_t inst = rd<uint64_t>(insts, i * 8);
-        if (!inst || rd<uint64_t>(inst, 8) != 0x144ade220) continue;
+        if (!inst || rd<uint64_t>(inst, 8) != G(0x144ade220)) continue;
         const char* name = safe_str(rd<uint64_t>(inst, 0x18));
         const char* leaf = strrchr(name, '/'); leaf = leaf ? leaf + 1 : name;
         if (_strnicmp(leaf, "starship_", 9) != 0) return;
@@ -1754,12 +1759,12 @@ static void model_scale_partition(uint64_t part) {
     int scaled = 0;
     for (uint16_t i = 0; insts && i < n; i++) {
         uint64_t ent = rd<uint64_t>(insts, i * 8);
-        if (!ent || rd<uint64_t>(ent, 8) != 0x1449fad80) continue;
+        if (!ent || rd<uint64_t>(ent, 8) != G(0x1449fad80)) continue;
         uint64_t arr = rd<uint64_t>(ent, 0x60); uint32_t cnt = arr ? rd<uint32_t>(arr - 4, 0) : 0;
         for (uint32_t k = 0; k < cnt && k < 512; k++) {
             uint64_t c = rd<uint64_t>(arr, k * 8); if (!c) continue;
             uint64_t ci = rd<uint64_t>(c, 8);
-            if (ci != 0x1449fa760 && ci != 0x144a035c0) continue;
+            if (ci != G(0x1449fa760) && ci != G(0x144a035c0)) continue;
             float t0[3] = { rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68) };   // the original translation
             bool ident = fabsf(rd<float>(c, 0x30) - 1) < 1e-4f && fabsf(rd<float>(c, 0x44) - 1) < 1e-4f && fabsf(rd<float>(c, 0x58) - 1) < 1e-4f &&
                          fabsf(rd<float>(c, 0x34)) < 1e-4f && fabsf(rd<float>(c, 0x38)) < 1e-4f && fabsf(rd<float>(c, 0x40)) < 1e-4f &&
@@ -1771,12 +1776,12 @@ static void model_scale_partition(uint64_t part) {
             }
             if (ok) scaled++;
             status("ship scale: %s %s scaled %.3g as its blueprint loads (translation now %.2f %.2f %.2f)", ship,
-                   ci == 0x1449fa760 ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
-            if (ci != 0x1449fa760 || !ok) continue;
+                   ci == G(0x1449fa760) ? "root part" : "mesh component", s, rd<float>(c, 0x60), rd<float>(c, 0x64), rd<float>(c, 0x68));
+            if (ci != G(0x1449fa760) || !ok) continue;
             uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
             for (uint32_t j = 0; j < nk && j < 512; j++) {
                 uint64_t k = rd<uint64_t>(kids, j * 8);
-                if (!k || rd<uint64_t>(k, 8) != 0x144a4e5c0) continue;
+                if (!k || rd<uint64_t>(k, 8) != G(0x144a4e5c0)) continue;
                 if (!ident) { status("ship scale: %s cockpit left scaled: the root part is rotated, which the inverse here doesn't handle", ship); continue; }
                 for (int f = 0; f < 9; f++) {   // axes / s
                     uint64_t at = k + 0x30 + (uint64_t)(f / 3) * 16 + (uint64_t)(f % 3) * 4;
@@ -1838,7 +1843,7 @@ static void creep_ai_partition(uint64_t part) {
     int fac = strstr(low, "xwings") ? 0 : strstr(low, "tiefighters") ? 1 : -1; if (fac < 0) return;
     uint64_t objs = rd<uint64_t>(root, 72); uint32_t no = objs ? rd<uint32_t>(objs - 4, 0) : 0;
     uint64_t squad = 0; int squads = 0;
-    for (uint32_t k = 0; k < no && k < 4096; k++) { uint64_t o = rd<uint64_t>(objs, k * 8); if (o && rd<uint64_t>(o, 8) == 0x144a028c0) { squad = o; squads++; } }
+    for (uint32_t k = 0; k < no && k < 4096; k++) { uint64_t o = rd<uint64_t>(objs, k * 8); if (o && rd<uint64_t>(o, 8) == G(0x144a028c0)) { squad = o; squads++; } }
     uint64_t pc = rd<uint64_t>(root, 40); uint32_t np = pc ? rd<uint32_t>(pc - 4, 0) : 0;
     uint64_t ctrl = 0; int conns = 0;   // the controller, the target of the SelectInt's Out -> BehaviourIndex
     for (uint32_t k = 0; k < np && k < 8192; k++)
@@ -2063,9 +2068,10 @@ static ObsComp g_obs[OBS_SLOTS];
 static uint32_t g_obsLast[OBS_SLOTS][4][OBS_WORDS];   // last recorded words per output (movement/health/power use [0])
 static uint8_t g_obsHave[OBS_SLOTS][4];
 static const uint32_t kObsOff[5] = { 0, 0xCB0, 0x430, 0x1B8, 0x1E0 };
-static const uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
+// (kObsVt and kObsCi are Steam addresses until apply_build() puts the running build's in)
+static uint64_t kObsVt[5] = { 0, 0x143614da0, 0x143612168, 0x143603d68, 0x14361e2a0 };
 // per output kind: the data object's ClassInfo, the first word's offset, and the number of words
-static const uint64_t kObsCi[9] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420,
+static uint64_t kObsCi[9] = { 0, 0x144a16420, 0x144a02ec0, 0x144a030c0, 0x144a36d80, 0x144a36d00, 0x144a05510, 0x144a15420,
                                     0x144a15720 };
 static const uint32_t kObsBase[9] = { 0, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x60, 0x18 };
 static const int kObsWords[9] = { 0, 23, 16, 12, 3, 3, 12, 4, 7 };
@@ -2154,13 +2160,13 @@ static const char* inst_leaf(uint64_t inst, char* out, size_t cap) {   // an Ass
     strncpy_s(out, cap, sl ? sl + 1 : n, _TRUNCATE); return out;
 }
 template <typename F> static void walk_partitions(F fn) {
-    if (!committed(0x1442d18c8)) return;
+    if (!committed(G(0x1442d18c8))) return;
     typedef void (__fastcall* cs_t)(uint64_t cs);
-    cs_t enter = rd<cs_t>(0x14307f388, 0), leave = rd<cs_t>(0x14307f2e8, 0);
+    cs_t enter = rd<cs_t>(G(0x14307f388), 0), leave = rd<cs_t>(G(0x14307f2e8), 0);
     if (!enter || !leave) return;
     uint64_t domains[64]; int nd = 0;
     for (int c = 0; c < 0xbbe; c++) {
-        uint64_t entry = rd<uint64_t>(0x1442d18c8, c * 8); if (!entry) continue;
+        uint64_t entry = rd<uint64_t>(G(0x1442d18c8), c * 8); if (!entry) continue;
         uint64_t dom = rd<uint64_t>(entry, 0x68); if (!dom) continue;
         bool dup = false; for (int i = 0; i < nd; i++) if (domains[i] == dom) dup = true;
         if (dup || nd >= 64) continue;
@@ -2206,7 +2212,7 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     if (torpedoes) {
         uint64_t pa = rd<uint64_t>(s.torpColl, 0x20); uint32_t pn = pa ? rd<uint32_t>(pa - 4, 0) : 0;
         for (uint32_t k = 0; pn <= 16 && k < pn; k++) {
-            uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != 0x1449fc3f0) continue;
+            uint64_t c = rd<uint64_t>(pa, k * 8); if (!c || rd<uint64_t>(c, 8) != G(0x1449fc3f0)) continue;
             inst_leaf(c, leaf, sizeof leaf); _strlwr_s(leaf);
             if (strstr(leaf, "torpedo")) torp = true;
             if (nk < 16) { keep[nk++] = c; slots++; }
@@ -2265,13 +2271,13 @@ static void creep_scan() {
     auto addWant = [&](uint64_t cls, const char* name, uint64_t* at) { if (nw < 40) { Want& w = want[nw++]; w.cls = cls; strcpy_s(w.name, name); w.at = at; } };
     for (int f = 0; needLoadouts && f < 2; f++) for (int t = 0; t < 4; t++) {
         char nm[96];
-        addWant(0x144a156a0, kStockColl[f], &src[f][t].stockColl);
+        addWant(G(0x144a156a0), kStockColl[f], &src[f][t].stockColl);
         if (t) {
-            sprintf_s(nm, "starshiphealthdamagedata_%s_ai_sp", kCreepShips[f][t]); addWant(0x144a8ca00, nm, &src[f][t].hull);
-            if (kHasShields[f][t]) { sprintf_s(nm, "starshipshielddata_%s_ai_sp", kCreepShips[f][t]); addWant(0x144a8c980, nm, &src[f][t].shields); }
+            sprintf_s(nm, "starshiphealthdamagedata_%s_ai_sp", kCreepShips[f][t]); addWant(G(0x144a8ca00), nm, &src[f][t].hull);
+            if (kHasShields[f][t]) { sprintf_s(nm, "starshipshielddata_%s_ai_sp", kCreepShips[f][t]); addWant(G(0x144a8c980), nm, &src[f][t].shields); }
         }
-        if (t == 1) addWant(0x144a156a0, kTorpColl[f], &src[f][t].torpColl);
-        addWant(0x144ab56a0, kBotMove[f][t], &src[f][t].botMove);
+        if (t == 1) addWant(G(0x144a156a0), kTorpColl[f], &src[f][t].torpColl);
+        addWant(G(0x144ab56a0), kBotMove[f][t], &src[f][t].botMove);
     }
     static const char* kBlueprint[2][4] = { { "Starship_XWing_AI", "Starship_YWing_AI", "Starship_AWing_AI", "Starship_UWing_AI" },
         { "Starship_TieFighter_AI", "Starship_TieBomber_AI", "Starship_TieInterceptor_AI", "Starship_TieReaper_AI" } };
@@ -2288,21 +2294,21 @@ static void creep_scan() {
         for (uint16_t i = 0; nw && i < n; i++) {   // the loadouts' sources, by type, then name
             uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
             uint64_t oc = rd<uint64_t>(o, 8);
-            if (oc != 0x144a156a0 && oc != 0x144a8ca00 && oc != 0x144a8c980 && oc != 0x144ab56a0 && oc != 0x1449fc370) continue;
+            if (oc != G(0x144a156a0) && oc != G(0x144a8ca00) && oc != G(0x144a8c980) && oc != G(0x144ab56a0) && oc != G(0x1449fc370)) continue;
             inst_leaf(o, leaf, sizeof leaf); _strlwr_s(leaf);
-            if (oc == 0x1449fc370) { for (int b = 0; b < 2; b++) if (!torpWeapon[b] && !strcmp(leaf, kTorpWeapon[b])) torpWeapon[b] = o; continue; }
+            if (oc == G(0x1449fc370)) { for (int b = 0; b < 2; b++) if (!torpWeapon[b] && !strcmp(leaf, kTorpWeapon[b])) torpWeapon[b] = o; continue; }
             for (int w = 0; w < nw; w++) if (want[w].cls == oc && !*want[w].at && !strcmp(leaf, want[w].name)) *want[w].at = o;
         }
-        if (ci == 0x144ade220) {   // a starship blueprint
+        if (ci == G(0x144ade220)) {   // a starship blueprint
             inst_leaf(root, leaf, sizeof leaf);
             for (int f = 0; f < 2; f++) for (int t = 0; t < 4; t++) if (!bp[f][t] && !_stricmp(leaf, kBlueprint[f][t])) bp[f][t] = root;
             return;
         }
-        if (ci != 0x144a56c40 && ci != 0x1449fab00) return;   // a level layer: its link connections
+        if (ci != G(0x144a56c40) && ci != G(0x1449fab00)) return;   // a level layer: its link connections
         uint64_t lc = rd<uint64_t>(root, 48); uint32_t cnt = lc ? rd<uint32_t>(lc - 4, 0) : 0;
         for (uint32_t k = 0; k < cnt && k < 16384; k++) {
             uint64_t src = rd<uint64_t>(lc, k * 24), dst = rd<uint64_t>(lc, k * 24 + 8);
-            if (!src || !dst || rd<uint64_t>(src, 8) != 0x144a176a0 || rd<uint64_t>(dst, 8) != 0x1449fdc00) continue;
+            if (!src || !dst || rd<uint64_t>(src, 8) != G(0x144a176a0) || rd<uint64_t>(dst, 8) != G(0x1449fdc00)) continue;
             uint64_t prefab = rd<uint64_t>(src, 0xC0); if (!prefab) continue;
             if (_strnicmp(inst_leaf(prefab, leaf, sizeof leaf), "pf_pvp_creeplogic", 17)) continue;
             bool dup = false; for (int i = 0; i < nl; i++) if (links[i].src == src && links[i].dst == dst) dup = true;
@@ -2433,8 +2439,8 @@ static void creep_behaviour_scan() {
             if (sf(k) == 193453899 && tf(k) == -1814841251) { sel = src(k); nSel++; }
         }
         for (uint32_t k = 0; k < np && k < 8192; k++) {
-            if (nPdv == 1 && dst(k) == pdv && tf(k) == 2066049125 && rd<uint64_t>(src(k), 8) == 0x144a58840) { allow = src(k); nAllow++; }
-            if (sf(k) != 225375086 || rd<uint64_t>(src(k), 8) != 0x144a58840) continue;
+            if (nPdv == 1 && dst(k) == pdv && tf(k) == 2066049125 && rd<uint64_t>(src(k), 8) == G(0x144a58840)) { allow = src(k); nAllow++; }
+            if (sf(k) != 225375086 || rd<uint64_t>(src(k), 8) != G(0x144a58840)) continue;
             for (uint32_t j = 0; j < np && j < 8192; j++)   // a Bool into a node that IsBot also feeds
                 if (sf(j) == 215512070 && dst(j) == dst(k)) { if (flag != src(k)) nFlag++; flag = src(k); }
         }
@@ -2464,19 +2470,19 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
         // LevelListReport.BuiltLevels = LevelDescriptionAssets) finds the root level. If it doesn't, re-run the preload once
         // a second (its descriptions live in game/incomgameconfiguration, which may still be registering), for up to 30 s.
         static bool posted, gaveUp; static ULONGLONG lastPreload, postWaitStart;
-        if (!posted && !gaveUp && g_postLoadLevel && g_spawnLs && rd<uint64_t>(gs, 0xF8) && committed(0x140ba0c20) &&
-            memcmp((void*)0x140ba0c20, kPostLoadLevelPrologue, sizeof kPostLoadLevelPrologue) == 0) {
+        if (!posted && !gaveUp && g_postLoadLevel && g_spawnLs && rd<uint64_t>(gs, 0xF8) && committed(G(0x140ba0c20)) &&
+            memcmp((void*)G(0x140ba0c20), expect_bytes(0x140ba0c20, kPostLoadLevelPrologue, 6), sizeof kPostLoadLevelPrologue) == 0) {
             typedef uint64_t (__fastcall* lookup_t)(const char* levelName);
             typedef void (__fastcall* preload_t)();
             typedef void (__fastcall* post_t)(void* levelSetup, uint64_t unused, uint64_t flag, uint64_t u4);
             ULONGLONG pt = GetTickCount64();
             if (!postWaitStart) postWaitStart = pt;
-            uint64_t lb = rd<uint64_t>(0x143ea0768, 0), le = rd<uint64_t>(0x143ea0770, 0);
-            uint64_t found = ((lookup_t)0x140cd57f0)(g_rootLevel);
+            uint64_t lb = rd<uint64_t>(G(0x143ea0768), 0), le = rd<uint64_t>(G(0x143ea0770), 0);
+            uint64_t found = ((lookup_t)G(0x140cd57f0))(g_rootLevel);
             if (found) {
                 status("3b: level lookup found '%s' (%p); list has %llu entries", g_rootLevel, (void*)found, (le - lb) / 8);
                 status("3b: posting ServerLoadLevelMessageBase (FUN_140ba0c20) with the spawn LevelSetup");
-                ((post_t)0x140ba0c20)(g_spawnLs, 0, 0, 0);
+                ((post_t)G(0x140ba0c20))(g_spawnLs, 0, 0, 0);
                 status("3b: load-level message posted");
                 posted = true;
             } else if (pt - lastPreload >= 1000) {
@@ -2486,7 +2492,7 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
                     strncat_s(names, safe_str(rd<uint64_t>(rd<uint64_t>(q, 0), 0x30)), _TRUNCATE); strncat_s(names, "; ", _TRUNCATE);
                 }
                 status("3b: level lookup: '%s' not in the list (%llu entries: %s); re-running the preload", g_rootLevel, (le - lb) / 8, names);
-                ((preload_t)0x140cd55e0)();
+                ((preload_t)G(0x140cd55e0))();
                 if (pt - postWaitStart > 30000) { status("3b: level lookup: gave up after 30 s; not posting"); gaveUp = true; }
             }
         }
@@ -2501,7 +2507,7 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
     if (phase == 0) {
         if (now - first < (ULONGLONG)g_spawnDelayMs) return;
         if (rd<uint64_t>(gs, 0xF8)) { status("3b: a server already exists; not spawning"); phase = 3; return; }
-        bool engine = committed(0x14021b2b0) && committed(0x1442f7c68) && committed(0x1442d18c0);
+        bool engine = committed(G(0x14021b2b0)) && committed(G(0x1442f7c68)) && committed(G(0x1442d18c0));
         if (!g_loadStartupData || !engine) {
             if (g_loadStartupData) status("3b: bundles: engine not present (test target); skipped");
             phase = 3; do_spawn(gs); return;
@@ -2511,14 +2517,14 @@ static void __fastcall h_gstick(uint64_t gs, uint64_t a2, uint64_t a3, uint64_t 
     }
     if (!bundle_done(handle)) {
         if (now - phaseStart > 5000 && !pumping) { pumping = true; status("3b: bundle %s: not done after 5 s; pumping the resource manager each tick", bundle); }
-        if (pumping) ((bq_pump_t)0x1401f7960)(0x1442d18c0, 1, 0);
+        if (pumping) ((bq_pump_t)G(0x1401f7960))(G(0x1442d18c0), 1, 0);
         if (now - lastNote > 5000) { lastNote = now; status("3b: bundle %s: still loading (%llu ms)", bundle, now - phaseStart); }
         return;
     }
     release_bundle(bundle, handle, now - phaseStart);
     pumping = false;
     if (phase == 1 && g_loadGameConfig) {
-        const char* cfg = (const char*)rd<uint64_t>(0x1441e2938, 0);
+        const char* cfg = (const char*)rd<uint64_t>(G(0x1441e2938), 0);
         if (cfg && rd<uint8_t>((uint64_t)cfg, 0)) { bundle = cfg; handle = queue_bundle(bundle); phase = 2; phaseStart = lastNote = now; return; }
     }
     phase = 3;
@@ -2565,7 +2571,7 @@ static HitShip g_hitShips[512]; static int g_hitShipCount; static SRWLOCK g_hitL
 static const uint32_t kHitCand[3] = { 0x30, 0x70, 0x90 };
 static const char* kHitObj[3] = { "component", "physics component", "physics body" };
 static uint64_t hit_body(uint64_t pc) {   // the body the hit function itself reaches when the physics component forwards
-    if (!pc || rd<uint64_t>(rd<uint64_t>(pc, 0), 0x1c8) != 0x141ca4ec0) return 0;
+    if (!pc || rd<uint64_t>(rd<uint64_t>(pc, 0), 0x1c8) != G(0x141ca4ec0)) return 0;
     uint64_t w = rd<uint64_t>(pc, 0x30), idp = rd<uint64_t>(pc, 0x38);
     if (!w || !idp) return 0;
     uint32_t id = rd<uint32_t>(idp, 0);
@@ -2621,7 +2627,7 @@ static bool hit_find(uint64_t comp, uint64_t info, HitShip& s) {
     return false;
 }
 static void hit_name(uint64_t comp, char* out, size_t n) {
-    uint16_t lo = rd<uint16_t>(0x144a8ca00, 0x48), hi = rd<uint16_t>(0x144a8ca00, 0x4a);
+    uint16_t lo = rd<uint16_t>(G(0x144a8ca00), 0x48), hi = rd<uint16_t>(G(0x144a8ca00), 0x4a);
     for (uint32_t off = 0; off < 0x400; off += 8) {
         uint64_t q = rd<uint64_t>(comp, off); if (q < 0x10000) continue;
         uint64_t a = rd<uint64_t>(q, 0x90); if (a < 0x10000) continue;
@@ -2698,7 +2704,7 @@ static const char* kGridPart[GP_N] = { "capitalhull", "capitalshields", "capital
 static const uint32_t kGridWeaponProp[GW_N] = { 3, 10 };   // MaterialDecl property index (bits 20-31): laser, ion
 static const uint32_t kGridStockTarget[GP_N] = { 0x00b00980, 0x00600580, 0x00b00980 };   // capital ship, capital shield
 struct GridSite { uint64_t ret; int part; };
-static const GridSite kGridSites[] = {
+static GridSite kGridSites[] = {   // Steam addresses until apply_build() puts the running build's in
     { 0x1417db400, GP_HULL },      // ServerCapitalShipHealthComponent, direct hit (FUN_1417db200)
     { 0x140582ba0, GP_SHIELDS },   // ServerIncomShieldHealthComponent, direct hit (FUN_140582ab0)
     { 0x140546f7e, GP_SHIELDS },   // ClientShieldHealthComponent slot 41 (FUN_140546e90): the client's own figure
@@ -2726,7 +2732,7 @@ static uint64_t grid_stock_cell(uint64_t grid, int w, int p) {
     uint32_t a = (kGridWeaponProp[w] << 20) | 0x80, b = kGridStockTarget[p];
     uint64_t cell = o_matlookup(grid, &a, &b);
     uint64_t ci = cell ? rd<uint64_t>(cell, 8) : 0;
-    uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0, lo = rd<uint16_t>(0x1449f9290, 0x48), hi = rd<uint16_t>(0x1449f9290, 0x4a);
+    uint16_t id = ci ? rd<uint16_t>(ci, 0x48) : 0, lo = rd<uint16_t>(G(0x1449f9290), 0x48), hi = rd<uint16_t>(G(0x1449f9290), 0x4a);
     return ci && (uint16_t)(id - lo) <= (uint16_t)(hi - lo) ? cell : 0;
 }
 static uint64_t __fastcall h_matlookup(uint64_t grid, const uint32_t* a, const uint32_t* b) {
@@ -2825,13 +2831,13 @@ static uint64_t __fastcall h_lvlstep2(uint64_t mgr, uint64_t server, uint64_t st
     typedef uint64_t(__fastcall* find_t)(uint16_t compartment, void* type);
     static ULONGLONG waitStart, lastNote;
     uint32_t h1 = rd<uint32_t>(state, 0x628), h2 = rd<uint32_t>(state, 0x62c);
-    bool d1 = !h1 || (h1 >> 24) == 7 || ((bq_done_t)0x14021ba60)(rd<uint64_t>(0x1442f7c68, 0), h1);
-    bool d2 = !h2 || (h2 >> 24) == 7 || ((job_done_t)0x1401f75c0)(h2);
+    bool d1 = !h1 || (h1 >> 24) == 7 || ((bq_done_t)G(0x14021ba60))(rd<uint64_t>(G(0x1442f7c68), 0), h1);
+    bool d2 = !h2 || (h2 >> 24) == 7 || ((job_done_t)G(0x1401f75c0))(h2);
     if (d1 && d2) {
         // the lookup assumes the compartment exists: (&DAT_1442d18c8)[c] null → it locks through a null pointer (my 13:07 crash)
         uint16_t comp = rd<uint16_t>(server, 0x90);
-        bool compReady = comp != 0xbbe && rd<uint64_t>(0x1442d18c8 + 8ull * comp, 0) != 0;
-        uint64_t ld = compReady ? ((find_t)0x1401f9860)(comp, (void*)0x144a17ea0) : 0;
+        bool compReady = comp != 0xbbe && rd<uint64_t>(G(0x1442d18c8) + 8ull * comp, 0) != 0;
+        uint64_t ld = compReady ? ((find_t)G(0x1401f9860))(comp, (void*)G(0x144a17ea0)) : 0;
         ULONGLONG now = GetTickCount64();
         // found is not enough: on 2026-10-20 it was found with its arrays still null (AutoLoadBundles +0x100 crashed the
         // next step). Loaded data arrays are never null, so wait until VoiceOverLogic +0xd0, CameraModes +0xe8 and
@@ -2933,7 +2939,7 @@ static void apply_match_mode(uint64_t ls, const char* where) {
     else if (!_stricmp(g_matchMode, "solo")) { gm = "Frontline_Bots"; sc = "Solo"; }
     else { status("mode: unknown match_mode '%s' (solo, coop, fleet, dogfight)", g_matchMode); return; }
     typedef uint64_t(__fastcall* getopt_t)(uint64_t ls, const char* key);
-    auto go = (getopt_t)0x141191d50; auto so = (setoption_t)kSetOption;
+    auto go = (getopt_t)G(0x141191d50); auto so = (setoption_t)kSetOption;
     char nm[160], g0[48], s0[48], g1[48], s1[48];
     safe_copy(rd<uint64_t>(ls, 8), nm, sizeof nm);
     safe_copy(go(ls, "GameMode"), g0, sizeof g0); safe_copy(go(ls, "SquadronComposition"), s0, sizeof s0);
@@ -3074,7 +3080,7 @@ static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
         for (int k = 0; k < n; k++) if (*(uint64_t*)(buf + (size_t)k * 0x38 + 0x10) == id) { have = true; break; }
         if (have) continue;
         uint8_t* it = buf + (size_t)(n + added) * 0x38;
-        *(uint64_t*)(it + 0x00) = 0x143f7b968ull; *(uint64_t*)(it + 0x08) = 0x143f7b968ull; *(uint64_t*)(it + 0x10) = id;
+        *(uint64_t*)(it + 0x00) = G(0x143f7b968ull); *(uint64_t*)(it + 0x08) = G(0x143f7b968ull); *(uint64_t*)(it + 0x10) = id;
         added++;
     }
     uint64_t v[4] = { (uint64_t)buf, (uint64_t)(buf + (size_t)(n + added) * 0x38), (uint64_t)(buf + cap * 0x38), 0 };
@@ -3186,8 +3192,8 @@ static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: ev
         status("%s", line);
     });
 }
-static const uint64_t kLdSaveSetRet = 0x141900234;    // the save's own call to the presets setter returns here
-static const uint64_t kLdSaveSendRet = 0x14190319a;   // the save's call to the EA sender returns here
+#define kLdSaveSetRet G(0x141900234)    // the save's own call to the presets setter returns here
+#define kLdSaveSendRet G(0x14190319a)   // the save's call to the EA sender returns here
 typedef void(__fastcall* presetset_t)(uint64_t store, uint64_t presets, uint32_t state, uint32_t st);
 static presetset_t o_presetset;
 static void __fastcall h_presetset(uint64_t store, uint64_t presets, uint32_t state, uint32_t st) {
@@ -3298,7 +3304,7 @@ static void __fastcall h_onlerr(uint64_t self, uint64_t result) {
 // Transport capture (2026-10-20, Kyber's way): log the client's connect call and the online-server constructor's
 // socket-manager-position argument, with the vtables of the objects involved, to map Squadrons' socket interfaces.
 // Addresses and vtables only; a connect password is logged as its length.
-static bool looks_vtable(uint64_t v) { return v >= 0x143000000ull && v < 0x146000000ull; }
+static bool looks_vtable(uint64_t v) { return v >= G(0x143000000ull) && v < G(0x146000000ull); }
 static void dump_vtable(const char* tag, uint64_t obj) {
     uint64_t vt = rd<uint64_t>(obj, 0);
     if (!looks_vtable(vt)) { status("  %s %llx: first qword %llx (no vtable)", tag, obj, vt); return; }
@@ -3310,7 +3316,7 @@ static void dump_members(const char* tag, uint64_t obj, int bytes) {
     int n = 0;
     for (int off = 0; off < bytes && n < 40; off += 8) {
         uint64_t q = rd<uint64_t>(obj, off);
-        if (q < 0x10000 || looks_vtable(q) || (q >= 0x140000000ull && q < 0x160000000ull)) continue;
+        if (q < 0x10000 || looks_vtable(q) || (q >= G(0x140000000ull) && q < 0x160000000ull)) continue;
         uint64_t v = rd<uint64_t>(q, 0);
         if (looks_vtable(v)) { status("  %s+%03x -> obj %llx vtable %llx", tag, off, q, v); n++; }
     }
@@ -3319,7 +3325,7 @@ typedef uint64_t(__fastcall* connect_t)(uint64_t obj, const char* addr, uint64_t
 static connect_t o_connect;
 static uint64_t __fastcall h_connect(uint64_t obj, const char* addr, uint64_t pw, uint64_t a4) {
     {   // does the client's connect password equal ServerSettings.ServerPassword? compare in memory; log only the result
-        uint64_t ss = rd<uint64_t>(0x144331c50, 0);
+        uint64_t ss = rd<uint64_t>(G(0x144331c50), 0);
         const char* cp = (const char*)pw;   // the password is passed as a plain char* (client+0x458's value)
         const char* sp = ss ? (const char*)rd<uint64_t>(ss, 0xb0) : nullptr;
         char a1[64] = "", a2[64] = "";
@@ -3401,20 +3407,20 @@ static LONG CALLBACK crash_catcher(PEXCEPTION_POINTERS ep) {
     __try {
         for (int i = 0; i < 4096 && found < 20 && c->Rsp + 8ull * i + 8 <= top; i++) {
             uint64_t v = ((uint64_t*)c->Rsp)[i];
-            if (v >= 0x140001000ull && v < 0x14307e400ull) { n += sprintf_s(line + n, sizeof line - n, " %llx", v); found++; }
+            if (v >= G(0x140001000ull) && v < G(0x14307e400ull)) { n += sprintf_s(line + n, sizeof line - n, " %llx", v); found++; }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
     status("%s", line);
     // 2026-10-20 entity-creation crash (FUN_1411590d0: data object in rsi has a null first qword): dump the first 8 qwords
     // of the data object (rsi) and its owner (rdi) as numbers, without following pointers, to identify the entity
-    if (c->Rip == 0x140b95224ull || c->Rip == 0x140b95214ull || c->Rip == 0x140b95204ull) {
+    if (c->Rip == G(0x140b95224ull) || c->Rip == G(0x140b95214ull) || c->Rip == G(0x140b95204ull)) {
         // level-load assertion in FUN_140b950a0 state 2: rdi = level manager, rbp = load state; the bundle lookup
         // FUN_140cd57f0 used the name at [rdi+0xf0+0x38]
         status("  level manager %llx: name@+0x128 '%s' level@+0x110 %llx; load state %llx: +0x62c %x +0x694 %d",
                c->Rdi, safe_str(rd<uint64_t>(c->Rdi, 0x128)), rd<uint64_t>(c->Rdi, 0x110), c->Rbp,
                rd<uint32_t>(c->Rbp, 0x62c), (int)rd<uint8_t>(c->Rbp, 0x694));
     }
-    if (c->Rip == 0x14115910bull) {
+    if (c->Rip == G(0x14115910bull)) {
         uint64_t objs[2] = { c->Rsi, c->Rdi }; const char* nm[2] = { "rsi(data)", "rdi(owner)" };
         for (int k = 0; k < 2; k++) {
             uint64_t q[8] = {};
@@ -3454,7 +3460,7 @@ static void sample_threads(int round) {
                 __try {
                     for (int i = 0; i < 2048 && found < 12 && ctx.Rsp + 8ull * i + 8 <= top; i++) {
                         uint64_t v = ((uint64_t*)ctx.Rsp)[i];
-                        if (v >= 0x140001000ull && v < 0x14307e400ull) { n += sprintf_s(line + n, sizeof line - n, " %llx", v); found++; }
+                        if (v >= G(0x140001000ull) && v < G(0x14307e400ull)) { n += sprintf_s(line + n, sizeof line - n, " %llx", v); found++; }
                     }
                 } __except (EXCEPTION_EXECUTE_HANDLER) {}
             }
@@ -3487,9 +3493,9 @@ static DWORD WINAPI sampler(LPVOID) {
 static void patch_backend_local() {
     static const uint8_t expect[6] = {0x48, 0x83, 0xec, 0x28, 0x80, 0x79};
     static const uint8_t patch[6] = {0xB8, 0xBC, 0x6A, 0x56, 0xB8, 0xC3};  // mov eax, 0xB8566ABC; ret
-    uint8_t* at = (uint8_t*)0x1418f2930;
+    uint8_t* at = (uint8_t*)G(0x1418f2930);
     MEMORY_BASIC_INFORMATION mbi{};
-    if (!VirtualQuery(at, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || memcmp(at, expect, 6) != 0) {
+    if (!VirtualQuery(at, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || memcmp(at, expect_bytes(0x1418f2930, expect, 6), 6) != 0) {
         status("backend patch: bytes differ or not mapped; NOT patched"); return;
     }
     DWORD old; VirtualProtect(at, 6, PAGE_EXECUTE_READWRITE, &old);
@@ -3652,11 +3658,28 @@ static bool suspend_others(HANDLE* hs, int* n, int max) {
 }
 static void resume_all(HANDLE* hs, int n) { for (int i = 0; i < n; i++) { ResumeThread(hs[i]); CloseHandle(hs[i]); } }
 
+// Which build this is, and its addresses in the tables made before that was known (file-scope initializers run before
+// DllMain). Once, first thing in DllMain.
+static void apply_build() {
+    g_build = detect_build();
+    if (g_build == BUILD_STEAM) return;
+#ifdef SERVER
+    for (uint64_t& v : kObsVt) v = G(v);
+    for (uint64_t& v : kObsCi) v = G(v);
+    for (GridSite& s : kGridSites) s.ret = G(s.ret);
+#endif
+    for (Site& s : g_sites) { memcpy(s.expect, expect_bytes(s.addr, s.expect, s.steal), s.steal); s.addr = G(s.addr); }
+}
+
+// The EA app's build is encrypted on disk: its wrapper decrypts the code on the main thread, after the DLL has loaded
+// (about a second in, 2026-10-26). Until then the hook sites hold other bytes; waiting for them is not a failure.
+static const DWORD kEaCodeWaitMs = 120000;
+
 enum Inst { I_OK, I_RETRY, I_FAIL };
-static Inst install() {
+static Inst install(bool report = true) {
     HMODULE exe = GetModuleHandleW(nullptr);
 #ifndef PROBE_TEST
-    if ((uint64_t)exe != 0x140000000ull) { status("ABORT: exe base %p, expected 0x140000000", exe); return I_FAIL; }
+    if ((uint64_t)exe != G(0x140000000ull)) { status("ABORT: exe base %p, expected 0x140000000", exe); return I_FAIL; }
 #else
     (void)exe;
 #endif
@@ -3666,7 +3689,7 @@ static Inst install() {
         bool mapped = VirtualQuery((void*)s.addr, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT &&
                       !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
         if (!mapped || memcmp((void*)s.addr, s.expect, s.steal) != 0) {
-            if (!reported) {
+            if (!reported && report) {
                 char hex[80] = {};
                 if (mapped) for (uint32_t i = 0; i < s.steal; i++) sprintf_s(hex + 2 * i, 3, "%02x", ((uint8_t*)s.addr)[i]);
                 status("ABORT: bytes at %s differ from the analysed exe: %s", s.name, mapped ? hex : "(not mapped)");
@@ -3749,6 +3772,7 @@ static void setup() {
     char binPath[MAX_PATH]; sprintf_s(binPath, "%s.bin", base);
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     status("%s loaded; build %s %s; qpc freq %lld; log %s", prefix, __DATE__, __TIME__, fq.QuadPart, path);
+    status("game build: %s", build_name());
 #ifdef RULES
     {
         // the profile (issue #2), or rules.ini when server.ini names none
@@ -3777,6 +3801,16 @@ static volatile LONG g_hooked;
 // Installs the hooks, retrying while a thread sits inside a patch range. In test builds it also waits (up to 10 s)
 // for the stand-in code to be planted, since a test target maps it after the DLL loads.
 static void install_retrying() {
+    if (g_build == BUILD_EA) {
+        // wait for the wrapper to decrypt the code, checking every millisecond, and hook as soon as it has (the game's
+        // own start-up runs seconds later, after its licence check)
+        DWORD t0 = GetTickCount();
+        while (!g_hooked && GetTickCount() - t0 < kEaCodeWaitMs) {
+            if (install(false) == I_OK) { g_hooked = 1; status("EA app build: the code is decrypted; hooked after %lu ms", GetTickCount() - t0); }
+            else Sleep(1);
+        }
+        if (!g_hooked) status("EA app build: the code did not appear within %lu s", kEaCodeWaitMs / 1000);
+    }
     for (int attempt = 0; attempt < 200 && !g_hooked; attempt++) {
         Inst r = install();
         if (r == I_OK) { g_hooked = 1; break; }
@@ -3786,6 +3820,7 @@ static void install_retrying() {
         Sleep(50);
     }
     status(g_hooked ? "all hooks installed; logging" : "NOT HOOKED; probe idle (game unaffected)");
+    if (g_buildMisses) status("WARNING: %ld game addresses missing from the %s build's table (build_ea.h is older than the source)", g_buildMisses, build_name());
 }
 
 static DWORD WINAPI worker(LPVOID) {
@@ -3831,11 +3866,15 @@ static DWORD WINAPI worker(LPVOID) {
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
+        apply_build();
 #ifdef SERVER
         // Loaded by sws_launch.exe on the suspended main thread, before the game's own code runs: set up and hook
-        // synchronously so the MainLoop constructor hook is in place before the main loop is created.
+        // synchronously so the MainLoop constructor hook is in place before the main loop is created. The EA app's build
+        // is still encrypted here and is decrypted on this thread once we return, so it is hooked from the worker
+        // thread instead, as soon as its code appears.
         setup();
-        if (install() == I_OK) { g_hooked = 1; status("hooked synchronously at load"); }
+        if (g_build == BUILD_EA) status("EA app build: waiting for its code to be decrypted before hooking");
+        else if (install() == I_OK) { g_hooked = 1; status("hooked synchronously at load"); }
 #ifdef SERVER
         install_socket_wrappers();
         if (g_sockLog) { install_socket_passthrough(); HANDLE t = CreateThread(nullptr, 0, sock_summary, nullptr, 0, nullptr); if (t) CloseHandle(t); }
