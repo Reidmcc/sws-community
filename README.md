@@ -74,8 +74,9 @@ seconds in. The launcher gives it the environment the EA app would, and the runn
   data. Epic's copy isn't supported yet: issue #17 collects reports from `sws_check.exe`.
 - **The EA app's copy is newly supported:** tested in a custom match vs AI, with the mod's unlocks, loadouts and creep
   settings working. It needs the EA app running and signed in.
-- **Known limitation on a new account** (any copy): the loadout screens don't show the list of a loadout's components
-  under it. The game does the same without the mod; it seems to wait until the account has earned some customization.
+- **Known limitation on a new account:** the loadout screens don't show the list of a loadout's components under it.
+  Seen on a new EA account, where the game does the same without the mod; we think a new Steam account is the same. It
+  seems to wait until the account has earned some customization.
   We think levelling the account up fixes it (single player counts): a high-level account shows the list, though we
   haven't watched one account cross over. The loadouts themselves work, all five slots included; a loadout's edit
   screen shows its parts.
