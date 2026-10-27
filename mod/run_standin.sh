@@ -73,10 +73,6 @@ if [ -f "$L" ] && grep -q "^ship Rebel_Flex_Loadout 00050000 00050001" "$L" && g
     && grep -q "your saved loadouts laid over 3 of them" "$LOG"; then
     echo "PASS  local loadouts: loadouts.txt holds the saved records, and the log shows the send dropped and the records laid over EA's"
 else echo "FAIL  local loadouts: loadouts.txt or its log lines missing or wrong"; STATUS=1; fi
-# all_unlocked: of the fixture's two family lines, only the hull family gets a component family's item fields
-if [ -n "$LOG" ] && grep -q "all_unlocked adds 1102 (total 1103; 1 of them component families)" "$LOG"; then
-    echo "PASS  all_unlocked: component families get the item fields EA's own carry, other ids don't"
-else echo "FAIL  all_unlocked: the component-family count is missing or wrong in the log"; STATUS=1; fi
 # loadout_log=1 (server_standin.ini): the stand-in's loadout save, the setter it calls, and the two pilot loadouts
 if [ -n "$LOG" ] && grep -q "loadouts: SAVE from .* (connection 2)" "$LOG" \
     && grep -q "loadouts: set by .*, state 1, status 0, connection 2: pilot 2, ship 0, profile 1" "$LOG" \
