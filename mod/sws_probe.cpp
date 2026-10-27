@@ -3701,7 +3701,7 @@ static void resume_all(HANDLE* hs, int n) { for (int i = 0; i < n; i++) { Resume
 // DllMain). Once, first thing in DllMain.
 static void apply_build() {
     g_build = detect_build();
-    if (g_build == BUILD_STEAM) return;
+    if (g_build != BUILD_EA) return;
 #ifdef SERVER
     for (uint64_t& v : kObsVt) v = G(v);
     for (uint64_t& v : kObsCi) v = G(v);
@@ -3919,6 +3919,15 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
         apply_build();
+        if (g_build == BUILD_UNKNOWN) {   // a game exe the mod has no addresses for: say so, and touch nothing in it
+            setup();
+            const uint8_t* b = (const uint8_t*)GetModuleHandleW(nullptr);
+            const IMAGE_NT_HEADERS64* nt = (const IMAGE_NT_HEADERS64*)(b + ((const IMAGE_DOS_HEADER*)b)->e_lfanew);
+            status("NOT HOOKING: this game exe (time stamp %08lx, image size %08lx) is neither the Steam build nor the EA app "
+                   "build the mod knows. The game runs without the mod. sws_check.exe reports what this copy is.",
+                   nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage);
+            return TRUE;
+        }
 #ifdef SERVER
         // Loaded by sws_launch.exe on the suspended main thread, before the game's own code runs: set up and hook
         // synchronously so the MainLoop constructor hook is in place before the main loop is created. The EA app's build

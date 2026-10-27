@@ -6,8 +6,9 @@
 // the bytes the mod checks for at an address, which differ in the EA build at a few places.
 //
 // The build is told apart by the exe's PE header (time stamp and image size), which the EA app's encryption leaves
-// readable, so it is known as soon as the DLL loads. Anything else counts as the Steam build, as before: the byte checks
-// at every hook site still decide whether the mod runs.
+// readable, so it is known as soon as the DLL loads, and the launcher and sws_check can read it from the file. An exe
+// that is neither build is unknown: the DLL hooks nothing in it (its addresses would be guesses), the launcher says so,
+// and sws_check reports it. The stand-in test's exe is neither, so test builds (PROBE_TEST) take it for Steam.
 #pragma once
 #include <windows.h>
 #include <stdint.h>
@@ -16,18 +17,33 @@ struct BuildAddr { uint64_t steam, addr; };
 struct BuildExpect { uint64_t steam; uint32_t n; uint8_t bytes[24]; };
 #include "build_ea.h"
 
-enum GameBuild { BUILD_STEAM, BUILD_EA };
+// the Steam build, the one the source's addresses are from (starwarssquadrons.exe, 514,754,880 bytes)
+static const uint32_t kSteamTimeDateStamp = 0x5fdc04ec, kSteamSizeOfImage = 0x1f168000;
+// the EA app's exe as installed 2026-10-26 (EA Play), whose decrypted image build_ea.h was made from
+static const char kEaSha256[] = "83a55a3987f58d87551209670f5b913b245d978bac34d76193c3d502a9172467";
+static const unsigned long long kEaSize = 463792960ull;
+
+enum GameBuild { BUILD_STEAM, BUILD_EA, BUILD_UNKNOWN };
 static GameBuild g_build = BUILD_STEAM;
 static volatile LONG g_buildMisses;   // addresses asked for that the EA table lacks (a table older than the source)
+
+static GameBuild build_of(uint32_t timeDateStamp, uint32_t sizeOfImage) {
+    if (timeDateStamp == kSteamTimeDateStamp && sizeOfImage == kSteamSizeOfImage) return BUILD_STEAM;
+    if (timeDateStamp == kEaTimeDateStamp && sizeOfImage == kEaSizeOfImage) return BUILD_EA;
+    return BUILD_UNKNOWN;
+}
 
 static GameBuild detect_build() {
     const uint8_t* b = (const uint8_t*)GetModuleHandleW(nullptr);
     const IMAGE_NT_HEADERS64* nt = (const IMAGE_NT_HEADERS64*)(b + ((const IMAGE_DOS_HEADER*)b)->e_lfanew);
-    if (nt->FileHeader.TimeDateStamp == kEaTimeDateStamp && nt->OptionalHeader.SizeOfImage == kEaSizeOfImage) return BUILD_EA;
-    return BUILD_STEAM;
+    GameBuild g = build_of(nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage);
+#ifdef PROBE_TEST
+    if (g == BUILD_UNKNOWN) g = BUILD_STEAM;   // the stand-in stands in for the Steam build
+#endif
+    return g;
 }
 
-static const char* build_name() { return g_build == BUILD_EA ? "EA app" : "Steam"; }
+static const char* build_name() { return g_build == BUILD_EA ? "EA app" : g_build == BUILD_STEAM ? "Steam" : "unknown"; }
 
 // The running build's address for a Steam address. 0 maps to 0 (an unset pointer); an address the table lacks gives 0
 // and is counted, so it fails as a null read rather than as a read of the wrong place.

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include "game_build.h"
 
 static const wchar_t* kGame = L"E:\\SteamLibrary\\steamapps\\common\\STAR WARS Squadrons\\starwarssquadrons.exe";
 
@@ -124,6 +125,18 @@ static void list_games() {
         wcscpy_s(seen[ns++], p);
         wprintf(L"Copy: %ls %ls\n", is_ea_build(p) ? L"ea" : L"steam", p);
     }
+}
+
+// Which build an exe is, from its PE header (game_build.h): Steam, the EA app's, or one the mod has no addresses for.
+static GameBuild exe_build(const wchar_t* exe) {
+    HANDLE f = CreateFileW(exe, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return BUILD_UNKNOWN;
+    static uint8_t h[4096]; DWORD got = 0;
+    bool ok = ReadFile(f, h, sizeof h, &got, nullptr) && got >= 0x200;
+    CloseHandle(f);
+    uint32_t pe = ok ? *(uint32_t*)(h + 0x3c) : 0;
+    if (!ok || pe + 0x58 > got || memcmp(h + pe, "PE\0\0", 4)) return BUILD_UNKNOWN;
+    return build_of(*(uint32_t*)(h + pe + 8), *(uint32_t*)(h + pe + 24 + 56));   // TimeDateStamp, SizeOfImage
 }
 
 // Whether something listens on 127.0.0.1:3216, the EA app's local service port (LSX), which the wrapper asks for the licence.
@@ -228,6 +241,14 @@ static int run(int argc, wchar_t** argv) {
     }
     if (GetFileAttributesW(target) == INVALID_FILE_ATTRIBUTES) { wprintf(L"Game not found: %ls\n", target); return 1; }
     const bool ea = is_ea_build(target);
+    // the mod's own DLL only goes into a build it has addresses for (it would hook nothing anyway); another --dll (the
+    // stand-in test's, or sws_dump.dll, made for capturing a new build) is the caller's choice
+    if (!showEnv && !_wcsicmp(dllName, L"sws_server.dll") && exe_build(target) == BUILD_UNKNOWN) {
+        wprintf(L"%ls isn't a build of the game the mod knows: neither the Steam build nor the EA app build it supports.\n"
+                L"Run sws_check.exe beside this program to see what this copy is, and report it on the project page (issue #17).\n"
+                L"Nothing was started.\n", target);
+        return 1;
+    }
     if (showEnv) {
         if (ea) set_ea_environment(target, true); else wprintf(L"%ls is not the EA app's copy; no EA environment.\n", target);
         return 0;
