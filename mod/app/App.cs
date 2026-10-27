@@ -856,7 +856,7 @@ namespace SwsSettings
             var launch = Theme.Button("Launch the game", (s, e) => Launch(), true);
             launch.Margin = new Padding(0, 22, 0, 0); launch.Padding = new Padding(18, 8, 18, 8);
             col.Controls.Add(launch);
-            col.Controls.Add(Theme.Label("Steam must be running. You'll be asked to confirm before the game starts.", Theme.Small, Theme.Muted));
+            col.Controls.Add(Theme.Label("Steam must be running (or the EA app, for its copy). You'll be asked to confirm before the game starts.", Theme.Small, Theme.Muted));
             col.Controls.Add(launchStatus);
             col.Controls.Add(playWarn);
             playPage.Controls.Add(col);

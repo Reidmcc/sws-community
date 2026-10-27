@@ -3672,7 +3672,8 @@ static void apply_build() {
 }
 
 // The EA app's build is encrypted on disk: its wrapper decrypts the code on the main thread, after the DLL has loaded
-// (about a second in, 2026-10-26). Until then the hook sites hold other bytes; waiting for them is not a failure.
+// (about a second in), checks it, gets the licence and then starts the game (about five seconds in, 2026-10-27). Until
+// then the hooks wait; waiting is not a failure.
 static const DWORD kEaCodeWaitMs = 120000;
 
 enum Inst { I_OK, I_RETRY, I_FAIL };
@@ -3730,7 +3731,8 @@ static Inst install(bool report = true) {
         memcpy((void*)s.addr, patch, s.steal);
         VirtualProtect((void*)s.addr, s.steal, old, &old);
         FlushInstructionCache(GetCurrentProcess(), (void*)s.addr, s.steal);
-        status("hooked %s (stole %u bytes)", s.name, s.steal);
+        if (g_build == BUILD_STEAM) status("hooked %s (stole %u bytes)", s.name, s.steal);
+        else status("hooked %s at %llx in the %s build (stole %u bytes)", s.name, s.addr, build_name(), s.steal);
     }
 #ifdef SERVER
     if (ok && g_forceLocal) patch_backend_local();
@@ -3802,14 +3804,25 @@ static volatile LONG g_hooked;
 // for the stand-in code to be planted, since a test target maps it after the DLL loads.
 static void install_retrying() {
     if (g_build == BUILD_EA) {
-        // wait for the wrapper to decrypt the code, checking every millisecond, and hook as soon as it has (the game's
-        // own start-up runs seconds later, after its licence check)
+        // The wrapper checks the decrypted code before it starts the game, and stalls for good if our patches are in it
+        // (2026-10-27: hooked as soon as the code appeared, it never asked for its licence). Its last step before the
+        // game's own code runs is filling the game's import table, so wait for that too; the game's start-up then takes
+        // seconds before the main loop is created. Checked every millisecond.
+        void* enter = (void*)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "EnterCriticalSection");
+        uint64_t slot = G(0x14307f388ull);   // the game's import of EnterCriticalSection
+        auto started = [&] {
+            MEMORY_BASIC_INFORMATION mbi{};
+            return VirtualQuery((void*)slot, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT &&
+                   !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) && *(void* volatile*)slot == enter;
+        };
         DWORD t0 = GetTickCount();
         while (!g_hooked && GetTickCount() - t0 < kEaCodeWaitMs) {
-            if (install(false) == I_OK) { g_hooked = 1; status("EA app build: the code is decrypted; hooked after %lu ms", GetTickCount() - t0); }
+            if (started() && install(false) == I_OK) {
+                g_hooked = 1; status("EA app build: the game has started; hooked after %lu ms", GetTickCount() - t0);
+            }
             else Sleep(1);
         }
-        if (!g_hooked) status("EA app build: the code did not appear within %lu s", kEaCodeWaitMs / 1000);
+        if (!g_hooked) status("EA app build: the game did not start within %lu s", kEaCodeWaitMs / 1000);
     }
     for (int attempt = 0; attempt < 200 && !g_hooked; attempt++) {
         Inst r = install();
@@ -3871,9 +3884,9 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         // Loaded by sws_launch.exe on the suspended main thread, before the game's own code runs: set up and hook
         // synchronously so the MainLoop constructor hook is in place before the main loop is created. The EA app's build
         // is still encrypted here and is decrypted on this thread once we return, so it is hooked from the worker
-        // thread instead, as soon as its code appears.
+        // thread instead, when the wrapper starts the game.
         setup();
-        if (g_build == BUILD_EA) status("EA app build: waiting for its code to be decrypted before hooking");
+        if (g_build == BUILD_EA) status("EA app build: waiting for its wrapper to start the game before hooking");
         else if (install() == I_OK) { g_hooked = 1; status("hooked synchronously at load"); }
 #ifdef SERVER
         install_socket_wrappers();
