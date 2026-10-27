@@ -48,7 +48,11 @@ suspicious.
 - **Creep.** Fleet Battles' AI creep packs can fly other ships (bombers, interceptors, dropships), engage like the
   vs-AI bots with targets that follow the match's phases, fire missiles and torpedoes, take the bots' handling, and have
   their hull and shields set by ship type. [docs/creep.md](docs/creep.md) has the details.
-- **Unlocks.** Every ship component and cosmetic counts as owned, for everyone.
+- **Unlocks.** Every ship component and cosmetic counts as owned, for everyone, pilot appearance and emotes included.
+- **Loadouts stay on your PC.** Loadouts you save, in the hangar or in a match's briefing room, are kept in
+  `loadouts.txt` beside the DLL and laid over the loadouts EA sends at startup. They're never sent to EA, so EA's records
+  never hold items your account doesn't own, and changes made during a match (when the game's EA connection is down)
+  aren't lost. `local_loadouts=0` in `server.ini` turns this off.
 - **No EA error 327.** The "lost connection to EA servers" event, which also locked the loadout screen, is suppressed.
 
 ## How it works, in one paragraph
@@ -173,6 +177,8 @@ the network version, so players on different profiles are refused at connect; th
 older `rules.ini` is read instead (missing rules count as on).
 
 All-unlocked reads `unlock_ids.txt` beside the DLL. It's generated from the game's data and ships with release builds.
+Local loadouts keep `loadouts.txt` beside the DLL: one line per saved loadout (pilot, ship, or the profile's default
+ships), its name, then its item ids. Delete it to start again from the loadouts EA has.
 
 ## Building
 

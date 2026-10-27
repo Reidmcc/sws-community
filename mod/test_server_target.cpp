@@ -112,11 +112,28 @@ int main() {
                                 0x48,0x81,0xc4,0xf0,0x00,0x00,0x00, 0x41,0x5f,0x41,0x5e,0x5f,0xc3};
         put(0x1418f58f0, pset, sizeof pset);
         if (map(0x141900000, 0x10000) != (void*)0x141900000) { printf("FAIL  could not map the loadout-save region\n"); return 1; }
-        const uint8_t psave[] = {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xc0,0xfc,0xff,0xff,
-                                 0x48,0x83,0xec,0x20, 0x48,0x8b,0x49,0x10, 0x41,0xb8,0x01,0x00,0x00,0x00, 0x45,0x31,0xc9,
-                                 0x48,0xb8, 0xf0,0x58,0x8f,0x41,0x01,0x00,0x00,0x00, 0xff,0xd0, 0x48,0x83,0xc4,0x20,
-                                 0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
-        put(0x1419001c0, psave, sizeof psave);
+        uint8_t psave[256]; memset(psave, 0x90, sizeof psave); int k = 0;
+        const uint8_t head[] = {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xc0,0xfc,0xff,0xff,
+                                0x48,0x83,0xec,0x20, 0x48,0x89,0xd6, 0x48,0x89,0xcf,   // sub rsp,0x20; mov rsi,rdx; mov rdi,rcx
+                                0x48,0x8b,0x49,0x10, 0x41,0xb8,0x01,0x00,0x00,0x00, 0x45,0x31,0xc9,
+                                0x48,0xb8, 0xf0,0x58,0x8f,0x41,0x01,0x00,0x00,0x00};   // mov rax, 0x1418f58f0
+        memcpy(psave, head, sizeof head);
+        k = 0x232 - 0x1c0;                                            // nops, then call rax at 0x141900232 (returns 0x141900234)
+        psave[k++] = 0xff; psave[k++] = 0xd0;
+        const uint8_t tail[] = {0x48,0x89,0xf2,                       // mov rdx, rsi (the presets, as the "request")
+                                0x48,0xb8, 0x90,0x31,0x90,0x41,0x01,0x00,0x00,0x00, 0xff,0xd0,   // call the send site stub
+                                0x48,0x83,0xc4,0x20, 0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+        memcpy(psave + k, tail, sizeof tail); k += sizeof tail;
+        put(0x1419001c0, psave, k);
+        // the save's EA send site: sub rsp,0x28; nop; call 0x1418f61b0 at 0x141903195 (returns 0x14190319a); add rsp,0x28; ret
+        uint8_t site[16] = {0x48,0x83,0xec,0x28, 0x90, 0xe8,0,0,0,0, 0x48,0x83,0xc4,0x28, 0xc3};
+        *(int32_t*)(site + 6) = (int32_t)(0x1418f61b0ll - 0x14190319all);
+        put(0x141903190, site, 15);
+        // the EA sender FUN_1418f61b0: its real 18-byte prologue, then count the call at 0x1418f8010, return rdx, and the epilogue
+        const uint8_t psend[] = {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40,
+                                 0x48,0xb8, 0x10,0x80,0x8f,0x41,0x01,0x00,0x00,0x00, 0x48,0xff,0x00, 0x48,0x89,0xd0,
+                                 0x48,0x83,0xc4,0x40, 0x41,0x5e,0x5f,0x5e, 0x48,0x8b,0x5c,0x24,0x10, 0x48,0x8b,0x6c,0x24,0x18, 0xc3};
+        put(0x1418f61b0, psend, sizeof psend);
     }
     // 3b: GameSimulation tick (real 14-byte prologue + epilogue), and simplified helpers
     const uint8_t gstick[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x50,
@@ -610,6 +627,61 @@ int main() {
         ((void(__fastcall*)(uint64_t, uint64_t))0x1419001c0)((uint64_t)mgr, (uint64_t)presets);
         check(*(uint8_t*)0x1419001c0 == 0xFF && *(uint8_t*)0x1418f58f0 == 0xFF && *(uint64_t*)0x1418f8000 == (uint64_t)presets,
               "loadouts: the save and the presets setter are hooked, and the presets pass through to the game's setter");
+    }
+    {   // local_loadouts (default on): a save keeps its records in loadouts.txt and its send to EA is dropped; EA's next
+        // loadouts get the saved records laid over them by name, only in the id words; a record from EA with no saved copy,
+        // and a saved record whose layout is off, are left alone; the sender still passes for its other callers.
+        static const char kG1[] = "11111111-2222-3333-4444-555555555555", kG2[] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        auto node = [](const char* name, uint32_t guidOff, const char* guid) {
+            uint8_t* n = fake_alloc(0x100); *(const char**)(n + 0x20) = name; *(const char**)(n + guidOff) = guid; return n; };
+        auto one = [](uint8_t* presets, uint32_t set, uint8_t* n) {   // a set holding one node
+            uint8_t* anchor = presets + set + 8;
+            *(uint8_t**)(n + 0x10) = anchor; *(uint8_t**)(anchor + 0) = n; *(uint8_t**)(anchor + 8) = n; *(uint8_t**)(anchor + 0x10) = n;
+            *(int32_t*)(presets + set + 0x28) = 1; };
+        auto two = [](uint8_t* presets, uint32_t set, uint8_t* a, uint8_t* b) {   // a set holding a, then b (a's right child)
+            uint8_t* anchor = presets + set + 8;
+            *(uint8_t**)(a + 0) = b; *(uint8_t**)(a + 0x10) = anchor; *(uint8_t**)(b + 0x10) = a;
+            *(uint8_t**)(anchor + 0) = b; *(uint8_t**)(anchor + 8) = a; *(uint8_t**)(anchor + 0x10) = a; *(int32_t*)(presets + set + 0x28) = 2; };
+        uint8_t* store = fake_alloc(0x40); uint8_t* mgr = fake_alloc(0x40); *(uint8_t**)(mgr + 0x10) = store; *(int32_t*)(store + 0x20) = 2;
+        // the save: a pilot loadout, a ship loadout, the profile, and a ship record whose GUID isn't one (not kept)
+        uint8_t* s = fake_alloc(0xc0);
+        uint8_t* sp = node("Rebel_pilot_loadout", 0x70, kG1); uint8_t* ss = node("Rebel_Flex_Loadout", 0x60, kG1);
+        uint8_t* sx = node("Rebel_Siege_Loadout", 0x60, "not-a-guid"); uint8_t* sf = node("PlayerProfile_1", 0x40, kG1);
+        for (int j = 0; j < 16; j++) *(uint32_t*)(sp + 0x2c + 4 * j) = 0x70000 + j;
+        for (int j = 0; j < 12; j++) { *(uint32_t*)(ss + 0x28 + 4 * j) = 0x50000 + j; *(uint32_t*)(sx + 0x28 + 4 * j) = 0x60000 + j; }
+        for (int j = 0; j < 6; j++) *(uint32_t*)(sf + 0x28 + 4 * j) = 0x30000 + j;
+        one(s, 0x08, sp); two(s, 0x40, ss, sx); one(s, 0x78, sf);
+        uint64_t sendsBefore = *(uint64_t*)0x1418f8010;
+        ((void(__fastcall*)(uint64_t, uint64_t))0x1419001c0)((uint64_t)mgr, (uint64_t)s);
+        uint64_t sendsAfterSave = *(uint64_t*)0x1418f8010;
+        // EA's next loadouts: the same records with EA's (older) ids, an extra ship record nobody saved, and EA's
+        // Rebel_Siege_Loadout (its saved copy had a bad GUID, so it was never kept)
+        uint8_t* e = fake_alloc(0xc0);
+        uint8_t* ep = node("Rebel_pilot_loadout", 0x70, kG2); uint8_t* es = node("Rebel_Flex_Loadout", 0x60, kG2);
+        uint8_t* ex = node("Rebel_Siege_Loadout", 0x60, kG2); uint8_t* eo = node("Imperial_Flex_Loadout", 0x60, kG2);
+        uint8_t* ef = node("PlayerProfile_1", 0x40, kG2);
+        for (int j = 0; j < 16; j++) *(uint32_t*)(ep + 0x2c + 4 * j) = 0xE0000 + j;
+        for (int j = 0; j < 12; j++) { *(uint32_t*)(es + 0x28 + 4 * j) = 0xE0000 + j; *(uint32_t*)(ex + 0x28 + 4 * j) = 0xE1000 + j; *(uint32_t*)(eo + 0x28 + 4 * j) = 0xE2000 + j; }
+        for (int j = 0; j < 6; j++) *(uint32_t*)(ef + 0x28 + 4 * j) = 0xE3000 + j;
+        *(uint32_t*)(es + 0x58) = 0xAB; *(uint32_t*)(ep + 0x28) = 0xCD;   // words outside the id ranges: never written
+        one(e, 0x08, ep); one(e, 0x78, ef);
+        {   // the ship set: es, then ex and eo (es has right child ex, which has right child eo)
+            uint8_t* anchor = e + 0x40 + 8;
+            *(uint8_t**)(es + 0) = ex; *(uint8_t**)(es + 0x10) = anchor; *(uint8_t**)(ex + 0x10) = es; *(uint8_t**)(ex + 0) = eo; *(uint8_t**)(eo + 0x10) = ex;
+            *(uint8_t**)(anchor + 0) = eo; *(uint8_t**)(anchor + 8) = es; *(uint8_t**)(anchor + 0x10) = es; *(int32_t*)(e + 0x40 + 0x28) = 3;
+        }
+        ((void(__fastcall*)(uint64_t, uint64_t, uint32_t, uint32_t))0x1418f58f0)((uint64_t)store, (uint64_t)e, 1, 0);
+        bool pilotOk = true, shipOk = true, profOk = true, siegeOk = true, otherOk = true;
+        for (int j = 0; j < 16; j++) pilotOk &= *(uint32_t*)(ep + 0x2c + 4 * j) == 0x70000u + j;
+        for (int j = 0; j < 12; j++) { shipOk &= *(uint32_t*)(es + 0x28 + 4 * j) == 0x50000u + j;
+                                       siegeOk &= *(uint32_t*)(ex + 0x28 + 4 * j) == 0xE1000u + j; otherOk &= *(uint32_t*)(eo + 0x28 + 4 * j) == 0xE2000u + j; }
+        for (int j = 0; j < 6; j++) profOk &= *(uint32_t*)(ef + 0x28 + 4 * j) == 0x30000u + j;
+        check(sendsAfterSave == sendsBefore, "local loadouts: the save's send to EA was dropped");
+        check(pilotOk && shipOk && profOk, "local loadouts: EA's pilot, ship and profile records got the saved item ids");
+        check(siegeOk && otherOk && *(uint32_t*)(es + 0x58) == 0xAB && *(uint32_t*)(ep + 0x28) == 0xCD,
+              "local loadouts: records with no saved copy, and words outside the item ids, left as EA sent them");
+        ((uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t))0x1418f61b0)(0, 0x77, 0, 0, 0);
+        check(*(uint64_t*)0x1418f8010 == sendsAfterSave + 1, "local loadouts: the EA sender still passes for its other callers");
     }
     {   // spawn_log: two spawns, one that makes a ship and one that doesn't; both pass through, and the log has a line for
         // each (the runner, run_standin.sh, checks the log)

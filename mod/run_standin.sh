@@ -20,8 +20,9 @@ for f in sws_launch.exe sws_server_test.dll test_server_target.exe sws_settings_
 done
 mkdir -p "$OUT" "$B/profiles"
 SAVE="$OUT/saved"; mkdir -p "$SAVE"
-FILES="server.ini limits.ini defaults.ini unlock_ids.txt"
+FILES="server.ini limits.ini defaults.ini unlock_ids.txt loadouts.txt"
 for f in $FILES; do [ -f "$B/$f" ] && cp "$B/$f" "$SAVE/$f"; done
+rm -f "$B/loadouts.txt"   # the test starts with no saved loadouts
 restore() {
     for f in $FILES; do
         if [ -f "$SAVE/$f" ]; then mv -f "$SAVE/$f" "$B/$f"; else rm -f "$B/$f"; fi
@@ -64,11 +65,19 @@ DLLFP=$( [ -n "$LOG" ] && grep -oE "profile: 'StandIn'.*fingerprint [0-9a-f]{8}"
 APPFP=$( cd "$B" && ./sws_settings_test.exe "$(cygpath -w "$B")" StandIn | grep -oE "fingerprint [0-9a-f]{8}" | grep -oE "[0-9a-f]{8}$" | head -1 )
 if [ -n "$DLLFP" ] && [ "$DLLFP" = "$APPFP" ]; then echo "PASS  the settings app and the DLL agree on the StandIn fingerprint ($APPFP)"
 else echo "FAIL  fingerprints differ: DLL '${DLLFP:-none}', settings app '${APPFP:-none}'"; STATUS=1; fi
+# local_loadouts (on by default): the stand-in's save wrote loadouts.txt with the three good records and not the bad one
+L="$B/loadouts.txt"
+if [ -f "$L" ] && grep -q "^ship Rebel_Flex_Loadout 00050000 00050001" "$L" && grep -q "^pilot Rebel_pilot_loadout 00070000" "$L" \
+    && grep -q "^profile PlayerProfile_1 00030000" "$L" && ! grep -q "Rebel_Siege_Loadout" "$L" \
+    && [ -n "$LOG" ] && grep -q "loadouts: the save's send to EA dropped" "$LOG" \
+    && grep -q "your saved loadouts laid over 3 of them" "$LOG"; then
+    echo "PASS  local loadouts: loadouts.txt holds the saved records, and the log shows the send dropped and the records laid over EA's"
+else echo "FAIL  local loadouts: loadouts.txt or its log lines missing or wrong"; STATUS=1; fi
 # loadout_log=1 (server_standin.ini): the stand-in's loadout save, the setter it calls, and the two pilot loadouts
-if [ -n "$LOG" ] && grep -q "loadouts: SAVE to EA from .* (connection 2)" "$LOG" \
-    && grep -q "loadouts: set by .*, state 1, status 0, connection 2: pilot 2, ship 0, third 1" "$LOG" \
+if [ -n "$LOG" ] && grep -q "loadouts: SAVE from .* (connection 2)" "$LOG" \
+    && grep -q "loadouts: set by .*, state 1, status 0, connection 2: pilot 2, ship 0, profile 1" "$LOG" \
     && grep -q 'loadouts:   pilot\[0\] +20="Rebel" +28=00000000,00000000 +30=00001234' "$LOG" \
-    && grep -q "loadouts:   pilot\[1\] .* +30=00005678" "$LOG" && grep -q "loadouts:   third\[0\] .* +28=00009abc" "$LOG"; then
+    && grep -q "loadouts:   pilot\[1\] .* +30=00005678" "$LOG" && grep -q "loadouts:   profile\[0\] .* +28=00009abc" "$LOG"; then
     echo "PASS  loadout_log logged the save, the presets it set, and each loadout"
 else echo "FAIL  loadout_log lines missing or wrong in the log"; STATUS=1; fi
 # spawn_log=1 (server_standin.ini): the stand-in's two starship spawns, one that made a ship and one that didn't

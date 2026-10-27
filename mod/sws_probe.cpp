@@ -647,6 +647,9 @@ static bool g_bundleLog = true;         // [server] bundle_log: log bundle queue
 static char g_matchMode[16];
 static bool g_observe = true;           // [server] observe: 0 = no output sampling (issue #11)
 static bool g_stackSample = false;      // [server] stack_sample: 1 = the stack sampler runs (dedicated-mode debugging)
+static bool g_localLoadouts = true;     // [server] local_loadouts: 1 = keep loadouts in loadouts.txt and never send them to EA
+static wchar_t g_ldPath[MAX_PATH];
+static void ld_load();
 static bool g_loadoutLog = false;       // [server] loadout_log: 1 = log the loadouts the game loads from EA and saves (2026-10-26 probe)
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
@@ -695,6 +698,10 @@ static void read_server_ini() {
       g_creepLog = GetPrivateProfileIntW(L"server", L"creep_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
+      g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
+      { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
+        status("server: local_loadouts=%d", (int)g_localLoadouts);
+        if (g_localLoadouts) ld_load(); }
       g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
@@ -3076,18 +3083,29 @@ static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
     HeapFree(GetProcessHeap(), 0, buf);   // the store copied the items
 }
 
-// Loadout probe (2026-10-26, [server] loadout_log=1; for local loadouts: what the game loads from EA and what it saves).
-// The client keeps its online presets in the online data model ("store", [[0x1441c5f28]+8]), as three EASTL sets: pilot
-// loadouts at +8, ship loadouts at +0x40, and a third at +0x78 (FUN_1419001c0 writes per-faction default ship, preset and
-// pilot from somewhere in the same object). A set's anchor is at set+8 {right +0, left +8, parent +0x10}, its size at
-// set+0x28; a node is {right +0, left +8, parent +0x10, colour +0x18, value +0x20}.
-//   FUN_1418f58f0(store, presets, state, status) sets them: from EA's inventory reply (FUN_1418fd3d0), and from a save.
+// Local loadouts (2026-10-26, [server] local_loadouts, default 1). The game keeps its online presets in the online data
+// model ("store", [[0x1441c5f28]+8]) as three EASTL sets: pilot loadouts at +8, ship loadouts at +0x40, and the player profile
+// (each faction's default ship, preset and pilot) at +0x78. A set's anchor is at set+8 {right +0, left +8, parent +0x10},
+// its size at set+0x28; a node is {right +0, left +8, parent +0x10, colour +0x18, value +0x20}. A record's value starts with
+// its name (char*, +0x20); the item ids the save serializes follow, then the EA item id (a GUID string):
+//   pilot   ids +0x2c..+0x6b (body type, body parts, voice, idle/emote/victory/play animations), GUID +0x70
+//   ship    ids +0x28..+0x57 (countermeasure, hull, shields, engine, primary, secondary, auxiliary, three flair, visual,
+//           decal), GUID +0x60
+//   profile ids +0x28..+0x3f (default ship, preset and pilot, Imperial then Rebel), GUID +0x40
+//   FUN_1418f58f0(store, presets, state, status) sets them: from EA's inventory reply (FUN_1418fd3d0), or from a save.
 //   FUN_1419001c0(manager, presets): the online inventory manager's save (vtable 0x143686860, slot 0xb0; the manager is the
-//   online client's +0x2058, its store at +0x10): sets the store's presets (state 1), posts ClientOnlineLoadoutUpdated, and
-//   sends the loadouts to EA as marketplace items (component 0x80c; pilot BODY_SHAPE, VOICE, ANIM_*; ship Countermeasure,
-//   Shields, Engine, Primary_Weapon, Secondary_Weapon, Auxiliary, Flair_*, ShipVisual, ShipDecal; Default{Ship,Preset,Pilot}
-//   {Imperial,Rebel}).
-// The probe logs each call and every node's value words raw, so a flight shows the layout and whether EA keeps a save.
+//   online client's +0x2058, its store at +0x10). It sets the store's presets, posts ClientOnlineLoadoutUpdated, then sends
+//   every loadout to EA through FUN_1418f61b0 (the call at 0x141903195). The preset sanitizer and the hangar and briefing
+//   room all save through it.
+// The mod's unlocks are local, so a save would tell EA about items the account doesn't own (2026-10-26: EA stores them
+// without checking), and saves made in a match go nowhere (EA's connection drops when the match starts; the game's
+// "connection lost" event is suppressed). So with local_loadouts on, the save's send to EA is dropped (the purchase flow's
+// sends pass), every save's records go to loadouts.txt beside this DLL, and when EA's loadouts arrive the saved records
+// are laid over them by name. Only the id words are written, and only into a record whose name and GUID read as expected.
+struct LdKind { const char* name; uint32_t set, first, words, guid; };
+static const LdKind kLd[3] = { { "pilot", 0x08, 0x2c, 16, 0x70 }, { "ship", 0x40, 0x28, 12, 0x60 }, { "profile", 0x78, 0x28, 6, 0x40 } };
+struct LdRec { int kind; char name[64]; uint32_t w[16]; };
+static LdRec g_ld[512]; static int g_ldCount; static SRWLOCK g_ldLock = SRWLOCK_INIT;
 static uint64_t ld_next(uint64_t n) {   // EASTL rbtree increment
     uint64_t r = rd<uint64_t>(n, 0);
     if (r) { n = r; for (uint64_t l; (l = rd<uint64_t>(n, 8)) != 0;) n = l; return n; }
@@ -3102,33 +3120,102 @@ static void ld_text(uint64_t p, char* out, size_t cap) {   // a short printable 
     for (; i + 1 < cap; i++) { char c = rd<char>(p, (uint32_t)i); if (!c) break; if (c < 32 || c > 126) { out[0] = 0; return; } out[i] = c; }
     out[i] = 0;
 }
-static void ld_dump(const char* what, uint64_t presets) {
-    static const char* kSet[3] = { "pilot", "ship", "third" };
-    static const uint32_t kOff[3] = { 0x08, 0x40, 0x78 };
-    status("loadouts: %s: %s %d, %s %d, %s %d", what, kSet[0], rd<int32_t>(presets, kOff[0] + 0x28), kSet[1],
-           rd<int32_t>(presets, kOff[1] + 0x28), kSet[2], rd<int32_t>(presets, kOff[2] + 0x28));
-    for (int s = 0; s < 3; s++) {
-        uint64_t anchor = presets + kOff[s] + 8, n = rd<uint64_t>(anchor, 8);
-        for (int k = 0; n && n != anchor && k < 120; k++, n = ld_next(n)) {
-            char line[700]; int w = sprintf_s(line, "loadouts:   %s[%d]", kSet[s], k);
-            char txt[48];
-            for (uint32_t o = 0x20; o < 0x98 && w > 0 && w < (int)sizeof line - 40; o += 8) {
-                uint64_t q = rd<uint64_t>(n, o);
-                ld_text(q, txt, sizeof txt);
-                if (txt[0]) w += sprintf_s(line + w, sizeof line - w, " +%x=\"%s\"", o, txt);
-                else w += sprintf_s(line + w, sizeof line - w, " +%x=%08x,%08x", o, (uint32_t)q, (uint32_t)(q >> 32));
-            }
-            status("%s", line);
-        }
+static bool ld_guid(uint64_t p) {   // an EA item id: 36 characters, dashes at 8, 13, 18, 23
+    char g[48]; ld_text(p, g, sizeof g);
+    return strlen(g) == 36 && g[8] == '-' && g[13] == '-' && g[18] == '-' && g[23] == '-';
+}
+// A record's name, if its layout reads as expected (a short identifier, and its GUID in place), else false.
+static bool ld_record(uint64_t node, int k, char* name, size_t cap) {
+    ld_text(rd<uint64_t>(node, 0x20), name, cap);
+    if (!name[0] || strchr(name, ' ') || strlen(name) >= 63) return false;
+    return ld_guid(rd<uint64_t>(node, kLd[k].guid));
+}
+template <class F> static void ld_each(uint64_t presets, F f) {   // f(kind, node), every node of the three sets
+    for (int k = 0; k < 3; k++) {
+        uint64_t anchor = presets + kLd[k].set + 8, n = rd<uint64_t>(anchor, 8);
+        for (int i = 0; n && n != anchor && i < 200; i++, n = ld_next(n)) f(k, n);
     }
 }
+static int ld_find(int k, const char* name) {
+    for (int i = 0; i < g_ldCount; i++) if (g_ld[i].kind == k && !strcmp(g_ld[i].name, name)) return i;
+    return -1;
+}
+static void ld_load() {   // loadouts.txt: "<kind> <name> <word> ...", words in hex; lines starting with ; are comments
+    FILE* f = nullptr; if (_wfopen_s(&f, g_ldPath, L"r") != 0 || !f) { status("loadouts: no saved loadouts yet"); return; }
+    char line[512];
+    while (g_ldCount < 512 && fgets(line, sizeof line, f)) {
+        char kind[16], name[64]; int used = 0;
+        if (line[0] == ';' || sscanf_s(line, "%15s %63s%n", kind, (unsigned)sizeof kind, name, (unsigned)sizeof name, &used) < 2) continue;
+        int k = -1; for (int i = 0; i < 3; i++) if (!strcmp(kind, kLd[i].name)) k = i;
+        if (k < 0) continue;
+        LdRec r{}; r.kind = k; strcpy_s(r.name, name);
+        const char* s = line + used; int got = 0;
+        for (; got < (int)kLd[k].words; got++) { char* e; unsigned long v = strtoul(s, &e, 16); if (e == s) break; r.w[got] = (uint32_t)v; s = e; }
+        if (got != (int)kLd[k].words) continue;   // a line from another layout: skip it
+        int at = ld_find(k, name); g_ld[at >= 0 ? at : g_ldCount++] = r;
+    }
+    fclose(f);
+    status("loadouts: %d saved loadout records from loadouts.txt", g_ldCount);
+}
+static void ld_write() {   // the whole file, through a temporary file, so a crash mid-write leaves the old one
+    wchar_t tmp[MAX_PATH]; swprintf_s(tmp, L"%s.tmp", g_ldPath);
+    FILE* f = nullptr; if (_wfopen_s(&f, tmp, L"w") != 0 || !f) { status("loadouts: couldn't write loadouts.txt"); return; }
+    fprintf(f, "; Your loadouts, kept by the community mod (local_loadouts=1 in server.ini). They are not sent to EA.\n"
+               "; One record per line: kind, name, then its item ids in hex. Delete this file to start again from EA's loadouts.\n");
+    for (int i = 0; i < g_ldCount; i++) {
+        fprintf(f, "%s %s", kLd[g_ld[i].kind].name, g_ld[i].name);
+        for (uint32_t j = 0; j < kLd[g_ld[i].kind].words; j++) fprintf(f, " %08x", g_ld[i].w[j]);
+        fputc('\n', f);
+    }
+    fclose(f);
+    if (!MoveFileExW(tmp, g_ldPath, MOVEFILE_REPLACE_EXISTING)) status("loadouts: couldn't replace loadouts.txt (%lu)", GetLastError());
+}
+static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: every node's value words, raw
+    status("loadouts: %s: pilot %d, ship %d, profile %d", what, rd<int32_t>(presets, 0x08 + 0x28), rd<int32_t>(presets, 0x40 + 0x28),
+           rd<int32_t>(presets, 0x78 + 0x28));
+    int idx[3] = {};
+    ld_each(presets, [&](int k, uint64_t n) {
+        char line[700]; int w = sprintf_s(line, "loadouts:   %s[%d]", kLd[k].name, idx[k]++);
+        char txt[48];
+        for (uint32_t o = 0x20; o <= kLd[k].guid && w > 0 && w < (int)sizeof line - 40; o += 8) {
+            uint64_t q = rd<uint64_t>(n, o);
+            ld_text(q, txt, sizeof txt);
+            if (txt[0]) w += sprintf_s(line + w, sizeof line - w, " +%x=\"%s\"", o, txt);
+            else w += sprintf_s(line + w, sizeof line - w, " +%x=%08x,%08x", o, (uint32_t)q, (uint32_t)(q >> 32));
+        }
+        status("%s", line);
+    });
+}
+static const uint64_t kLdSaveSetRet = 0x141900234;    // the save's own call to the presets setter returns here
+static const uint64_t kLdSaveSendRet = 0x14190319a;   // the save's call to the EA sender returns here
 typedef void(__fastcall* presetset_t)(uint64_t store, uint64_t presets, uint32_t state, uint32_t st);
 static presetset_t o_presetset;
 static void __fastcall h_presetset(uint64_t store, uint64_t presets, uint32_t state, uint32_t st) {
+    uint64_t ret = (uint64_t)_ReturnAddress();
+    if (g_localLoadouts && ret != kLdSaveSetRet && presets) {   // loadouts from EA: the saved records go on top
+        AcquireSRWLockShared(&g_ldLock);
+        int seen = 0, laid = 0, changed = 0, odd = 0; bool hit[512] = {};
+        ld_each(presets, [&](int k, uint64_t n) {
+            char name[64]; seen++;
+            if (!ld_record(n, k, name, sizeof name)) { odd++; return; }
+            int at = ld_find(k, name); if (at < 0) return;
+            hit[at] = true; laid++;
+            for (uint32_t j = 0; j < kLd[k].words; j++) {
+                uint32_t off = kLd[k].first + 4 * j;
+                if (rd<uint32_t>(n, off) != g_ld[at].w[j]) { *(volatile uint32_t*)(n + off) = g_ld[at].w[j]; changed++; }
+            }
+        });
+        int missing = 0; for (int i = 0; i < g_ldCount; i++) if (!hit[i]) missing++;
+        ReleaseSRWLockShared(&g_ldLock);
+        if (seen || g_ldCount)
+            status("loadouts: from EA (%llx): %d records; your saved loadouts laid over %d of them (%d item ids changed)%s%s",
+                   (unsigned long long)ret, seen, laid, changed, odd ? "; some records not laid out as expected, left as EA sent them" : "",
+                   missing ? "; some saved loadouts have no record from EA (not applied)" : "");
+        if (missing) for (int i = 0; i < g_ldCount; i++) if (!hit[i]) status("loadouts:   no record from EA for %s %s", kLd[g_ld[i].kind].name, g_ld[i].name);
+    }
     if (g_loadoutLog) {
         char what[160];
-        sprintf_s(what, "set by %llx, state %u, status %u, connection %d", (unsigned long long)(uint64_t)_ReturnAddress(), state, st,
-                  rd<int32_t>(store, 0x20));
+        sprintf_s(what, "set by %llx, state %u, status %u, connection %d", (unsigned long long)ret, state, st, rd<int32_t>(store, 0x20));
         ld_dump(what, presets);
     }
     o_presetset(store, presets, state, st);
@@ -3136,10 +3223,31 @@ static void __fastcall h_presetset(uint64_t store, uint64_t presets, uint32_t st
 typedef void(__fastcall* presetsave_t)(uint64_t mgr, uint64_t presets);
 static presetsave_t o_presetsave;
 static void __fastcall h_presetsave(uint64_t mgr, uint64_t presets) {
-    if (g_loadoutLog) status("loadouts: SAVE to EA from %llx (connection %d); the store update follows",
-                             (unsigned long long)(uint64_t)_ReturnAddress(), rd<int32_t>(rd<uint64_t>(mgr, 0x10), 0x20));
+    if (g_loadoutLog) status("loadouts: SAVE from %llx (connection %d)", (unsigned long long)(uint64_t)_ReturnAddress(),
+                             rd<int32_t>(rd<uint64_t>(mgr, 0x10), 0x20));
+    if (g_localLoadouts && presets) {
+        AcquireSRWLockExclusive(&g_ldLock);
+        int kept = 0;
+        ld_each(presets, [&](int k, uint64_t n) {
+            char name[64]; if (!ld_record(n, k, name, sizeof name)) return;
+            int at = ld_find(k, name); if (at < 0) { if (g_ldCount >= 512) return; at = g_ldCount++; }
+            LdRec& r = g_ld[at]; r.kind = k; strcpy_s(r.name, name);
+            for (uint32_t j = 0; j < kLd[k].words; j++) r.w[j] = rd<uint32_t>(n, kLd[k].first + 4 * j);
+            kept++;
+        });
+        if (kept) ld_write();
+        ReleaseSRWLockExclusive(&g_ldLock);
+        status("loadouts: saved %d loadout records to loadouts.txt (not sent to EA)", kept);
+    }
     o_presetsave(mgr, presets);
-    if (g_loadoutLog) status("loadouts: save returned");
+}
+// FUN_1418f61b0(component, request, rpc, callback): sends a marketplace request to EA. With local_loadouts on, the save's
+// call (returning to 0x14190319a) is dropped; it returns its request argument, as the real one does. Other callers pass.
+typedef uint64_t(__fastcall* ldsend_t)(uint64_t comp, uint64_t req, uint64_t rpc, uint64_t cb, uint64_t a5);
+static ldsend_t o_ldsend;
+static uint64_t __fastcall h_ldsend(uint64_t comp, uint64_t req, uint64_t rpc, uint64_t cb, uint64_t a5) {
+    if (g_localLoadouts && (uint64_t)_ReturnAddress() == kLdSaveSendRet) { status("loadouts: the save's send to EA dropped"); return req; }
+    return o_ldsend(comp, req, rpc, cb, a5);
 }
 
 // Ruleset matching (2026-10-20): every connection transport is set up by FUN_140d7bb70(transport, socket, titleVersion,
@@ -3438,6 +3546,9 @@ static Site g_sites[] = {
     {"loadouts-save 0x1419001c0", 0x1419001c0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xc0,0xfc,0xff,0xff},
      (void*)h_presetsave, (void**)&o_presetsave},
+    {"loadouts-send 0x1418f61b0", 0x1418f61b0, 18,
+     {0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18,0x56,0x57,0x41,0x56,0x48,0x83,0xec,0x40},
+     (void*)h_ldsend, (void**)&o_ldsend},
     {"transport-setup 0x140d7bb70", 0x140d7bb70, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18},
      (void*)h_tinit, (void**)&o_tinit},
