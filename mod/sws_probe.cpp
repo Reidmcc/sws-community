@@ -208,6 +208,7 @@ struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
+static bool g_bomberCapitalOnly;   // [server] bomber_capital_only: test switch, bomber creep target capital ships only
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
 static int creep_role(int fac, int p) {
@@ -707,6 +708,8 @@ static void read_server_ini() {
       g_creepLog = GetPrivateProfileIntW(L"server", L"creep_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
+      g_bomberCapitalOnly = GetPrivateProfileIntW(L"server", L"bomber_capital_only", 0, ini) != 0;
+      if (g_bomberCapitalOnly) status("server: bomber_capital_only=1 (test): bomber creep target capital ships only");
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -1889,7 +1892,10 @@ static void creep_ai_partition(uint64_t part) {
                 *(uint64_t*)(arr + m++ * 8ull) = s;
             }
             if (!tmpl) break;
-            for (uint32_t k = 0; k < ns; k++) {
+            // [server] bomber_capital_only=1 (a test switch, 2026-10-27): the bombers' list (v 0) stops at the capital-ship
+            // scores, so a starfighter matches none, scores 0 and is never their target (torpedoes lock only on the
+            // current target, and bombers chose starfighters about 3 times in 4 near a capital ship)
+            for (uint32_t k = 0; k < ns && !(v == 0 && g_bomberCapitalOnly); k++) {
                 uint64_t s = rd<uint64_t>(sarr, k * 8);
                 if (s && rd<uint32_t>(s, 40) != 2) *(uint64_t*)(arr + m++ * 8ull) = s;
             }
