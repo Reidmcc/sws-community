@@ -416,13 +416,15 @@ int main() {
     // (193450870); the AllowCountermeasures input (-1073460925) into its PropertyDefaultValue, whose HasValueSet
     // (-645606250) feeds a Not's In (5862146). The mod repoints the two In4 connections at that Not's Out (193453899).
     uint8_t* gateOr1 = bhvObj(0x144999106); uint8_t* gateOr2 = bhvObj(0x144999106); uint8_t* cmPdv = bhvObj(0x144999101); uint8_t* cmNot = bhvObj(0x144999107);
+    uint8_t* otherNot = bhvObj(0x144999107); uint8_t* otherAnd = bhvObj(0x144999108);   // a decoy: another Not's Out into another And's In4
     struct PcEntry { uint8_t* s; uint8_t* d; int32_t sf, tf; };
     const PcEntry bhvPc[] = { { bhvIface, bhvPdv, 1336394533, 1658462601 }, { allowBool, bhvPdv, 225375086, 2066049125 },
                               { minSel, rule, 193453899, -1814841251 }, { flagBool, orNode, 225375086, 193450867 },
                               { dogInfo, orNode, 215512070, 193450864 }, { bhvIface, bhvPdv2, -737100000, 1658462601 },
                               { bombsBool, bhvPdv2, 225375086, 2066049125 },
                               { bhvIface, gateOr1, 555857281, 193450870 }, { bhvIface, gateOr2, 555857281, 193450870 },
-                              { bhvIface, cmPdv, -1073460925, 1658462601 }, { cmPdv, cmNot, -645606250, 5862146 } };
+                              { bhvIface, cmPdv, -1073460925, 1658462601 }, { cmPdv, cmNot, -645606250, 5862146 },
+                              { otherNot, otherAnd, 193453899, 193450870 } };
     const int nBhvPc = sizeof bhvPc / sizeof bhvPc[0];
     uint8_t* bhvPcArr = fake_alloc(16 + nBhvPc * 32); *(uint32_t*)(bhvPcArr + 12) = nBhvPc;
     for (int i = 0; i < nBhvPc; i++) {
@@ -868,7 +870,8 @@ int main() {
         uint8_t* e7 = bhvPcArr + 16 + 7 * 32; uint8_t* e8 = bhvPcArr + 16 + 8 * 32; uint8_t* e10 = bhvPcArr + 16 + 10 * 32;
         check(*(uint8_t**)e7 == cmNot && *(int32_t*)(e7 + 16) == 193453899 && *(uint8_t**)(e7 + 8) == gateOr1 && *(int32_t*)(e7 + 20) == 193450870 &&
               *(uint8_t**)e8 == cmNot && *(int32_t*)(e8 + 16) == 193453899 && *(uint8_t**)(e8 + 8) == gateOr2 &&
-              *(uint8_t**)e10 == cmPdv && *(int32_t*)(e10 + 16) == -645606250 && raidData && raidData[72] == 0,
+              *(uint8_t**)e10 == cmPdv && *(int32_t*)(e10 + 16) == -645606250 && raidData && raidData[72] == 0 &&
+              *(uint8_t**)(bhvPcArr + 16 + 11 * 32) == otherNot && *(uint8_t**)(bhvPcArr + 16 + 11 * 32 + 8) == otherAnd,
               "creep wingmen: the loadout gates take the creep-only Not (wingmen run the bombers' runs), and the run data is open to wingmen");
     }
     check(maxShield->value == 900.0f, "value engine: shield config written");

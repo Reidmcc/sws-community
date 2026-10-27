@@ -2573,10 +2573,12 @@ static void creep_wingmen_graph(uint64_t root, const char* leaf, uint64_t pc, ui
     auto sf = [&](uint32_t k) { return rd<int32_t>(pc, k * 32 + 16); };
     auto tf = [&](uint32_t k) { return rd<int32_t>(pc, k * 32 + 20); };
     uint32_t in4[4]; int n4 = 0, nNot = 0; uint64_t notNode = 0, notPdv = 0;
-    for (uint32_t k = 0; k < np && k < 8192; k++) {
-        if (tf(k) == 193450870 && (sf(k) == 555857281 || sf(k) == 193453899) && n4 < 4) in4[n4++] = k;   // repointed already: Out
+    for (uint32_t k = 0; k < np && k < 8192; k++)
         if (sf(k) == -645606250 && tf(k) == 5862146) { notNode = dst(k); notPdv = src(k); nNot++; }
-    }
+    // the interface field's connections, or ones already repointed at that Not's Out (193450870 is any And/Or's In4,
+    // which other nodes' Outs feed too: 2026-10-27 flight, "gate inputs 4", from counting every Out into an In4)
+    for (uint32_t k = 0; k < np && k < 8192; k++)
+        if (tf(k) == 193450870 && (sf(k) == 555857281 || (nNot == 1 && sf(k) == 193453899 && src(k) == notNode)) && n4 < 4) in4[n4++] = k;
     bool fedByCountermeasures = false;
     for (uint32_t k = 0; nNot == 1 && k < np && k < 8192; k++) if (dst(k) == notPdv && sf(k) == -1073460925) fedByCountermeasures = true;
     bool shaped = n4 == 2 && nNot == 1 && fedByCountermeasures;
