@@ -1099,3 +1099,5 @@
 901098
 901099
 901100
+901101 family game/gameplay/customization/configfamily/hull/family_standin_hull (a component family)
+901102 family game/gameplay/customization/configfamily/decal/family_standin_decal (not one)

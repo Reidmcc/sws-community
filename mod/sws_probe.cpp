@@ -659,6 +659,7 @@ static bool g_valuesOn = true;           // [server] values: 0 = the runtime val
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
 static uint64_t* g_unlockIds; static int g_unlockCount;
+static uint8_t* g_unlockFamily;   // 1 = the id is a gameplay component's family (h_invset gives it the item fields EA does)
 static char g_udpBind[64] = "127.0.0.1";
 // [spawn] section: what the dedicated server loads (defaults = the game's own custom-match setup, observed 2026-10-19)
 static char g_rootLevel[256] = "Game/Levels/RootLevel/RootLevel";
@@ -714,11 +715,16 @@ static void read_server_ini() {
           if (sl2) wcscpy_s(sl2 + 1, MAX_PATH - (sl2 + 1 - idf), L"unlock_ids.txt");
           FILE* f = nullptr;
           if (_wfopen_s(&f, idf, L"r") == 0 && f) {
-              g_unlockIds = (uint64_t*)calloc(8192, sizeof(uint64_t));
+              g_unlockIds = (uint64_t*)calloc(8192, sizeof(uint64_t)); g_unlockFamily = (uint8_t*)calloc(8192, 1);
               char line[512];
-              while (g_unlockIds && g_unlockCount < 8192 && fgets(line, sizeof line, f)) {
+              while (g_unlockIds && g_unlockFamily && g_unlockCount < 8192 && fgets(line, sizeof line, f)) {
                   if (line[0] < '0' || line[0] > '9') continue;
-                  uint64_t v = _strtoui64(line, nullptr, 10); if (v) g_unlockIds[g_unlockCount++] = v;
+                  uint64_t v = _strtoui64(line, nullptr, 10); if (!v) continue;
+                  // a gameplay component's family ("family .../configfamily/<primary|secondary|hull|shield|engine|countermeasure>/...")
+                  static const char* const kComp[] = { "primary/", "secondary/", "hull/", "shield/", "engine/", "countermeasure/" };
+                  const char* cf = strstr(line, "/configfamily/"); bool comp = false;
+                  for (const char* k : kComp) if (cf && !strncmp(cf + 14, k, strlen(k))) comp = true;
+                  g_unlockFamily[g_unlockCount] = comp; g_unlockIds[g_unlockCount++] = v;
               }
               fclose(f);
           }
@@ -3113,17 +3119,20 @@ static void __fastcall h_invset(uint64_t store, uint64_t* vec) {
     uint8_t* buf = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cap * 0x38);
     if (!buf) { o_invset(store, vec); return; }
     if (n) memcpy(buf, (void*)b, (size_t)n * 0x38);
-    int added = 0;
+    int added = 0, families = 0;
     for (int i = 0; i < g_unlockCount; i++) {
         uint64_t id = g_unlockIds[i]; bool have = false;
         for (int k = 0; k < n; k++) if (*(uint64_t*)(buf + (size_t)k * 0x38 + 0x10) == id) { have = true; break; }
         if (have) continue;
         uint8_t* it = buf + (size_t)(n + added) * 0x38;
         *(uint64_t*)(it + 0x00) = G(0x143f7b968ull); *(uint64_t*)(it + 0x08) = G(0x143f7b968ull); *(uint64_t*)(it + 0x10) = id;
+        // a component family gets what EA's own family items carry (all 87 on an old account, 2026-10-27): +2c 1, +30 6,
+        // type 0xe. Without it a new account's loadout screens showed no component list (it owns 4 real families)
+        if (g_unlockFamily && g_unlockFamily[i]) { *(uint32_t*)(it + 0x2c) = 1; *(uint32_t*)(it + 0x30) = 6; *(uint32_t*)(it + 0x34) = 0xe; families++; }
         added++;
     }
     uint64_t v[4] = { (uint64_t)buf, (uint64_t)(buf + (size_t)(n + added) * 0x38), (uint64_t)(buf + cap * 0x38), 0 };
-    status("inventory: set with %d items from the backend; all_unlocked adds %d (total %d)", n, added, n + added);
+    status("inventory: set with %d items from the backend; all_unlocked adds %d (total %d; %d of them component families)", n, added, n + added, families);
     o_invset(store, v);
     HeapFree(GetProcessHeap(), 0, buf);   // the store copied the items
 }
