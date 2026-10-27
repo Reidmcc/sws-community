@@ -62,17 +62,34 @@ runs (an early-bird APC), and resumes it. The DLL installs a set of small detour
 ASLR), each checked byte for byte against the analysed build before anything is patched. If any check fails, it patches
 nothing. Settings come from `server.ini` and `rules.ini` beside the DLL. Logs go to a `logs` folder beside it.
 
+The EA app's copy is the same game code, linked differently, so nearly every address moves. The DLL tells the builds
+apart by the exe's header and looks each address up in that build's table (`mod/build_ea.h`, with the evidence for each
+entry; `tools/ea_map/README.md` explains how it was made). That exe is encrypted on disk, and its wrapper checks the
+decrypted code before starting the game, so there the hooks go in when the wrapper hands over to the game, about five
+seconds in. The launcher gives it the environment the EA app would, and the running EA app licenses it.
+
 ## Before you use it
 
-- **You need your own copy of the game.** This repository contains no game files or game data.
+- **You need your own copy of the game,** from Steam or the EA app. This repository contains no game files or game
+  data. Epic's copy isn't supported yet: issue #17 collects reports from `sws_check.exe`.
+- **The EA app's copy is newly supported:** tested in a custom match vs AI, with the mod's unlocks, loadouts and creep
+  settings working. It needs the EA app running and signed in.
+- **Known limitation on a new account:** the loadout screens don't show the list of a loadout's components under it.
+  Seen on a new EA account, where the game does the same without the mod; we think a new Steam account is the same. It
+  seems to wait until the account has earned some customization.
+  We think levelling the account up fixes it (single player counts): a high-level account shows the list, though we
+  haven't watched one account cross over. The loadouts themselves work, all five slots included; a loadout's edit
+  screen shows its parts.
 - **The game runs without EasyAntiCheat** (launched directly, not through EA's launcher), so EA's official online modes
   are unavailable in that session. The launcher refuses to start if an EasyAntiCheat service or process is running, and
   the DLL must never be loaded into an EasyAntiCheat session.
 - **Account risk:** the game still signs in to EA's account services in this mode. Loading a DLL into it carries some
   risk to your EA account. We think it is low (anti-cheat isn't running, and nothing touches matchmaking or official
   servers), but nobody can promise it is zero. It's your call.
-- **Nothing in the game folder is changed** except a `steam_appid.txt` you add yourself (one line: `1222730`), which a
-  direct launch needs. Delete it any time.
+- **Nothing in the game folder is changed.** A Steam copy needs a `steam_appid.txt` you add yourself (one line:
+  `1222730`) for a direct launch; delete it any time. The EA app's copy needs nothing there. With both copies installed,
+  choose one under Game copy in the settings app's Play page; the launcher on its own uses Steam's unless `launch.ini`
+  beside it names the other (`[launch]`, `game=<path to the exe>`).
 
 ## Playing
 
@@ -118,7 +135,7 @@ all_unlocked=1
 suppress_backend_lost=1
 ```
 
-Then, with Steam running and the game closed, everyone runs `sws_launch.exe` and types `YES`. In the game, everyone
+Then, with Steam running (or the EA app, for its copy) and the game closed, everyone runs `sws_launch.exe` and types `YES`. In the game, everyone
 starts a **solo custom match vs AI**: on the host that becomes the real match (per `match_mode`); on a joiner it
 connects to the host instead. Joiners should start once the host's match lobby is up.
 

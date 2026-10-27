@@ -937,6 +937,11 @@ int main() {
     int sr = ((int(WSAAPI*)(SOCKET, const char*, int, int, const sockaddr*, int))*(void**)0x14307ff10)(sk, "x", 1, 0, (sockaddr*)&sa, sizeof sa);
     check(sr == 1, "sendto() through the wrapped slot behaves normally");
     closesocket(sk);
+    // the rank data the preset slots unlock by ([[0x1441c5f00]+0xf8]+0x30, IncomRankData.RanksOfStarshipPresets)
+    if (map(0x1441c0000, 0x10000) != (void*)0x1441c0000) { printf("FAIL  could not map the game-settings region\n"); return 1; }
+    static uint8_t gameObj[0x100] = {}, rankData[0x40] = {};
+    static uint32_t ranks[6] = { 5, 0, 2, 14, 24, 34 };   // EASTL array: the count sits just before the first entry
+    *(uint64_t*)0x1441c5f00 = (uint64_t)gameObj; *(uint64_t*)(gameObj + 0xf8) = (uint64_t)rankData; *(uint64_t*)(rankData + 0x30) = (uint64_t)(ranks + 1);
     {   // all-unlocked: one real item (id 7) in, the setter must see it plus every id from unlock_ids.txt
         static uint8_t item[0x38] = {}; *(uint64_t*)(item + 0x10) = 7;
         uint64_t vec[4] = { (uint64_t)item, (uint64_t)(item + 0x38), (uint64_t)(item + 0x38), 0 };
@@ -945,6 +950,7 @@ int main() {
         int n = (int)((e - b) / 0x38);
         printf("      (inventory setter saw %d items)\n", n);
         check(*(uint8_t*)0x14123a310 == 0xFF && n > 1000, "inventory setter hooked and all ids appended");
+        check(ranks[0] == 5 && !ranks[1] && !ranks[2] && !ranks[3] && !ranks[4] && !ranks[5], "all_unlocked: every loadout preset slot needs rank 0");
     }
     {   // ruleset: the hook mixes the rules.ini ruleset id into the protocol version
         typedef uint32_t(__fastcall* tinit_fn)(uint64_t, uint64_t, uint32_t, uint32_t);

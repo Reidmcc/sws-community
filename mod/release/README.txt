@@ -9,16 +9,25 @@ This is early and experimental. Two-player Fleet Battles and co-op vs AI have be
 
 Before you start (please read)
 ------------------------------
-- You need your own copy of the game, installed through Steam. Have it from the EA app or Epic instead? Run
-  sws_check.exe (it only reads the game's exe) and attach its report to issue #17 on the project page: that tells us
-  whether your copy is the same build, the first step to supporting it.
+- You need your own copy of the game, from Steam or the EA app. Have it from Epic instead? Run sws_check.exe (it only
+  reads the game's exe) and attach its report to issue #17 on the project page: that tells us whether your copy is the
+  same build, the first step to supporting it.
+- The EA app's copy is new in this version. It has been tested in a custom match vs AI, with the mod's unlocks,
+  loadouts and creep settings working. Please tell us how it goes.
+- Known limitation on a new account: the loadout screens don't show the list of a loadout's components under it. Seen
+  on a new EA account, where the game does the same without the mod; we think a new Steam account is the same. It
+  seems to wait until the account has earned some customization. We
+  think levelling the account up fixes it (single player counts): a high-level account shows the list, though we
+  haven't watched one account cross over. The loadouts themselves work, all five slots included; a loadout's edit
+  screen shows its parts.
 - The game runs without EasyAntiCheat (started directly, not through EA's launcher), so EA's official online modes are
   not available in that session. The launcher refuses to start if EasyAntiCheat is running.
 - The game still signs in to EA's account services. Loading a mod into it carries some risk to your EA account. We think
   it is low (anti-cheat isn't running, and nothing touches matchmaking or official servers), but nobody can promise it
   is zero. It's your call.
-- Nothing in your game folder is changed, except a steam_appid.txt you add yourself (below), which you can delete any time.
-- To remove the mod: delete this folder, and delete steam_appid.txt from the game folder.
+- Nothing in your game folder is changed. A Steam copy needs a steam_appid.txt you add yourself (below), which you can
+  delete any time; the EA app's copy needs nothing there.
+- To remove the mod: delete this folder (and, for a Steam copy, steam_appid.txt from the game folder).
 - Antivirus: Windows Defender may flag the mod as Trojan:Win32/Wacatac.H!ml and remove sws_server.dll. It's a false
   positive (a machine-learning guess at what the launcher does: start your game and load the mod's DLL into it), and
   it's being reported to Microsoft. The source is public, and the release page lists each file's SHA-256 hash. If
@@ -28,8 +37,13 @@ Before you start (please read)
 
 One-time setup
 --------------
-1. In your game folder (Steam: right-click Squadrons > Manage > Browse local files), create a text file named
-   steam_appid.txt containing just:  1222730
+1. Steam copy only: in your game folder (right-click Squadrons > Manage > Browse local files), create a text file
+   named steam_appid.txt containing just:  1222730
+   Have both a Steam copy and an EA app copy? Choose one under Game copy in sws_settings.exe's Play page. Starting
+   sws_launch.exe by itself uses Steam's; to make it use the other, create launch.ini beside it with these two lines
+   (your path may differ):
+       [launch]
+       game=C:\Program Files\EA Games\STAR WARS Squadrons\starwarssquadrons.exe
 2. Put this folder anywhere outside the game folder, for example on your Desktop.
 3. A network path between the players. The tested way is Tailscale (tailscale.com, free): everyone installs it, and the
    host shares their PC with the others in Tailscale's admin page. The host's address is their Tailscale IP (100.x.y.z).
@@ -38,7 +52,8 @@ One-time setup
 Settings: sws_settings.exe
 --------------------------
 Double-click sws_settings.exe for everything below without editing files:
-- Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch.
+- Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch. With both a Steam
+  and an EA app copy installed, Game copy chooses which one starts.
 - Rules and fixes: turn the profile's exploit rules (zero-throttle pinballing, multidrifting) and map fixes (Zavian
   Abyss's middle X-wing creep pack spawning 3 ships instead of 5) on or off. Each is off unless you turn it on.
   Creep packs: what each Fleet Battles creep pack flies, and whether creep engage aggressively (following the
@@ -65,7 +80,7 @@ Or by hand (server.ini, open it in Notepad):
 
 Playing
 -------
-1. Steam running, Squadrons closed.
+1. Steam running (for the EA app's copy: the EA app running and signed in), Squadrons closed.
 2. Click Launch in sws_settings.exe and confirm in the window it opens. The game starts.
    (Or double-click sws_launch.exe, read what it says, type YES and press Enter.)
 3. In the game, start a SOLO CUSTOM MATCH VS AI, on the host and on every joiner. The host's becomes the real match

@@ -182,6 +182,9 @@ namespace SwsSettings
         readonly Label tsAddress = Theme.Label("", Theme.Big, Theme.Accent), tsNote = Theme.Label("", Theme.Small, Theme.Muted);
         Button tsCopy;
         readonly Label launchStatus = Theme.Label("", Theme.Body, Theme.Muted);
+        readonly ComboBox copyBox = Theme.Combo();
+        readonly Label copyTitle = Theme.Label("Game copy", Theme.Bold), copyNote = Theme.Label("", Theme.Small, Theme.Muted);
+        List<KeyValuePair<string, string>> copies;   // (steam|ea, exe path), as the launcher finds them; null until asked
         readonly Panel hostPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Panel joinPanel = new Panel { AutoSize = true, BackColor = Theme.Panel, Padding = new Padding(16) };
         readonly Label playProfile = Theme.Label("", Theme.Body), playWarn = Theme.Label("", Theme.Small, Theme.Warn);
@@ -853,10 +856,16 @@ namespace SwsSettings
             recordCheck.CheckedChanged += (s, e) => { if (server.Exists && server.Record != recordCheck.Checked) server.Record = recordCheck.Checked; };
             col.Controls.Add(recordCheck);
             col.Controls.Add(Theme.Label("Only for testing changes to the mod: it records every ship's flight data (30-50 MB a match, in the logs folder) and uses some CPU. Leave it off to play.", Theme.Small, Theme.Muted));
+            copyTitle.Margin = new Padding(0, 18, 8, 0);
+            col.Controls.Add(copyTitle);
+            copyBox.Width = 640;
+            copyBox.SelectionChangeCommitted += (s, e) => { int i = copyBox.SelectedIndex; if (copies != null && i >= 0 && i < copies.Count) Ini.Set(AppIni, "launch", "game", copies[i].Value); };
+            col.Controls.Add(copyBox);
+            col.Controls.Add(copyNote);
             var launch = Theme.Button("Launch the game", (s, e) => Launch(), true);
             launch.Margin = new Padding(0, 22, 0, 0); launch.Padding = new Padding(18, 8, 18, 8);
             col.Controls.Add(launch);
-            col.Controls.Add(Theme.Label("Steam must be running. You'll be asked to confirm before the game starts.", Theme.Small, Theme.Muted));
+            col.Controls.Add(Theme.Label("Steam must be running (or the EA app, for its copy). You'll be asked to confirm before the game starts.", Theme.Small, Theme.Muted));
             col.Controls.Add(launchStatus);
             col.Controls.Add(playWarn);
             playPage.Controls.Add(col);
@@ -876,6 +885,50 @@ namespace SwsSettings
                 : "Tailscale isn't running on this PC, or isn't installed (tailscale.com). Without it, players need another way to reach this PC: UDP port 25200.";
             playProfile.Text = "Profile: " + profile.Name + "    fingerprint " + Effective.Show(effective != null ? effective.Fingerprint : 0);
             playWarn.Text = server.Listen != 1 ? "server.ini has listen=" + server.Listen + ": hosting needs listen=1 (the release's server.ini has it)." : "";
+            RefreshCopies();
+        }
+        // The copies of the game the launcher finds (sws_launch --list-games), asked once. With more than one, a list to
+        // choose from, remembered in sws_settings.ini ([launch] game=) and passed to the launcher as --target; with one,
+        // a line naming it.
+        static string CopyName(KeyValuePair<string, string> c) { return (c.Key == "ea" ? "EA app" : "Steam") + ":  " + c.Value; }
+        void RefreshCopies()
+        {
+            if (copies != null) return;
+            copies = new List<KeyValuePair<string, string>>();
+            string launcher = Path.Combine(dir, "sws_launch.exe");
+            if (File.Exists(launcher))
+            {
+                int code;
+                foreach (var line in RunLauncher(launcher, "--list-games", out code).Replace("\r", "").Split('\n'))
+                {
+                    if (!line.StartsWith("Copy: ")) continue;
+                    string rest = line.Substring(6); int sp = rest.IndexOf(' ');
+                    if (sp > 0) copies.Add(new KeyValuePair<string, string>(rest.Substring(0, sp), rest.Substring(sp + 1).Trim()));
+                }
+            }
+            copyBox.Items.Clear();
+            foreach (var c in copies) copyBox.Items.Add(CopyName(c));
+            copyTitle.Visible = copyBox.Visible = copies.Count > 1;
+            if (copies.Count > 1)
+            {
+                string saved = Ini.Get(AppIni, "launch", "game", "");
+                int i = copies.FindIndex(c => string.Equals(c.Value, saved, StringComparison.OrdinalIgnoreCase));
+                copyBox.SelectedIndex = i >= 0 ? i : 0;
+                copyNote.Text = "This PC has more than one copy of Squadrons: the mod starts the one chosen here. The EA app's copy needs the EA app running and signed in.";
+            }
+            else copyNote.Text = copies.Count == 1 ? "Game: " + CopyName(copies[0]) : "";
+            copyNote.Margin = new Padding(0, copies.Count > 1 ? 0 : 18, 8, 0);
+        }
+        KeyValuePair<string, string>? ChosenCopy()
+        {
+            if (copies == null || copies.Count == 0) return null;
+            int i = copies.Count > 1 ? copyBox.SelectedIndex : 0;
+            return i >= 0 && i < copies.Count ? copies[i] : (KeyValuePair<string, string>?)null;
+        }
+        string LaunchArgs()
+        {
+            var c = ChosenCopy();
+            return "--yes" + (c.HasValue ? " --target \"" + c.Value.Value + "\"" : "");
         }
         void SetJoining(bool join)
         {
@@ -972,16 +1025,19 @@ namespace SwsSettings
                 if (a.Length == 0 || a.Any(c => char.IsWhiteSpace(c) || c == ';')) { Theme.Tell(this, "Join", "Type the host's address first."); return; }
             }
             string what = joining ? "join " + addressBox.Text.Trim() : "host " + ModeNames[Math.Max(0, modeBox.SelectedIndex)];
+            var copy = ChosenCopy();
+            string which = copy.HasValue && copies.Count > 1 ? (copy.Value.Key == "ea" ? "the EA app's copy of " : "the Steam copy of ") : "";
             if (Theme.Ask(this, "Launch the game",
-                "This starts Squadrons directly, without EasyAntiCheat, with the community server mod loaded from the start, to " +
+                "This starts " + which + "Squadrons directly, without EasyAntiCheat, with the community server mod loaded from the start, to " +
                 what + " with the profile '" + profile.Name + "'.\n\nThe game's EasyAntiCheat DLL loads but stays inactive, as with any direct launch. " +
                 "Loading a mod into the game carries some risk to your EA account; we think it's low, but nobody can promise it's zero.",
                 null, false, "Launch", 210) == null) return;
             ApplyPlaySettings();
+            string args = LaunchArgs();
             launchStatus.ForeColor = Theme.Muted; launchStatus.Text = "Starting...";
             var t = new System.Threading.Thread(() =>
             {
-                int code; string output = RunLauncher(launcher, out code);
+                int code; string output = RunLauncher(launcher, args, out code);
                 BeginInvoke((Action)(() => ShowLaunchResult(code, output)));
             }) { IsBackground = true };
             t.Start();
@@ -992,11 +1048,11 @@ namespace SwsSettings
             else { server.Join = ""; server.MatchMode = Modes[Math.Max(0, modeBox.SelectedIndex)]; }
             server.Profile = profile.Name;
         }
-        string RunLauncher(string launcher, out int code)
+        string RunLauncher(string launcher, string args, out int code)
         {
             try
             {
-                var psi = new ProcessStartInfo(launcher, "--yes") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true,
+                var psi = new ProcessStartInfo(launcher, args) { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true,
                     RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
                 // read as it comes and stop when the launcher exits: the game it starts may keep the output pipe open,
                 // so waiting for the pipe to close could wait for the game
@@ -1073,12 +1129,24 @@ namespace SwsSettings
             }
             return r.ToString();
         }
+        // --test-copies: the copies found, the one chosen, and the launcher's arguments for it; starts nothing
+        public string TestCopies()
+        {
+            RefreshCopies();
+            var r = new System.Text.StringBuilder();
+            foreach (var c in copies) r.AppendLine("copy " + CopyName(c));
+            r.AppendLine("list shown " + copyBox.Visible + ", chosen " + (ChosenCopy().HasValue ? CopyName(ChosenCopy().Value) : "none"));
+            r.AppendLine("args " + LaunchArgs());
+            return r.ToString();
+        }
         // --test-launch: the launch path after the popup (settings, hidden launcher, its output), reported to a file
         public string TestLaunch()
         {
             ApplyPlaySettings();
-            int code; string output = RunLauncher(Path.Combine(dir, "sws_launch.exe"), out code);
-            return "exit " + code + "\r\n" + output;
+            RefreshCopies();
+            string args = LaunchArgs();
+            int code; string output = RunLauncher(Path.Combine(dir, "sws_launch.exe"), args, out code);
+            return "args " + args + "\r\nexit " + code + "\r\n" + output;
         }
     }
 
@@ -1109,6 +1177,12 @@ namespace SwsSettings
             {
                 form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
                 form.Shown += (s, e) => { string r; try { r = form.TestLaunch(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
+            }
+            // --test-copies <report>: the game copies found and the launcher's arguments for the chosen one (starts nothing)
+            if (args.Length >= 2 && args[0] == "--test-copies")
+            {
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.ShowInTaskbar = false;
+                form.Shown += (s, e) => { string r; try { r = form.TestCopies(); } catch (Exception ex) { r = "EXCEPTION " + ex; } File.WriteAllText(args[1], r); form.Close(); };
             }
             // --test-status <report>: the status line under Launch clears when the game exits
             if (args.Length >= 2 && args[0] == "--test-status")
