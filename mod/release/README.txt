@@ -33,8 +33,9 @@ One-time setup
 --------------
 1. Steam copy only: in your game folder (right-click Squadrons > Manage > Browse local files), create a text file
    named steam_appid.txt containing just:  1222730
-   Have both a Steam copy and an EA app copy? The launcher uses Steam's. To use the other, create launch.ini beside
-   sws_launch.exe with these two lines (your path may differ):
+   Have both a Steam copy and an EA app copy? Choose one under Game copy in sws_settings.exe's Play page. Starting
+   sws_launch.exe by itself uses Steam's; to make it use the other, create launch.ini beside it with these two lines
+   (your path may differ):
        [launch]
        game=C:\Program Files\EA Games\STAR WARS Squadrons\starwarssquadrons.exe
 2. Put this folder anywhere outside the game folder, for example on your Desktop.
@@ -45,7 +46,8 @@ One-time setup
 Settings: sws_settings.exe
 --------------------------
 Double-click sws_settings.exe for everything below without editing files:
-- Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch.
+- Play: host (pick the match type) or join (type the host's address, keep favorites), then Launch. With both a Steam
+  and an EA app copy installed, Game copy chooses which one starts.
 - Rules and fixes: turn the profile's exploit rules (zero-throttle pinballing, multidrifting) and map fixes (Zavian
   Abyss's middle X-wing creep pack spawning 3 ships instead of 5) on or off. Each is off unless you turn it on.
   Creep packs: what each Fleet Battles creep pack flies, and whether creep engage aggressively (following the

@@ -82,7 +82,8 @@ seconds in. The launcher gives it the environment the EA app would, and the runn
   servers), but nobody can promise it is zero. It's your call.
 - **Nothing in the game folder is changed.** A Steam copy needs a `steam_appid.txt` you add yourself (one line:
   `1222730`) for a direct launch; delete it any time. The EA app's copy needs nothing there. With both copies installed,
-  the launcher uses Steam's unless `launch.ini` beside it names the other (`[launch]`, `game=<path to the exe>`).
+  choose one under Game copy in the settings app's Play page; the launcher on its own uses Steam's unless `launch.ini`
+  beside it names the other (`[launch]`, `game=<path to the exe>`).
 
 ## Playing
 

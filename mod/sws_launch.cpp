@@ -17,6 +17,8 @@
 // Usage: sws_launch.exe                      (the game found as below, DLL sws_server.dll beside this exe)
 //        sws_launch.exe --target <exe> --dll <name> --yes     (test use)
 //        sws_launch.exe [--target <exe>] --show-ea-env          (print the EA app environment it would set; starts nothing)
+//        sws_launch.exe --list-games                            (every copy of the game it finds; starts nothing)
+//        sws_launch.exe --target <exe> --yes                    (the settings app: the copy chosen there, after its own confirmation)
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
@@ -42,15 +44,19 @@ static bool find_ea_game(wchar_t* out, size_t n) {
     return true;
 }
 
-// The game's path, in order: launch.ini beside this exe ([launch] game=...), Steam's library folders (registry SteamPath
-// -> steamapps\libraryfolders.vdf "path" entries -> <lib>\steamapps\common\STAR WARS Squadrons), the EA app's install,
-// then the old default. With both a Steam and an EA app copy, Steam's is used unless launch.ini names the other.
-static bool find_game(wchar_t* out, size_t n) {
+// launch.ini beside this exe: [launch] game=<path to the exe>
+static bool ini_game(wchar_t* out, size_t n) {
     wchar_t ini[MAX_PATH]; GetModuleFileNameW(nullptr, ini, MAX_PATH);
     wchar_t* sl = wcsrchr(ini, L'\\'); if (sl) wcscpy_s(sl + 1, MAX_PATH - (sl + 1 - ini), L"launch.ini");
     wchar_t g[MAX_PATH] = L"";
     GetPrivateProfileStringW(L"launch", L"game", L"", g, MAX_PATH, ini);
-    if (g[0] && file_exists(g)) { wcscpy_s(out, n, g); wprintf(L"Game (from launch.ini): %ls\n", out); return true; }
+    if (!g[0] || !file_exists(g)) return false;
+    wcscpy_s(out, n, g);
+    return true;
+}
+
+// Steam's library folders (registry SteamPath -> steamapps\libraryfolders.vdf "path" entries -> <lib>\steamapps\common\STAR WARS Squadrons)
+static bool steam_game(wchar_t* out, size_t n) {
     wchar_t steam[MAX_PATH] = L""; DWORD sz = sizeof steam;
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath", RRF_RT_REG_SZ, nullptr, steam, &sz) == ERROR_SUCCESS) {
         for (wchar_t* c = steam; *c; c++) if (*c == L'/') *c = L'\\';
@@ -72,9 +78,18 @@ static bool find_game(wchar_t* out, size_t n) {
         }
         for (int i = 0; i < nl; i++) {
             wchar_t cand[MAX_PATH]; swprintf_s(cand, L"%ls\\steamapps\\common\\STAR WARS Squadrons\\starwarssquadrons.exe", libs[i]);
-            if (file_exists(cand)) { wcscpy_s(out, n, cand); wprintf(L"Game (from Steam's library folders): %ls\n", out); return true; }
+            if (file_exists(cand)) { wcscpy_s(out, n, cand); return true; }
         }
     }
+    return false;
+}
+
+// The game's path, in order: launch.ini, Steam's library folders, the EA app's install, then the old default. With both
+// a Steam and an EA app copy, Steam's is used unless launch.ini or --target names the other (the settings app passes
+// --target for the copy chosen there).
+static bool find_game(wchar_t* out, size_t n) {
+    if (ini_game(out, n)) { wprintf(L"Game (from launch.ini): %ls\n", out); return true; }
+    if (steam_game(out, n)) { wprintf(L"Game (from Steam's library folders): %ls\n", out); return true; }
     if (find_ea_game(out, n)) { wprintf(L"Game (the EA app's install): %ls\n", out); return true; }
     if (file_exists(kGame)) { wcscpy_s(out, n, kGame); return true; }
     return false;
@@ -94,6 +109,21 @@ static bool is_ea_build(const wchar_t* exe) {
     for (uint32_t i = 0, o = pe + 24 + opt; i < nsec && o + 40 <= got; i++, o += 40)
         if (!memcmp(h + o, ".ooa\0", 5)) return true;
     return false;
+}
+
+// --list-games: every copy found, one "Copy: steam|ea <path>" line each, in find_game's order (for the settings app)
+static void list_games() {
+    wchar_t seen[3][MAX_PATH]; int ns = 0;
+    bool (*finders[])(wchar_t*, size_t) = { ini_game, steam_game, find_ea_game };
+    for (auto f : finders) {
+        wchar_t p[MAX_PATH];
+        if (!f(p, MAX_PATH)) continue;
+        bool dup = false;
+        for (int i = 0; i < ns; i++) if (!_wcsicmp(seen[i], p)) dup = true;
+        if (dup) continue;
+        wcscpy_s(seen[ns++], p);
+        wprintf(L"Copy: %ls %ls\n", is_ea_build(p) ? L"ea" : L"steam", p);
+    }
 }
 
 // Whether something listens on 127.0.0.1:3216, the EA app's local service port (LSX), which the wrapper asks for the licence.
@@ -181,6 +211,7 @@ static int run(int argc, wchar_t** argv) {
         else if (!wcscmp(argv[i], L"--dll") && i + 1 < argc) dllName = argv[++i];
         else if (!wcscmp(argv[i], L"--yes")) yes = true;
         else if (!wcscmp(argv[i], L"--show-ea-env")) showEnv = true;
+        else if (!wcscmp(argv[i], L"--list-games")) { list_games(); return 0; }
     }
 
     wchar_t dll[MAX_PATH];
@@ -273,7 +304,7 @@ int wmain(int argc, wchar_t** argv) {
     wprintf(L"Community server mod launcher, build %hs %hs\n", __DATE__, __TIME__);
     int code = run(argc, argv);
     bool yes = false;
-    for (int i = 1; i < argc; i++) if (!wcscmp(argv[i], L"--yes")) yes = true;
+    for (int i = 1; i < argc; i++) if (!wcscmp(argv[i], L"--yes") || !wcscmp(argv[i], L"--list-games")) yes = true;
     if (!yes) { wprintf(L"\nPress Enter to close.\n"); getchar(); }
     return code;
 }
