@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <initializer_list>
 static volatile unsigned long long g_scorerList;   // the creep scorer stand-in's eighth argument, last call
+static volatile unsigned long long g_scorerRules;  // ... and its seventh (the squadron's targeting rules)
 #pragma comment(lib, "ws2_32.lib")
 #include <stdio.h>
 #include <stdint.h>
@@ -177,8 +178,12 @@ int main() {
     const uint8_t scorerHead[] = {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55, 0x48,0x8b,0x44,0x24,0x68, 0x48,0xa3};
     const uint8_t scorerTail[] = {0x41,0x5d, 0x41,0x5c, 0x5f, 0x5e, 0x5d, 0xc3};
     if (map(0x141820000, 0x10000) != (void*)0x141820000) { printf("FAIL  could not map the scorer region\n"); return 1; }
-    { uint8_t code[64]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
-      uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8; memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
+    // ... and its seventh (the targeting rules, [rsp+0x60]) in g_scorerRules
+    { uint8_t code[96]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
+      uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8;
+      const uint8_t rulesLoad[] = {0x48,0x8b,0x44,0x24,0x60, 0x48,0xa3}; memcpy(code + at, rulesLoad, sizeof rulesLoad); at += sizeof rulesLoad;
+      uint64_t whereR = (uint64_t)&g_scorerRules; memcpy(code + at, &whereR, 8); at += 8;
+      memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
       put(0x14182ade0, code, at); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
@@ -876,6 +881,14 @@ int main() {
         bool pass = listFor(fighterShip, ywingAi) == ywingAi;
         check(opener && defense && pass,
               "creep per ship type: the Y-wing keeps the corvette at 10, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
+        // [creep] wingmen: a bomber is scored with a copy of the targeting rules allowing 15 attackers per target and no
+        // penalty for another leader's target; another creep ship with the squadron's own rules, untouched
+        uint8_t* rulesData = fake_alloc(0x40); *(int32_t*)(rulesData + 4) = 1; *(float*)(rulesData + 32) = 0.2f; *(float*)(rulesData + 8) = 1200.f;
+        auto rulesFor = [&](uint8_t* ship) { g_scorerRules = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, (uint64_t)rulesData, (uint64_t)creepList, 0, 0, 0, 0); return (uint8_t*)g_scorerRules; };
+        uint8_t* rb = rulesFor(bomberShip); uint8_t* rf = rulesFor(fighterShip);
+        check(rb && rb != rulesData && *(int32_t*)(rb + 4) == 15 && *(float*)(rb + 32) == 1.0f && *(float*)(rb + 8) == 1200.f &&
+              rf == rulesData && *(int32_t*)(rulesData + 4) == 1 && *(float*)(rulesData + 32) == 0.2f,
+              "creep wingmen: a bomber may share its target with the whole squadron (15 attackers, no penalty), other creep keep the squadron's rules");
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
           "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");

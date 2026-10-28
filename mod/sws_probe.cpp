@@ -2068,6 +2068,22 @@ static void __fastcall h_scorer(uint64_t a1, uint64_t ship, uint64_t a3, uint64_
             }
             break;
         }
+    // [creep] wingmen: a bomber may share its target with the rest of its squadron. The creep's targeting rules (the
+    // scorer's seventh argument, IncomSquadronTargetingRules: DefaultMaxAttackersPerTarget +4, 1 for creep;
+    // OtherLeaderTargetScoreWeightMultiplier +32, 0.2) give each target to one ship of the faction's whole squadron (all
+    // three packs), so a pack's wingmen got no target and held formation (flown 2026-10-27: 600 of 600 assigned targets
+    // had exactly one bomber). Bombers get a copy, on this call's stack, with room for all 15 and no penalty for a target
+    // another leader holds; the other creep keep the stock rules, so fighters don't gang up on a player.
+    uint8_t rules[64];
+    if (g_creepWingmen && ship && a7) {
+        bool bomber = false; for (int i = 0; i < 256 && !bomber; i++) bomber = g_bomberShips[i] == ship;
+        bool copied = false;
+        if (bomber) { __try { memcpy(rules, (void*)a7, 56); copied = true; } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+        if (copied && *(int32_t*)(rules + 4) >= 0 && *(int32_t*)(rules + 4) < 15) {
+            *(int32_t*)(rules + 4) = 15; *(float*)(rules + 32) = 1.0f; a7 = (uint64_t)rules;
+            static volatile LONG told; if (!InterlockedExchange(&told, 1)) status("creep: bombers may share a target with their whole squadron (up to 15 attackers), wingmen included");
+        }
+    }
     o_scorer(a1, ship, a3, a4, a5, a6, a7, list, a9, a10, a11, a12);
     if (g_trackLog && ship && a1) track_note_target(a1, ship);
 }
