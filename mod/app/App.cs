@@ -149,10 +149,12 @@ namespace SwsSettings
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
         readonly ComboBox creepCapDamage = Theme.Combo();
+        readonly ComboBox creepBomberTargets = Theme.Combo();
         readonly ComboBox creepTorpMinLock = Theme.Combo();
         readonly TextBox[,] creepHull = new TextBox[2, 4], creepShields = new TextBox[2, 4];
         static readonly int[] CreepRadii = { 1000, 1200, 1500, 2000, 2500, 3000 };
-        static readonly int[] CreepCapDamages = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+        static readonly int[] CreepCapDamages = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+        static readonly string[] CreepBomberTargetNames = { "Capital ships first", "Capital ships only" };
         static readonly int[] CreepTorpMinLocks = { 100, 150, 200, 250, 300, 400, 500 };
         readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         readonly CheckBox creepTorpedoes = Theme.Check("Bomber creep carry torpedoes");
@@ -327,6 +329,7 @@ namespace SwsSettings
                 string dmg = profile.CreepCapDamage + "%";
                 if (!creepCapDamage.Items.Contains(dmg)) creepCapDamage.Items.Add(dmg);
                 creepCapDamage.SelectedItem = dmg; creepCapDamage.Enabled = !profile.BuiltIn && profile.CreepAggressive;
+                creepBomberTargets.SelectedIndex = profile.CreepBomberCapOnly ? 1 : 0; creepBomberTargets.Enabled = !profile.BuiltIn && profile.CreepAggressive;
                 string lk = profile.CreepTorpMinLock + " m";
                 if (!creepTorpMinLock.Items.Contains(lk)) creepTorpMinLock.Items.Add(lk);
                 creepTorpMinLock.SelectedItem = lk; creepTorpMinLock.Enabled = !profile.BuiltIn && profile.CreepTorpedoes;
@@ -675,7 +678,7 @@ namespace SwsSettings
                 p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
                 for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
                 p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepWingmen = profile.CreepWingmen; p.CreepBotHandling = profile.CreepBotHandling;
-                p.CreepRadius = profile.CreepRadius; p.CreepCapDamage = profile.CreepCapDamage; p.CreepTorpMinLock = profile.CreepTorpMinLock;
+                p.CreepRadius = profile.CreepRadius; p.CreepCapDamage = profile.CreepCapDamage; p.CreepTorpMinLock = profile.CreepTorpMinLock; p.CreepBomberCapOnly = profile.CreepBomberCapOnly;
                 foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value;
             }
             p.Save(dir);
@@ -763,7 +766,7 @@ namespace SwsSettings
             }
             rule(creepAggressive, "Creep engage enemies within the range below (2,000 m is the vs-AI bots' value), instead of only what their path brings near. Their targets follow the phase: " +
                 "on offense the enemy frigates, then the flagship once the frigates are gone; in the opener and on defense the enemy corvette or Raider for the bombers, starfighters first for the rest. " +
-                "Players and other creep stay targets throughout.");
+                "Players and other creep stay targets throughout, except for bombers set to capital ships only. Damage to capital ships scales the creep's hits on them; at 0% they do none, as in stock.");
             {
                 var row = Theme.Row(6); row.Margin = new Padding(28, 2, 0, 6);
                 row.Controls.Add(new Label { Text = "Engagement range", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(0, 8, 8, 0) });
@@ -780,11 +783,21 @@ namespace SwsSettings
                     int d; if (int.TryParse(creepCapDamage.SelectedItem.ToString().Replace("%", ""), out d)) { profile.CreepCapDamage = d; SaveProfile(); }
                 };
                 row.Controls.Add(creepCapDamage); col.Controls.Add(row);
+                var row2 = Theme.Row(6); row2.Margin = new Padding(28, 0, 0, 6);
+                row2.Controls.Add(new Label { Text = "Bombers attack", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(0, 8, 8, 0) });
+                creepBomberTargets.Width = 190; foreach (var n in CreepBomberTargetNames) creepBomberTargets.Items.Add(n);
+                creepBomberTargets.SelectedIndexChanged += (s, e) => {
+                    if (loading || creepBomberTargets.SelectedIndex < 0) return;
+                    profile.CreepBomberCapOnly = creepBomberTargets.SelectedIndex == 1; SaveProfile();
+                };
+                row2.Controls.Add(creepBomberTargets);
+                row2.Controls.Add(new Label { Text = "First: starfighters when no capital ship is in reach. Only: nothing else.", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(12, 8, 0, 0) });
+                col.Controls.Add(row2);
             }
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions. Bombs need no setting: bomber creep always drop them.");
-            rule(creepTorpedoes, "Y-wing and TIE bomber packs carry the vs-AI bots' torpedoes instead of bombs, and fire them as they attack, at capital ships and starfighters alike. " +
-                "They fire them only with creep missiles on, above. Without this, bomber creep keep their bombs and make bombing runs on capital ships.");
+            rule(creepTorpedoes, "Y-wing and TIE bomber packs carry the vs-AI bots' torpedoes instead of bombs, and fire them as they attack. Their torpedoes lock only onto capital ships, " +
+                "so bombers that also fight starfighters save them for capital ships. They fire them only with creep missiles on, above. Without this, bomber creep keep their bombs and make bombing runs on capital ships.");
             {
                 var row = Theme.Row(6); row.Margin = new Padding(28, 2, 0, 6);
                 row.Controls.Add(new Label { Text = "Minimum lock distance (500 m is stock)", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(0, 8, 8, 0) });
@@ -828,7 +841,7 @@ namespace SwsSettings
                 }
             }
 
-            creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepCapDamage.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
+            creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepCapDamage.Enabled = creepBomberTargets.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
             creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             creepTorpedoes.CheckedChanged += (s, e) => { creepTorpMinLock.Enabled = creepTorpedoes.Checked && !profile.BuiltIn; if (!loading) { profile.CreepTorpedoes = creepTorpedoes.Checked; SaveProfile(); } };
             creepWingmen.CheckedChanged += (s, e) => { if (!loading) { profile.CreepWingmen = creepWingmen.Checked; SaveProfile(); } };

@@ -998,6 +998,8 @@ int main() {
         check(*(uint8_t**)(outVec + 8) == ents + 0x70 && *(int32_t*)(ents + 0x1c) == 15 && *(int32_t*)(ents + 0x38 + 0x1c) == 1,
               "creep wingmen: bombers may all take a capital ship (its candidate entry keeps 15 attackers); a starfighter gets the squadron's 1 back");
     }
+    check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
+          "creep torpedoes: bombers that put capital ships first lock their AI torpedoes only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
     {   // [creep] torpedo_lock_min=150: the minimum lock distance, attribute and list entry, with no vs-AI bots loaded
         uint8_t* at = torpFiring ? *(uint8_t**)(torpFiring + 184) : nullptr; uint8_t* fl = torpWeapon ? *(uint8_t**)(torpWeapon + 0x40) : nullptr;
         check(at && fl && *(float*)(at + 32) == 150.f && *(float*)(fl + 4) == 150.f,

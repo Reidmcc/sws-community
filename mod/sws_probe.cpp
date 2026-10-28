@@ -194,9 +194,14 @@ static bool g_creepBotHandling;
 // fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
 static int g_creepRadius = 2000;
 // [creep] capital_damage: the percent of their damage aggressive creep's hits do to capital ships (0..100). In stock they do
-// none (h_aicheck); 30 by default (Pseudo, 2026-10-27: at 100, fifteen bombers take a capital ship down very fast). In the
-// fingerprint when aggressive is on and it isn't 30.
+// none (h_aicheck); 30 by default (Pseudo, 2026-10-27: at 100, fifteen bombers take a capital ship down very fast); 0 keeps
+// the stock rule, for aggressive creep that leave capital ships unharmed (Pseudo, 2026-10-28). In the fingerprint when
+// aggressive is on and it isn't 30.
 static int g_creepCapDamage = 30;
+// [creep] bomber_capital_only = 1 (creep_ai_partition, with aggressive): the bombers' target list holds only the phase's
+// capital ships, so they attack nothing else; 0 (the default), they put the capital ships first and fight starfighters when
+// none is in reach. In the fingerprint when aggressive is on and it's on.
+static bool g_creepBomberCapOnly;
 static int g_creepTorpMinLock = 500;   // [creep] torpedo_lock_min: metres, the creep torpedoes' minimum lock distance (500 = stock)
 // the per-faction phase switch (creep_ai_partition, h_ctrlfield): the creep squadron's and controller's data, the shared
 // target list, and the score arrays for offense, face-off and defense; last = the last behaviour seen (-1 none)
@@ -253,6 +258,7 @@ static uint32_t profile_fingerprint() {
     if (g_creepAggressive) h = fnv1a(h, "creep.aggressive=1;");
     if (g_creepAggressive && g_creepRadius != 2000) { sprintf_s(b, "creep.radius=%d;", g_creepRadius); h = fnv1a(h, b); }
     if (g_creepAggressive && g_creepCapDamage != 30) { sprintf_s(b, "creep.capital_damage=%d;", g_creepCapDamage); h = fnv1a(h, b); }
+    if (g_creepAggressive && g_creepBomberCapOnly) h = fnv1a(h, "creep.bomber_capital_only=1;");
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedo_runs=1;");
     if (g_creepTorpedoes && g_creepTorpMinLock != 500) { sprintf_s(b, "creep.torpedo_lock_min=%d;", g_creepTorpMinLock); h = fnv1a(h, b); }
@@ -449,6 +455,7 @@ static void load_profile(const wchar_t* dir) {
             g_creepMissiles = GetPrivateProfileIntW(L"creep", L"missiles", 0, pf) != 0;
             g_creepTorpedoes = GetPrivateProfileIntW(L"creep", L"torpedoes", 0, pf) != 0;
             g_creepWingmen = GetPrivateProfileIntW(L"creep", L"wingmen", 0, pf) != 0;
+            g_creepBomberCapOnly = GetPrivateProfileIntW(L"creep", L"bomber_capital_only", 0, pf) != 0;
             g_creepBotHandling = GetPrivateProfileIntW(L"creep", L"bot_handling", 0, pf) != 0;
             g_creepRadius = (int)GetPrivateProfileIntW(L"creep", L"radius", 2000, pf);
             if (g_creepRadius < 500 || g_creepRadius > 3000) {
@@ -497,7 +504,9 @@ static void load_profile(const wchar_t* dir) {
     for (int f = 0; f < 2; f++)
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
-    if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
+    if (g_creepAggressive && g_creepCapDamage > 0) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
+    if (g_creepAggressive && g_creepCapDamage == 0) status("  creep: aggressive within %d m, with targets by phase; their hits do no damage to capital ships, as in stock", g_creepRadius);
+    if (g_creepAggressive) status("  creep: bombers attack %s", g_creepBomberCapOnly ? "capital ships only" : "capital ships first, starfighters when none is in reach");
     if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
     if (g_creepTorpedoes) status("  creep: Y-wing and TIE bomber packs carry torpedoes instead of bombs; they lock from %d m%s",
                                  g_creepTorpMinLock, g_creepTorpMinLock == 500 ? " (stock)" : "");
@@ -1901,7 +1910,9 @@ static void creep_ai_partition(uint64_t part) {
     // The bombers' list (v 0) puts the capital ships above everything the stock scores hold (turrets 5, starfighters and
     // players 3): frigates 10, flagship 9, the small capital ship 8 on offense; the small capital ship 10 in the opener
     // and on defense. (2026-10-27: at 4/3/2 a nearby starfighter tied with the flagship and beat the corvette, and
-    // bombers near a capital ship targeted a starfighter 3 times in 4.) The others' list keeps kExtra.
+    // bombers near a capital ship targeted a starfighter 3 times in 4.) The others' list keeps kExtra. With
+    // [creep] bomber_capital_only the bombers' list stops at the capital ships: a starfighter, player or turret matches
+    // none of its scores, scores 0 and is never their target (flown 2026-10-27 as a test switch).
     static const float kBomberPrio[3][3] = { { 10, 0, 0 }, { 9, 0, 0 }, { 8, 10, 10 } };
     uint64_t arrs[3] = {}, arrsF[3] = {};
     for (int v = 0; v < 2; v++)
@@ -1916,7 +1927,7 @@ static void creep_ai_partition(uint64_t part) {
                 *(uint64_t*)(arr + m++ * 8ull) = s;
             }
             if (!tmpl) break;
-            for (uint32_t k = 0; k < ns; k++) {
+            for (uint32_t k = 0; k < ns && !(v == 0 && g_creepBomberCapOnly); k++) {
                 uint64_t s = rd<uint64_t>(sarr, k * 8);
                 if (s && rd<uint32_t>(s, 40) != 2) *(uint64_t*)(arr + m++ * 8ull) = s;
             }
@@ -2382,6 +2393,30 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
     (void)slots;
     return cOut[f][t] = coll;
 }
+// Bomber torpedoes are for capital ships ([creep] torpedoes, while bombers put capital ships first): the AI torpedo weapons
+// the bombers carry lock through their WeaponFiring (+96), a TargetLockWeaponFiringData (TargetLockType +224, 2 here;
+// TargetTags +228, a mask the target must carry all of, 0 = anything). TargetTags = 2 (the capital-ship tag, which the
+// corvette, the Raider, the frigates and the flagships carry) keeps them from locking onto starfighters, which bombers that
+// prefer capital ships still fight (Pseudo, 2026-10-28, flown: they torpedoed each other). Not with bomber_capital_only,
+// where every bomber target is a capital ship already (flown that way). Those weapons are the vs-AI bots' too, so only
+// while no bot logic is loaded; with bots loaded, a filter the mod set goes back.
+static void creep_torpedo_targets(const uint64_t weapon[2], bool leaveStock) {
+    static uint64_t set[2];   // the firing data the mod changed, to put back if bots load
+    static const char* kShip[2] = { "ywing", "tiebomber" };
+    for (int b = 0; b < 2; b++) {
+        uint64_t f = weapon[b] ? rd<uint64_t>(weapon[b], 96) : 0; if (!f) continue;
+        if (rd<int32_t>(f, 224) != 2) {
+            static bool told[2]; if (!told[b]) { told[b] = true; status("creep: the %s AI torpedo isn't a lock-on weapon as expected (type %d); its lock filter stays", kShip[b], rd<int32_t>(f, 224)); }
+            continue;
+        }
+        uint32_t now = rd<uint32_t>(f, 228);
+        if (!leaveStock && now == 0) {
+            if (leaf_write(f + 228, true, 2)) { set[b] = f; status("creep: %s torpedoes lock only onto capital ships (the corvette, the Raider, frigates, flagships)", kShip[b]); }
+        } else if (leaveStock && set[b] == f && now == 2) {
+            if (leaf_write(f + 228, true, 0)) { set[b] = 0; status("creep: %s torpedoes: vs-AI bots are loaded, so their lock filter is back to stock", kShip[b]); }
+        }
+    }
+}
 // [creep] torpedo_lock_min: the creep torpedoes' minimum lock distance (stock 500 m). Flown 2026-10-27: bombers attacking a
 // capital ship close in to 200-300 m, inside the stock minimum, and so held their torpedoes; at 150 m they fired far more.
 // The AI torpedo weapons the bombers carry (the vs-AI bots' StarshipWeaponConfig_HighYieldTorpedo_<YWing|TieBomber>_AI_Instalock,
@@ -2470,7 +2505,7 @@ static uint64_t creep_run_data(uint64_t raidBp, bool botsLoaded, int kind) {
 }
 static void creep_scan() {
     if (!g_creepOn && !g_creepBotHandling && !g_creepWingmen) return;
-    uint64_t torpWeapon[2] = {}, raidBp = 0; bool botsLoaded = false;   // creep_torpedo_minlock, creep_run_data
+    uint64_t torpWeapon[2] = {}, raidBp = 0; bool botsLoaded = false;   // creep_torpedo_targets, creep_torpedo_minlock, creep_run_data
     static const char* kTorpWeapon[2] = { "starshipweaponconfig_highyieldtorpedo_ywing_ai_instalock", "starshipweaponconfig_highyieldtorpedo_tiebomber_ai_instalock" };
     // the loadouts' sources (creep_loadout), per faction and ship (CreepShips order), found by type and name
     struct Want { uint64_t cls; char name[96]; uint64_t* at; };
@@ -2533,7 +2568,10 @@ static void creep_scan() {
             if (!dup && nl < 128) links[nl++] = { src, dst };
         }
     });
-    if (g_creepTorpedoes) { if (g_creepTorpMinLock != 500) creep_torpedo_minlock(torpWeapon, botsLoaded); }
+    if (g_creepTorpedoes) {
+        creep_torpedo_targets(torpWeapon, botsLoaded || (g_creepAggressive && g_creepBomberCapOnly));
+        if (g_creepTorpMinLock != 500) creep_torpedo_minlock(torpWeapon, botsLoaded);
+    }
     else if (g_creepAggressive) creep_run_data(raidBp, botsLoaded, 1);   // bombers that keep their bombs: mid-range runs
     if (g_creepWingmen) creep_wingmen_raid(raidBp, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
@@ -3038,7 +3076,7 @@ static bool __fastcall h_aicheck(uint64_t comp, uint64_t rec) {
     uint64_t ship = 0;
     if (s) __try { ship = ((uint64_t(__fastcall*)(uint64_t))G(0x1412631b0))(s); } __except (EXCEPTION_EXECUTE_HANDLER) { ship = 0; }
     if (ship && rd<uint8_t>(ship, 0x338)) return false;
-    if (ship && g_creepAggressive) {
+    if (ship && g_creepAggressive && g_creepCapDamage > 0) {   // capital_damage 0: the stock rule
         static volatile LONG told;
         if (!InterlockedExchange(&told, 1)) status("creep: capital ships take creep damage, hull and shield (the PvP levels' ignore-AI-damage rule set aside for creep)");
         return false;
@@ -3049,11 +3087,11 @@ static bool __fastcall h_aicheck(uint64_t comp, uint64_t rec) {
 // apply starts from the record's +0x88 (the team filter 0x14168ffb0 reads it first; the record is the hit function's own
 // copy); the shield's direct hit reads the info's +0x84 (times the grid's multiplier), its blast +0x74, and those belong to
 // the caller, so they're put back after.
-static bool creep_scaled(int from) { return g_creepAggressive && g_creepCapDamage != 100 && (from == 0 || from == 1); }
+static bool creep_scaled(int from) { return g_creepAggressive && g_creepCapDamage > 0 && g_creepCapDamage != 100 && (from == 0 || from == 1); }
 typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
 static capapply_t o_capapply;
 static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
-    if ((!g_capDmgLog && !(g_creepAggressive && g_creepCapDamage != 100)) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    if ((!g_capDmgLog && !creep_scaled(0)) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
     uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
     float asked = rd<float>(rec, 0x88);
@@ -3071,7 +3109,7 @@ static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec,
 typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shieldhit_t o_shdirect, o_shblast;
 static uint64_t cap_shield(shieldhit_t orig, uint64_t comp, uint64_t out, uint64_t info, bool blast) {
-    if ((!g_capDmgLog && !(g_creepAggressive && g_creepCapDamage != 100)) || !comp || !out || !info) return orig(comp, out, info);
+    if ((!g_capDmgLog && !creep_scaled(0)) || !comp || !out || !info) return orig(comp, out, info);
     uint8_t mark; int from = cap_from(rd<uint64_t>(info, 0xc0), &mark);
     uint32_t at = blast ? 0x74 : 0x84; float asked = rd<float>(info, at);
     bool scaled = creep_scaled(from) && leaf_write(info + at, false, asked * g_creepCapDamage / 100.0);
