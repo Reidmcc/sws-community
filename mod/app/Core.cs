@@ -203,6 +203,7 @@ namespace SwsSettings
         // torpedoes (the DLL's creep_ai_partition and creep_behaviour_scan); each in the fingerprint only when on
         public bool CreepAggressive, CreepMissiles, CreepTorpedoes, CreepWingmen, CreepBotHandling;
         public int CreepRadius = 2000;   // [creep] radius, metres, 500..3000 as the DLL clamps it
+        public int CreepCapDamage = 100;   // [creep] capital_damage, percent of creep hits' damage to capital ships, 0..100 as the DLL clamps it
         public readonly SortedDictionary<string, double> Values = new SortedDictionary<string, double>(StringComparer.Ordinal);
         public bool BuiltIn { get { return Name == "Default"; } }
 
@@ -236,6 +237,7 @@ namespace SwsSettings
             p.CreepWingmen = Ini.GetInt(file, "creep", "wingmen", 0) != 0;
             p.CreepBotHandling = Ini.GetInt(file, "creep", "bot_handling", 0) != 0;
             p.CreepRadius = Math.Max(500, Math.Min(3000, Ini.GetInt(file, "creep", "radius", 2000)));
+            p.CreepCapDamage = Math.Max(0, Math.Min(100, Ini.GetInt(file, "creep", "capital_damage", 100)));
             foreach (var e in Ini.Section(file, "values"))
             {
                 int eq = e.IndexOf('=');
@@ -263,6 +265,7 @@ namespace SwsSettings
                     sb.Append(CreepFaction[f] + "_pack" + (k + 1) + "=" + CreepShips[f][Creep[f, k]] + "\r\n");
             sb.Append("aggressive=" + (CreepAggressive ? 1 : 0) + "\r\nmissiles=" + (CreepMissiles ? 1 : 0) + "\r\ntorpedoes=" + (CreepTorpedoes ? 1 : 0) + "\r\nwingmen=" + (CreepWingmen ? 1 : 0) + "\r\nbot_handling=" + (CreepBotHandling ? 1 : 0) + "\r\n");
             if (CreepRadius != 2000) sb.Append("radius=" + CreepRadius + "\r\n");
+            if (CreepCapDamage != 100) sb.Append("capital_damage=" + CreepCapDamage + "\r\n");
             sb.Append("\r\n[values]\r\n");
             foreach (var kv in Values) sb.Append(kv.Key + "=" + Num.G9(kv.Value) + "\r\n");
             File.WriteAllText(PathOf(dir, Name), sb.ToString(), new UTF8Encoding(false));
@@ -303,13 +306,13 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen, p.CreepCapDamage);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
         public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values, int[,] creep = null,
-                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false, bool creepWingmen = false)
+                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false, bool creepWingmen = false, int creepCapDamage = 100)
         {
             bool anyCreep = creepAggressive || creepMissiles || creepTorpedoes || creepWingmen || creepBotHandling;
             if (creep != null) foreach (int t in creep) if (t != 0) anyCreep = true;
@@ -322,6 +325,7 @@ namespace SwsSettings
                     if (creep[f, k] != 0) h = Fnv(h, "creep." + Profile.CreepFaction[f] + "_pack" + (k + 1) + "=" + Profile.CreepShips[f][creep[f, k]] + ";");
             if (creepAggressive) h = Fnv(h, "creep.aggressive=1;");
             if (creepAggressive && creepRadius != 2000) h = Fnv(h, "creep.radius=" + creepRadius + ";");
+            if (creepAggressive && creepCapDamage != 100) h = Fnv(h, "creep.capital_damage=" + creepCapDamage + ";");
             if (creepMissiles) h = Fnv(h, "creep.missiles=1;");
             if (creepTorpedoes) h = Fnv(h, "creep.torpedo_runs=1;");
             if (creepWingmen) h = Fnv(h, "creep.wingmen=1;");

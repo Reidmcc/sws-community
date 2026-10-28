@@ -832,7 +832,7 @@ int main() {
         typedef uint64_t(__fastcall* shieldhit_t)(uint64_t, uint64_t, uint64_t);
         uint64_t r3 = ((shieldhit_t)0x140582ab0)((uint64_t)scomp, (uint64_t)sout, (uint64_t)sinfo);
         check(*(uint8_t*)0x1417dbe90 == 0xFF && *(uint8_t*)0x140582ab0 == 0xFF && *(uint8_t*)0x140582d90 == 0xFF &&
-              r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(scomp + 0x40) == 17000 - 30,
+              r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(scomp + 0x40) == 17000 - 15 && *(float*)(sinfo + 0x84) == 30,
               "capital hull damage and both shield hits hooked, and they pass the hits and results through");
         // the check itself: an unmarked starship (creep) is let through, a marked one and a player keep the stock "keep",
         // no starship behind the hit keeps the stock "drop", and a component that doesn't ignore AI damage keeps everything
@@ -847,8 +847,8 @@ int main() {
         auto ask = [&](uint8_t* c, uint8_t* who) { *(uint8_t**)(r4 + 0xb0) = who; return chk((uint64_t)c, (uint64_t)r4); };
         uint8_t* plain = fake_alloc(0x200);   // a component that doesn't ignore AI damage
         bool cases = !ask(comp, inst) && !ask(comp, minst) && !ask(comp, pinst) && ask(comp, noShip) && !ask(plain, noShip);
-        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 4050 && putBack && comp[0x1c8] == 1,
-              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage; marked ships and players kept, other hits still dropped");
+        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 2025 && putBack && comp[0x1c8] == 1,
+              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage, at the profile's 50%; marked ships and players kept, other hits still dropped");
     }
 
     alignas(16) static uint8_t obj[0x700];
@@ -1120,7 +1120,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedo_runs=1;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

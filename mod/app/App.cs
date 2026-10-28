@@ -148,8 +148,10 @@ namespace SwsSettings
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
+        readonly ComboBox creepCapDamage = Theme.Combo();
         readonly TextBox[,] creepHull = new TextBox[2, 4], creepShields = new TextBox[2, 4];
         static readonly int[] CreepRadii = { 1000, 1200, 1500, 2000, 2500, 3000 };
+        static readonly int[] CreepCapDamages = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
         readonly CheckBox creepMissiles = Theme.Check("Creep fire missiles and torpedoes");
         readonly CheckBox creepTorpedoes = Theme.Check("Bomber creep carry torpedoes");
         readonly CheckBox creepWingmen = Theme.Check("Creep wingmen act like their leader");
@@ -320,6 +322,9 @@ namespace SwsSettings
                 string want = profile.CreepRadius.ToString("N0") + " m";
                 if (!creepRadius.Items.Contains(want)) creepRadius.Items.Add(want);
                 creepRadius.SelectedItem = want; creepRadius.Enabled = !profile.BuiltIn && profile.CreepAggressive;
+                string dmg = profile.CreepCapDamage + "%";
+                if (!creepCapDamage.Items.Contains(dmg)) creepCapDamage.Items.Add(dmg);
+                creepCapDamage.SelectedItem = dmg; creepCapDamage.Enabled = !profile.BuiltIn && profile.CreepAggressive;
             }
             for (int f = 0; f < 2; f++) for (int k = 0; k < 4; k++) { ShowCreepDurability(f, k); }
             rulesProfile.Text = "Rules and fixes in profile " + profile.Name;
@@ -665,6 +670,7 @@ namespace SwsSettings
                 p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
                 for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
                 p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepWingmen = profile.CreepWingmen; p.CreepBotHandling = profile.CreepBotHandling;
+                p.CreepRadius = profile.CreepRadius; p.CreepCapDamage = profile.CreepCapDamage;
                 foreach (var kv in profile.Values) p.Values[kv.Key] = kv.Value;
             }
             p.Save(dir);
@@ -761,7 +767,14 @@ namespace SwsSettings
                     if (loading || creepRadius.SelectedItem == null) return;
                     int r; if (int.TryParse(creepRadius.SelectedItem.ToString().Replace(" m", "").Replace(",", "").Replace(".", ""), out r)) { profile.CreepRadius = r; SaveProfile(); }
                 };
-                row.Controls.Add(creepRadius); col.Controls.Add(row);
+                row.Controls.Add(creepRadius);
+                row.Controls.Add(new Label { Text = "Damage to capital ships", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(18, 8, 8, 0) });
+                creepCapDamage.Width = 90; foreach (int d in CreepCapDamages) creepCapDamage.Items.Add(d + "%");
+                creepCapDamage.SelectedIndexChanged += (s, e) => {
+                    if (loading || creepCapDamage.SelectedItem == null) return;
+                    int d; if (int.TryParse(creepCapDamage.SelectedItem.ToString().Replace("%", ""), out d)) { profile.CreepCapDamage = d; SaveProfile(); }
+                };
+                row.Controls.Add(creepCapDamage); col.Controls.Add(row);
             }
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions.");
@@ -799,7 +812,7 @@ namespace SwsSettings
                 }
             }
 
-            creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
+            creepAggressive.CheckedChanged += (s, e) => { creepRadius.Enabled = creepCapDamage.Enabled = creepAggressive.Checked && !profile.BuiltIn; if (!loading) { profile.CreepAggressive = creepAggressive.Checked; SaveProfile(); } };
             creepMissiles.CheckedChanged += (s, e) => { if (!loading) { profile.CreepMissiles = creepMissiles.Checked; SaveProfile(); } };
             creepTorpedoes.CheckedChanged += (s, e) => { if (!loading) { profile.CreepTorpedoes = creepTorpedoes.Checked; SaveProfile(); } };
             creepWingmen.CheckedChanged += (s, e) => { if (!loading) { profile.CreepWingmen = creepWingmen.Checked; SaveProfile(); } };

@@ -192,6 +192,7 @@ static bool g_creepBotHandling;
 // [creep] radius: how far aggressive creep look for targets, in metres (500..3000; 2000 is the bots' value). In the
 // fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
 static int g_creepRadius = 2000;
+static int g_creepCapDamage = 100;   // [creep] capital_damage: percent of their damage creep hits do to capital ships (aggressive creep)
 // the per-faction phase switch (creep_ai_partition, h_ctrlfield): the creep squadron's and controller's data, the shared
 // target list, and the score arrays for offense, face-off and defense; last = the last behaviour seen (-1 none)
 // Bomb raids: a bomber's aux bombs load a raid behaviour (IncomSquadronAIBombingFlightBehaviour, from the bomb weapon
@@ -249,6 +250,7 @@ static uint32_t profile_fingerprint() {
             if (g_creepPack[f][p]) { sprintf_s(b, "creep.%s_pack%d=%s;", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]); h = fnv1a(h, b); }
     if (g_creepAggressive) h = fnv1a(h, "creep.aggressive=1;");
     if (g_creepAggressive && g_creepRadius != 2000) { sprintf_s(b, "creep.radius=%d;", g_creepRadius); h = fnv1a(h, b); }
+    if (g_creepAggressive && g_creepCapDamage != 100) { sprintf_s(b, "creep.capital_damage=%d;", g_creepCapDamage); h = fnv1a(h, b); }
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedo_runs=1;");
     if (g_creepWingmen) h = fnv1a(h, "creep.wingmen=1;");
@@ -450,6 +452,11 @@ static void load_profile(const wchar_t* dir) {
                 int was = g_creepRadius; g_creepRadius = g_creepRadius < 500 ? 500 : 3000;
                 status("profile: [creep] radius = %d is outside 500..3000; clamped to %d", was, g_creepRadius);
             }
+            g_creepCapDamage = (int)GetPrivateProfileIntW(L"creep", L"capital_damage", 100, pf);
+            if (g_creepCapDamage < 0 || g_creepCapDamage > 100) {
+                int was = g_creepCapDamage; g_creepCapDamage = g_creepCapDamage < 0 ? 0 : 100;
+                status("profile: [creep] capital_damage = %d is outside 0..100; clamped to %d", was, g_creepCapDamage);
+            }
             if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
@@ -482,7 +489,7 @@ static void load_profile(const wchar_t* dir) {
     for (int f = 0; f < 2; f++)
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
-    if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase", g_creepRadius);
+    if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
     if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
     if (g_creepTorpedoes) status("  creep: Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs");
     if (g_creepWingmen) status("  creep: wingmen attack and fly runs like their leader");
@@ -2430,31 +2437,49 @@ static void creep_wingmen_raid(uint64_t raidBp, bool botsLoaded) {
     if (!data) { if (!told && raidBp) { told = true; status("creep: the bombing-run behaviour has no run data as expected; wingmen don't fly runs"); } return; }
     if (rd<uint8_t>(data, 72) == 1 && leaf_write(data + 72, false, 0, true)) { set = data; status("creep: the bombers' runs are open to wingmen (RunOnlyForLeaders off)"); }
 }
-struct RunField { uint32_t off; float stock, run; };
-static const RunField kRunFields[] = { { 40, 400.f, 1200.f }, { 48, 50.f, 100.f }, { 52, 250.f, 600.f }, { 56, 50.f, 150.f }, { 68, 500.f, 1350.f } };
-static void creep_torpedo_runs(const uint64_t weapon[2], uint64_t raidBp, bool botsLoaded) {
-    static uint64_t setW[2], setBp, setData; static bool toldBp, toldData;
-    if (botsLoaded) {   // stock again for the bots
-        for (int b = 0; b < 2; b++) if (setW[b] && rd<uint64_t>(setW[b], 120) == setBp && write_u64(setW[b] + 120, 0)) setW[b] = 0;
+// The run data, by kind: stock, bombs (aggressive creep that keep their bombs: half way to the torpedo values, flown
+// 2026-10-27: the torpedo distances kept bombers from flying into their target but looked silly from so far out), and
+// torpedoes. Set while no bots are loaded, stock again if they load. Returns the data once it holds the kind asked for.
+struct RunField { uint32_t off; float stock, bomb, torp; };
+static const RunField kRunFields[] = { { 40, 400.f, 800.f, 1200.f }, { 48, 50.f, 75.f, 100.f }, { 52, 250.f, 425.f, 600.f },
+                                       { 56, 50.f, 100.f, 150.f }, { 68, 500.f, 925.f, 1350.f } };
+static float run_val(const RunField& f, int kind) { return kind == 0 ? f.stock : kind == 1 ? f.bomb : f.torp; }
+static uint64_t creep_run_data(uint64_t raidBp, bool botsLoaded, int kind) {
+    static uint64_t setData; static bool toldBp, toldData;
+    if (botsLoaded) {
         if (setData) {
             for (const RunField& f : kRunFields) leaf_write(setData + f.off, false, f.stock);
-            status("creep: vs-AI bots are loaded, so the bombing-run behaviour and the torpedoes are back to stock"); setData = 0;
+            status("creep: vs-AI bots are loaded, so the bombing-run behaviour is back to stock"); setData = 0;
         }
-        return;
+        return 0;
     }
-    if (!raidBp) { if (!toldBp) { toldBp = true; status("creep: the AI bombs' run behaviour isn't loaded in this level; no torpedo runs"); } return; }
+    if (!raidBp) { if (!toldBp) { toldBp = true; status("creep: the AI bombs' run behaviour isn't loaded in this level; the runs stay as they are"); } return 0; }
     uint64_t data = raid_data(raidBp);
-    bool stock = data != 0, tuned = data != 0;
-    for (const RunField& f : kRunFields) { float v = rdf(data, f.off); stock = stock && v == f.stock; tuned = tuned && v == f.run; }
-    if (!data || (!stock && !tuned)) {
-        if (!toldData) { toldData = true; status("creep: the bombing-run behaviour isn't laid out as expected (%s); no torpedo runs", data ? "unexpected values" : "no run data in it"); }
+    int now = -1;
+    for (int k = 0; data && k < 3 && now < 0; k++) { bool all = true; for (const RunField& f : kRunFields) all = all && rdf(data, f.off) == run_val(f, k); if (all) now = k; }
+    if (!data || now < 0) {
+        if (!toldData) { toldData = true; status("creep: the bombing-run behaviour isn't laid out as expected (%s); the runs stay as they are", data ? "unexpected values" : "no run data in it"); }
+        return 0;
+    }
+    if (now != kind) {
+        bool ok = true; for (const RunField& f : kRunFields) ok = leaf_write(data + f.off, false, run_val(f, kind)) && ok;
+        if (kind == 2) status("creep: the bombing-run behaviour is set for torpedo runs (%s): a 1,200 m leg in, 150 m above the hull, 600 m out", ok ? "done" : "a write failed");
+        else status("creep: the bombers' bombing runs start 800 m out, 100 m above the hull, 425 m out the far side (%s)", ok ? "done" : "a write failed");
+    }
+    setData = data;
+    return data;
+}
+static void creep_torpedo_runs(const uint64_t weapon[2], uint64_t raidBp, bool botsLoaded) {
+    static uint64_t setW[2], setBp;
+    if (botsLoaded) {   // stock again for the bots
+        bool any = false;
+        for (int b = 0; b < 2; b++) if (setW[b] && rd<uint64_t>(setW[b], 120) == setBp && write_u64(setW[b] + 120, 0)) { setW[b] = 0; any = true; }
+        if (any) status("creep: vs-AI bots are loaded, so the torpedoes carry no run behaviour");
+        creep_run_data(raidBp, true, 0);
         return;
     }
-    if (stock) {
-        bool ok = true; for (const RunField& f : kRunFields) ok = leaf_write(data + f.off, false, f.run) && ok;
-        status("creep: the bombing-run behaviour is set for torpedo runs (%s): a 1,200 m leg in, 150 m above the hull, 600 m out", ok ? "done" : "a write failed");
-    }
-    setData = data; setBp = raidBp;
+    if (!creep_run_data(raidBp, false, 2)) return;
+    setBp = raidBp;
     for (int b = 0; b < 2; b++) {
         if (!weapon[b] || rd<uint64_t>(weapon[b], 120) == raidBp) continue;
         if (rd<uint64_t>(weapon[b], 120) != 0) { status("creep: a creep torpedo weapon already carries a behaviour; left as it is"); continue; }
@@ -2493,11 +2518,11 @@ static void creep_scan() {
     walk_partitions([&](uint64_t insts, uint16_t n) {
         uint64_t root = rd<uint64_t>(insts, 0); if (!root) return;
         uint64_t ci = rd<uint64_t>(root, 8);
-        if (g_creepTorpedoes || g_creepWingmen) {   // vs-AI bot logic loaded? (then the bots' torpedo weapons and runs stay stock)
+        if (g_creepTorpedoes || g_creepWingmen || g_creepAggressive) {   // vs-AI bot logic loaded? (then the bots' torpedo weapons and runs stay stock)
             inst_leaf(root, leaf, sizeof leaf);
             if (!_strnicmp(leaf, "pf_pvb_botlogic", 15)) botsLoaded = true;
         }
-        for (uint16_t i = 0; (nw || g_creepWingmen) && i < n; i++) {   // the loadouts' sources (and the run blueprint), by type, then name
+        for (uint16_t i = 0; (nw || g_creepWingmen || g_creepAggressive) && i < n; i++) {   // the loadouts' sources (and the run blueprint), by type, then name
             uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
             uint64_t oc = rd<uint64_t>(o, 8);
             if (oc != G(0x144a156a0) && oc != G(0x144a8ca00) && oc != G(0x144a8c980) && oc != G(0x144ab56a0) && oc != G(0x1449fc370)) continue;
@@ -2532,6 +2557,7 @@ static void creep_scan() {
         creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly || !g_torpCapitalLock);
         if (g_torpRuns) creep_torpedo_runs(torpWeapon, raidBp, botsLoaded);   // test switch torpedo_runs=0: no runs
     }
+    else if (g_creepAggressive) creep_run_data(raidBp, botsLoaded, 1);   // bombers that keep their bombs: mid-range runs
     if (g_creepWingmen) creep_wingmen_raid(raidBp, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;
@@ -3042,15 +3068,22 @@ static bool __fastcall h_aicheck(uint64_t comp, uint64_t rec) {
     }
     return true;
 }
+// [creep] capital_damage (percent, aggressive creep): a creep starship's hit on a capital hull or shield is scaled. The hull's
+// apply starts from the record's +0x88 (the team filter 0x14168ffb0 reads it first; the record is the hit function's own
+// copy); the shield's direct hit reads the info's +0x84 (times the grid's multiplier), its blast +0x74, and those belong to
+// the caller, so they're put back after.
+static bool creep_scaled(int from) { return g_creepAggressive && g_creepCapDamage != 100 && (from == 0 || from == 1); }
 typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
 static capapply_t o_capapply;
 static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
-    if (!g_capDmgLog || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    if ((!g_capDmgLog && !(g_creepAggressive && g_creepCapDamage != 100)) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
     uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
+    float asked = rd<float>(rec, 0x88);
+    if (creep_scaled(from)) leaf_write(rec + 0x88, false, asked * g_creepCapDamage / 100.0);
+    if (!g_capDmgLog) return o_capapply(comp, out, rec, skipTeam);
     bool stockDrop = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
     bool creepThrough = stockDrop && g_creepAggressive && (from == 0 || from == 1);
-    float asked = rd<float>(rec, 0x88);
     bool blast = _ReturnAddress() == (void*)G(0x1417dbdec);
     float before = cap_health(comp);
     uint64_t r = o_capapply(comp, out, rec, skipTeam);
@@ -3061,12 +3094,17 @@ static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec,
 typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shieldhit_t o_shdirect, o_shblast;
 static uint64_t cap_shield(shieldhit_t orig, uint64_t comp, uint64_t out, uint64_t info, bool blast) {
-    if (!g_capDmgLog || !comp || !out || !info) return orig(comp, out, info);
+    if ((!g_capDmgLog && !(g_creepAggressive && g_creepCapDamage != 100)) || !comp || !out || !info) return orig(comp, out, info);
     uint8_t mark; int from = cap_from(rd<uint64_t>(info, 0xc0), &mark);
-    float before = cap_health(comp);
+    uint32_t at = blast ? 0x74 : 0x84; float asked = rd<float>(info, at);
+    bool scaled = creep_scaled(from) && leaf_write(info + at, false, asked * g_creepCapDamage / 100.0);
+    float before = g_capDmgLog ? cap_health(comp) : 0;
     uint64_t r = orig(comp, out, info);
-    float after = cap_health(comp);
-    cap_note(comp, true, blast, from, mark, rd<float>(info, blast ? 0x74 : 0x84), before >= 0 && after >= 0 ? before - after : 0, false, false, after);
+    if (scaled) leaf_write(info + at, false, asked);
+    if (g_capDmgLog) {
+        float after = cap_health(comp);
+        cap_note(comp, true, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, false, false, after);
+    }
     return r;
 }
 static uint64_t __fastcall h_shdirect(uint64_t comp, uint64_t out, uint64_t info) { return cap_shield(o_shdirect, comp, out, info, false); }

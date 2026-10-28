@@ -24,6 +24,8 @@ imperial_pack2=tieinterceptor
 aggressive=1
 ; how far aggressive creep look for targets, in metres (500 to 3000; 2000 is the bots' value)
 radius=2000
+; how much of their damage aggressive creep do to capital ships, in percent (0 to 100)
+capital_damage=100
 ; 1 = creep fire missiles (and torpedoes, when they carry them)
 missiles=1
 ; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs
@@ -82,7 +84,15 @@ bots do, and their targets follow the match's phase:
 
 Players and other creep are targets in every phase. Bombers' bomb runs follow the same phases: on offense they raid the
 nearest enemy capital ship; otherwise only their current target, which can be the corvette or Raider but never a frigate
-or the flagship.
+or the flagship. Bombers that keep their bombs start their runs further out than stock (800 m instead of 400) and fly
+them higher over the hull (100 m instead of 50), so they don't fly into their target.
+
+**Damage to capital ships.** In stock Fleet Battles, creep can't hurt capital ships at all: every PvP level sets its
+capital ships to ignore damage from AI starships that aren't the vs-AI bots, hull, shields, turrets and weak points alike.
+With aggressive creep their hits count, and on hulls and shields they're scaled by **Damage to capital ships**
+(`capital_damage`, beside the engagement range in the app): at 100% a creep torpedo hits as hard as a player's, and
+fifteen bombers take a capital ship down very fast. Their hits on turrets and weak points count in full. Other AI
+damage, such as capital ships' turrets firing on each other, keeps the stock rule.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
 never do). This also gives creep the bots' tail-chasing dogfighting. With **torpedoes**, Y-wing and TIE bomber packs carry
