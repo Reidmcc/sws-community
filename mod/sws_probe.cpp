@@ -2997,8 +2997,11 @@ static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info)
 // (0x140582d90) take (component, out, info); the damage asked is info +0x84 (direct) or +0x74 (blast), the attacker info
 // +0xc0. Out's first float isn't what they took off (flown, the Raider's 17000 shield "took" 92 blasts of 3400), so like
 // the hull's, a shield's health is read around the call: both components' vtable +0x108 is 0x140412280, the float at +0x20.
-static const char* kCapFrom[4] = { "bomber creep", "starships without the player mark", "players or marked starships", "no starship" };
-struct CapStat { uint64_t comp; bool shield; uint8_t ignoresAI; char name[96]; int hits[4], dropped[4]; double asked[4], dealt[4]; ULONGLONG since; };
+// Class 4: a hull hit whose record carries flag 8 (+0xa4), which the drop rule lets through before it looks at the attacker;
+// the capital ships' passive damage on each other is one (FUN_1415b3110 sets it, and names a starship as the attacker).
+static const char* kCapFrom[5] = { "bomber creep", "starships without the player mark", "players or marked starships", "no starship",
+                                   "flagged hits the stock rule keeps (capital ships' passive damage, among others)" };
+struct CapStat { uint64_t comp; bool shield; uint8_t ignoresAI; char name[96]; int hits[5], dropped[5]; double asked[5], dealt[5]; ULONGLONG since; };
 static CapStat g_capStats[64]; static int g_capStatCount; static SRWLOCK g_capLock = SRWLOCK_INIT;
 static int cap_from(uint64_t inst, uint8_t* mark) {   // the drop rule's own reads, without calling into the game
     *mark = 0; if (!inst) return 3;
@@ -3043,11 +3046,11 @@ static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t m
         ULONGLONG now = GetTickCount64();
         if (now - s->since >= 5000) {
             char line[640]; size_t at = 0;
-            for (int k = 0; k < 4; k++) if (s->hits[k])
+            for (int k = 0; k < 5; k++) if (s->hits[k])
                 at += sprintf_s(line + at, sizeof line - at, "; %s %d hits, %.0f asked, %.0f taken%s", kCapFrom[k], s->hits[k],
                                 s->asked[k], s->dealt[k], s->dropped[k] ? " (some dropped)" : "");
             status("capdmg: %s %s, %.1f s%s; health %.0f", s->name, shield ? "shield" : "hull", (now - s->since) / 1000.0, line, (double)health);
-            for (int k = 0; k < 4; k++) { s->hits[k] = s->dropped[k] = 0; s->asked[k] = s->dealt[k] = 0; }
+            for (int k = 0; k < 5; k++) { s->hits[k] = s->dropped[k] = 0; s->asked[k] = s->dealt[k] = 0; }
             s->since = now;
         }
     }
@@ -3094,6 +3097,9 @@ static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec,
     if ((!g_capDmgLog && !creep_scaled(0)) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
     uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
+    // A flagged hit (flag 8) is kept by the stock rule whoever is behind it, so it isn't the mod's to scale: the capital ships'
+    // passive damage names a starship as its attacker, and was scaled as creep until 2026-10-28 (flown: the corvette's took 30%).
+    if (rd<uint8_t>(rec, 0xa4) & 8) from = 4;
     float asked = rd<float>(rec, 0x88);
     if (creep_scaled(from)) leaf_write(rec + 0x88, false, asked * g_creepCapDamage / 100.0);
     if (!g_capDmgLog) return o_capapply(comp, out, rec, skipTeam);

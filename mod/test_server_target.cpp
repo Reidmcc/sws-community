@@ -844,6 +844,11 @@ int main() {
         check(*(uint8_t*)0x1417dbe90 == 0xFF && *(uint8_t*)0x140582ab0 == 0xFF && *(uint8_t*)0x140582d90 == 0xFF &&
               r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(scomp + 0x40) == 17000 - 15 && *(float*)(sinfo + 0x84) == 30,
               "capital hull damage and both shield hits hooked, and they pass the hits and results through");
+        // a flagged hit (record +0xa4 flag 8, as the capital ships' passive damage carries) from the same starship is the stock
+        // rule's to keep and isn't scaled: 100 asked, 100 off
+        rec[0xa4] = 8; *(float*)(rec + 0x88) = 100; *(uint8_t**)(rec + 0xb0) = inst;
+        ((apply_t)0x1417dbe90)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        bool flagged = *(float*)(rec + 0x88) == 100; rec[0xa4] = 0;
         // the check itself: an unmarked starship (creep) is let through, a marked one and a player keep the stock "keep",
         // no starship behind the hit keeps the stock "drop", and a component that doesn't ignore AI damage keeps everything
         typedef bool(__fastcall* aicheck_t)(uint64_t, uint64_t);
@@ -857,8 +862,8 @@ int main() {
         auto ask = [&](uint8_t* c, uint8_t* who) { *(uint8_t**)(r4 + 0xb0) = who; return chk((uint64_t)c, (uint64_t)r4); };
         uint8_t* plain = fake_alloc(0x200);   // a component that doesn't ignore AI damage
         bool cases = !ask(comp, inst) && !ask(comp, minst) && !ask(comp, pinst) && ask(comp, noShip) && !ask(plain, noShip);
-        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 2025 && putBack && comp[0x1c8] == 1,
-              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage, at the profile's 50%; marked ships and players kept, other hits still dropped");
+        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 2125 && flagged && putBack && comp[0x1c8] == 1,
+              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage, at the profile's 50%; marked ships and players kept, other hits still dropped, a flagged hit (passive damage) unscaled");
     }
 
     alignas(16) static uint8_t obj[0x700];
