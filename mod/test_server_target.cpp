@@ -226,6 +226,10 @@ int main() {
       memcpy(code + at, outAppend, sizeof outAppend); at += sizeof outAppend;
       memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
       put(0x14182ade0, code, at); }
+    // the AI fire check (fire_log's hook): its real prologue, then the matching pops and a return
+    { const uint8_t fire[] = {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff,
+                              0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5d,0xc3};
+      put(0x14182a310, fire, sizeof fire); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
                                  0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
@@ -1002,6 +1006,17 @@ int main() {
         ((sc_t)0x14182ade0)(0, (uint64_t)bomberShip, 0, 0, 0, 0, (uint64_t)rulesData, (uint64_t)creepList, 0, (uint64_t)outVec, 0, 0);
         check(*(uint8_t**)(outVec + 8) == ents + 0x70 && *(int32_t*)(ents + 0x1c) == 15 && *(int32_t*)(ents + 0x38 + 0x1c) == 1,
               "creep wingmen: bombers may all take a capital ship (its candidate entry keeps 15 attackers); a starfighter gets the squadron's 1 back");
+        // fire_log=1: the fire check's map (header +0xc8, first node +0xd0) holds one node, the bomber on the capital ship,
+        // VALID (+0x58); the hook walks it after each call and logs the 5 s tally (run_standin.sh reads the line)
+        uint8_t* fself = fake_alloc(0x100); uint8_t* hdr = fself + 0xc8; uint8_t* node = fake_alloc(0x80);
+        uint8_t* shipRef = fake_alloc(0x10); *(uint8_t**)shipRef = bomberShip + 8;
+        uint8_t* tRef = fake_alloc(0x10); *(uint8_t**)tRef = capT + 0x10;
+        *(uint8_t**)(fself + 0xd0) = node; *(uint8_t**)hdr = node; *(uint8_t**)(hdr + 0x10) = node;
+        *(uint8_t**)(node + 0x10) = hdr; *(uint8_t**)(node + 0x30) = shipRef; *(uint8_t**)(node + 0x38) = tRef;
+        *(uint32_t*)(node + 0x50) = 2; node[0x58] = 1;
+        typedef uint64_t(__fastcall* fire_t)(uint64_t);
+        ((fire_t)0x14182a310)((uint64_t)fself); Sleep(5100); ((fire_t)0x14182a310)((uint64_t)fself);
+        check(*(uint8_t*)0x14182a310 == 0xFF && node[0x58] == 1, "fire_log: the AI fire check is hooked, runs, and its map is read back");
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
           "creep torpedoes: bombers that put capital ships first lock their AI torpedoes only onto capital ships (TargetTags 2), with no vs-AI bots loaded");

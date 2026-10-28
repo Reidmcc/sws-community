@@ -97,6 +97,10 @@ if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_Ligh
    && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
     echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker, at the profile's capital_damage 50%"
 else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
+# fire_log: the bomber's node on the capital ship was read back twice, valid both times
+if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
+    echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"
+else echo "FAIL  fire_log line missing or wrong"; STATUS=1; fi
 # creep hull by ship type: the profile's Y-wing value wins over the creep default; the A-wing pack keeps the default
 if [ -n "$LOG" ] && grep -q "creep: ywing creep: hull 900 (the profile's), shields 600 (the creep default)" "$LOG" && grep -q "creep: awing creep: hull 125 (the creep default)" "$LOG"; then
     echo "PASS  creep hull and shields: a profile value wins over the creep default, by ship type"

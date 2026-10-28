@@ -218,6 +218,7 @@ struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF
                     volatile LONG wantMode; volatile LONG64 seenAt; };
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
+static bool g_fireLog;    // [server] fire_log: log, per bomber creep, how often the AI let it fire at its target and why not (h_fire)
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
@@ -736,6 +737,7 @@ static void read_server_ini() {
       g_creepLog = GetPrivateProfileIntW(L"server", L"creep_log", 0, ini) != 0;
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
+      g_fireLog = GetPrivateProfileIntW(L"server", L"fire_log", 0, ini) != 0;
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -3990,6 +3992,110 @@ static void patch_backend_local() {
 }
 #endif
 
+#ifdef SERVER
+// fire_log=1 (2026-10-28, why bomber creep stop firing at a flagship): the AI decides whether a ship may fire at its target
+// in FUN_14182a310, once per squadron update, over a map of (ship, target) nodes (header this+0xc8, first node +0xd0;
+// node +0x30 -> the ship + 8, +0x38 -> the target's radar interface + 0x10, +0x50 the tags the target must carry, +0x58
+// VALID, which gates every weapon, +0x5a an override). VALID is set when the tags and side match, the target is in the
+// range band (AI settings +0x40 min, +0x3c max) and inside the cone (+0x38 degrees, full angle) off the nose; then it's
+// cleared again (0x14182a716) if the ship's last line-of-sight raycast (its AI agent +0x178: hits at [+0], 0x40 each,
+// count +0x12, ready when [+0x14] & [hits+0x3a]) has a blocking hit (+0x3b) not marked as the target (bit 3 of +0x20).
+// The agent: the global [0x1441c8a40] keeps a map at +0x26c0 (root +0x26d0, key +0x20 = the ship, value +0x28), and
+// the agent is value +0xd0; the settings are [[[[agent+0x10]+0x80]+0x30]+0x18]. Flown 2026-10-28: Y-wings on the Star
+// Destroyer stopped firing, lasers and torpedoes, as its shield came back after being knocked down, with their position
+// and aim unchanged; bombs (which don't go through this check) kept landing. The hook lets the function run, then reads
+// back each bomber's node and logs, per bomber per 5 s, how often it was valid and which check failed.
+struct FireStat { uint64_t ship, owner; uint32_t tags; int frames, valid, failTags, failRange, failCone, failLos, failOther, noAgent;
+                  float dist, coneDeg, minD, maxD, angle; uint64_t hit[4], hitVt[4]; uint32_t hitFlags; int hitCount; };
+static FireStat g_fireStats[64]; static int g_fireCount; static ULONGLONG g_fireSince;
+static uint64_t fire_agent(uint64_t ship) {
+    uint64_t g = rd<uint64_t>(G(0x1441c8a40), 0); if (!g) return 0;
+    uint64_t hdr = g + 0x26c0, x = rd<uint64_t>(g, 0x26d0), best = hdr;
+    for (int i = 0; x && i < 64; i++) { if (rd<uint64_t>(x, 0x20) < ship) x = rd<uint64_t>(x, 0); else { best = x; x = rd<uint64_t>(x, 8); } }
+    if (best == hdr || ship < rd<uint64_t>(best, 0x20)) return 0;
+    uint64_t v = rd<uint64_t>(best, 0x28); return v ? rd<uint64_t>(v, 0xd0) : 0;
+}
+static void fire_note(uint64_t node, uint64_t ship, uint64_t T) {
+    FireStat* s = nullptr;
+    for (int i = 0; i < g_fireCount && !s; i++) if (g_fireStats[i].ship == ship) s = &g_fireStats[i];
+    if (!s) { if (g_fireCount >= 64) return; s = &g_fireStats[g_fireCount++]; *s = {}; s->ship = ship; }
+    uint64_t ob = 0; __try { ob = *(uint64_t*)(T - 0x38); } __except (EXCEPTION_EXECUTE_HANDLER) { ob = 0; }
+    s->owner = ob ? rd<uint64_t>(ob, 0) : 0;   // the target's owner, [[T-0x38]], as track_log names it
+    uint32_t tg = rd<uint32_t>(T, 0x5d0) | rd<uint32_t>(T, 0x5cc) | rd<uint32_t>(rd<uint64_t>(T, 0x30), 0x38);
+    s->tags = tg; s->frames++;
+    if (rd<uint8_t>(node, 0x58)) { s->valid++; return; }
+    uint32_t mask = rd<uint32_t>(node, 0x50);
+    if ((tg & mask) != mask) { s->failTags++; return; }
+    uint64_t agent = fire_agent(ship); if (!agent) { s->noAgent++; return; }
+    uint64_t sp = rd<uint64_t>(rd<uint64_t>(rd<uint64_t>(rd<uint64_t>(agent, 0x10), 0x80), 0x30), 0x18);
+    uint64_t c = rd<uint64_t>(ship, 0x40); if (!c || !sp) { s->failOther++; return; }
+    uint64_t M = c + 0x10 + rd<uint8_t>(c, 9) * 0x20ull + rd<uint8_t>(c, 0xa) * 0x40ull;
+    float p[3] = { rd<float>(M, 0x30), rd<float>(M, 0x34), rd<float>(M, 0x38) }, f[3] = { rd<float>(M, 0x20), rd<float>(M, 0x24), rd<float>(M, 0x28) };
+    const float* tp = nullptr;
+    __try { tp = ((const float*(__fastcall*)(uint64_t))rd<uint64_t>(rd<uint64_t>(T, 0), 0x80))(T); } __except (EXCEPTION_EXECUTE_HANDLER) { tp = nullptr; }
+    if (!tp) { s->failOther++; return; }
+    float d[3] = { rd<float>((uint64_t)tp, 0) - p[0], rd<float>((uint64_t)tp, 4) - p[1], rd<float>((uint64_t)tp, 8) - p[2] };
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    s->dist = dist; s->minD = rd<float>(sp, 0x40); s->maxD = rd<float>(sp, 0x3c); s->coneDeg = rd<float>(sp, 0x38);
+    if (dist < s->minD || dist > s->maxD) { s->failRange++; return; }
+    float fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+    float cosA = dist > 1e-3f && fl > 1e-6f ? (f[0] * d[0] + f[1] * d[1] + f[2] * d[2]) / (dist * fl) : 1.f;
+    s->angle = acosf(cosA < -1 ? -1 : cosA > 1 ? 1 : cosA) * 57.29578f;
+    if (s->angle > s->coneDeg * 0.5f + 0.01f) { s->failCone++; return; }
+    uint64_t ray = rd<uint64_t>(agent, 0x178), e = ray ? rd<uint64_t>(ray, 0) : 0;
+    if (e && (rd<uint8_t>(ray, 0x14) & rd<uint8_t>(e, 0x3a))) {
+        uint32_t n = rd<uint16_t>(ray, 0x12);
+        for (uint32_t i = 0; i < n && i < 64; i++) {
+            uint64_t h = e + i * 0x40ull; uint32_t fl2 = rd<uint32_t>(h, 0x20);
+            if (rd<uint8_t>(h, 0x3b) && !((fl2 >> 3) & 1)) {
+                s->failLos++; s->hitFlags = fl2; s->hitCount = (int)n;
+                for (int k = 0; k < 4; k++) { s->hit[k] = rd<uint64_t>(h, k * 8); s->hitVt[k] = s->hit[k] > 0x10000 ? rd<uint64_t>(s->hit[k], 0) : 0; }
+                return;
+            }
+        }
+    }
+    s->failOther++;
+}
+static void fire_walk(uint64_t self) {
+    uint64_t head = self + 0xc8, n = rd<uint64_t>(self, 0xd0);
+    for (int guard = 0; n && n != head && guard < 512; guard++) {
+        uint64_t a = rd<uint64_t>(n, 0x30), ship = a ? rd<uint64_t>(a, 0) : 0; if (ship) ship -= 8;
+        uint64_t b = rd<uint64_t>(n, 0x38), T = b ? rd<uint64_t>(b, 0) : 0; if (T) T -= 0x10;
+        bool bomber = false; for (int i = 0; i < 256 && ship && !bomber; i++) bomber = g_bomberShips[i] == ship;
+        if (bomber && T) fire_note(n, ship, T);
+        // the successor, as the function walks it (0x14182abb8)
+        uint64_t r = rd<uint64_t>(n, 0);
+        if (r) { n = r; for (uint64_t l = rd<uint64_t>(n, 8); l; l = rd<uint64_t>(n, 8)) n = l; }
+        else {
+            uint64_t c = n, p = rd<uint64_t>(n, 0x10);
+            if (c == rd<uint64_t>(p, 0)) { do { c = p; p = rd<uint64_t>(p, 0x10); } while (c == rd<uint64_t>(p, 0)); }
+            n = rd<uint64_t>(c, 0) != p ? p : c;
+        }
+    }
+    ULONGLONG now = GetTickCount64();
+    if (!g_fireSince) g_fireSince = now;
+    if (now - g_fireSince < 5000) return;
+    for (int i = 0; i < g_fireCount; i++) {
+        FireStat& s = g_fireStats[i]; if (!s.frames) continue;
+        char hit[200] = "";
+        if (s.failLos) sprintf_s(hit, "; last blocker of %d hits: flags %x, %llx [vt %llx] %llx [vt %llx] %llx [vt %llx] %llx [vt %llx]", s.hitCount, s.hitFlags,
+                                 s.hit[0], s.hitVt[0], s.hit[1], s.hitVt[1], s.hit[2], s.hitVt[2], s.hit[3], s.hitVt[3]);
+        status("fire: bomber %llx on %llx (tags %x): %d checks, %d valid; failed tags %d, range %d (%.0f m, band %.0f-%.0f), cone %d (%.0f deg off, cone %.0f), line of sight %d, other %d, no agent %d%s",
+               s.ship, s.owner, s.tags, s.frames, s.valid, s.failTags, s.failRange, (double)s.dist, (double)s.minD, (double)s.maxD, s.failCone,
+               (double)s.angle, (double)s.coneDeg, s.failLos, s.failOther, s.noAgent, hit);
+        uint64_t keep = s.ship; s = {}; s.ship = keep;
+    }
+    g_fireSince = now;
+}
+typedef uint64_t(__fastcall* fire_t)(uint64_t self);
+static fire_t o_fire;
+static uint64_t __fastcall h_fire(uint64_t self) {
+    uint64_t r = o_fire(self);
+    if (g_fireLog && self) __try { fire_walk(self); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return r;
+}
+#endif
+
 struct Site {
     const char* name;
     uint64_t addr;
@@ -4115,6 +4221,9 @@ static Site g_sites[] = {
     {"creep-scorer 0x14182ade0", 0x14182ade0, 14,
      {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55},
      (void*)h_scorer, (void**)&o_scorer},
+    {"creep-fire-check 0x14182a310", 0x14182a310, 19,
+     {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff},
+     (void*)h_fire, (void**)&o_fire},
     {"controller-field 0x1416feaf0", 0x1416feaf0, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa},
      (void*)h_ctrlfield, (void**)&o_ctrlfield},
