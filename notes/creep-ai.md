@@ -368,3 +368,75 @@ Flown by Pseudo on Yavin, Esseles, Sissubo and Fostar Haven; each line says what
 - **App:** the mouse wheel over a focused dropdown changed its selection, so scrolling down to the hull and shield
   boxes rolled the pack dropdowns to their last ship (U-wing, Reaper) and saved it (30070e7). Reproduced with
   `--test-wheel`; the wheel on a closed dropdown now scrolls the page.
+
+## 9. Torpedoes, wingmen and damage to capital ships (2026-10-27; branch claude/creep-torpedo-runs, flown)
+
+Fifteen flights in one evening, measured with two new diagnostics: `track_log` (R_TRACK 11 records twice a second: each
+bomber's position, its assigned target, the distance, the target's tags; `tools/track_report.py`) and
+`capital_damage_log` (each capital hull's and shield's hits by attacker, with the drop rule's verdict).
+
+- **Tried and dropped: torpedo runs.** The bomb raid (IncomSquadronAIBombingFlightBehaviour, data ClassInfo 0x144a48340:
+  EntryDistanceToPath +40, PointsApproachTolerance +48, DistanceAfterBombing +52, BombingDistance +56,
+  AfterburnerThreshold +68, RunOnlyForLeaders +72) loads from any weapon's BehaviourBlueprint (+120), so the creep
+  torpedoes got it, retuned. But the run line keeps the target outside the AI torpedo's lock cone, and once their target
+  is a capital ship the bombers' own attack makes fair torpedo passes. Also dropped: opening the Raider's and
+  corvette's single damage section to runs (DamageSectionComponentData 0x144a245c0, ClearFaces +292..+297; none clear in
+  stock, so no raid ever starts on them).
+- **The TargetTags = 2 lock filter** (section 8) was dropped here on the reading that it blocked locks on frigate and
+  flagship parts (one torpedo a flight while it was in). That reading was wrong: the cause was the 500 m minimum lock
+  distance. The filter is back since 2026-10-28 (section 10), and torpedoes lock onto the Star Destroyer with it.
+- **Wingmen: one attacker per target.** Each faction's creep logic is ONE squadron for all three packs, and its
+  IncomSquadronTargetingRules (the scorer's seventh argument; 56 bytes: EngagementMode +0, DefaultMaxAttackersPerTarget
+  +4 = 1 for creep, OtherLeaderTargetScoreWeightMultiplier +32 = 0.2, the mulss at 0x14182b369) allow one ship per
+  target: 600 of 600 assigned targets had exactly one bomber. The scorer FUN_14182ade0 loops over all candidates (third
+  argument, 24-byte entries) and appends a 0x38-byte entry per candidate to its tenth argument, a vector (begin +0,
+  end +8): the ship +0, the candidate's radar target +0x10, the attacker cap +0x1c (the rules' +4, or a per-target
+  override; the scorer only tests it for 0). The choice is made from those entries later. Shipped: bombers get a rules
+  copy with cap 15 and multiplier 1.0, and after the call the new entries whose candidate isn't a capital ship (tag
+  bit 2) get the stock cap back. Flown 2026-10-28: bombers go for capital ships first, then each other.
+- **Bombers prefer capital ships**: their list scores the phase's capital ships 10/9/8 on offense and the corvette or
+  Raider 10 otherwise, above the stock turrets 5 and starfighters 3 (at 4/3/2 a nearby starfighter tied the flagship).
+- **Damage to capital ships: the ignore-AI rule.** Every PvP level connects a level field (default true) into each
+  capital ship's IgnoreAIDamage (interface field -1337701026; CapitalShipHealthComponentData 0x144a24a40 +144, only the
+  light cruiser sets it in its own data). The component's property handler (vtable 0x14362d880 slot 2, 0x1417d9450)
+  stores it at +0x1c8. FUN_1417da0e0(capital health component, hit record) drops a hit when that's set, the record's
+  flags (+0xa4) lack 8, and its attacker (+0xb0) is neither a player ([[+8]] - 8) nor a ServerStarshipEntity (cast
+  0x1412631b0 from [[+0x40]] - 8) whose +0x338 is set; creep never are, the vs-AI bots and players are. Callers: the
+  hull's apply 0x1417dbe90, the shield bubble (vtable 0x14362d508 slot 43, with the ship's hull component [+0x570]), the
+  turrets 0x1416ed5b0, the weak points 0x1417dfc50. The mod replaces the check whole (same reads, same order) and,
+  with aggressive creep, keeps a creep starship's hit. Flown: hulls and shields take creep damage.
+- **`capital_damage`** scales creep hits on hulls (the apply record's +0x88, which the team filter 0x14168ffb0 starts
+  from) and shields (the info's +0x84 direct, +0x74 blast); 30% by default. Health getter: vtable +0x108,
+  0x140412280, the float at +0x20, for both.
+- **`torpedo_lock_min`**: TargetLockWeaponFiringData MinLockDistanceAttribute (+184 -> IncomAttributeFloat value +32,
+  id +24 -> +32) and the weapon config's float registration list (+0x40). Bombers close to 200-300 m and couldn't
+  lock at the stock 500 m. The stock lock cone (get 10, keep 20 degrees) proved fine once they could.
+- **Bomb runs** for aggressive creep that keep their bombs: 800 m in, 75 m tolerance, 425 m out, 100 m above the
+  hull, the afterburner beyond 925 m (stock 400/50/250/50/500). Flown: they stop flying into their target.
+- **Open, for later:** AI lasers seemed to fire at about 45 degrees off the nose (by eye). The fire cone measured in
+  section 10 is 30 degrees full for the creep Y-wings, so the 45 is unexplained.
+
+## 10. Capital-only targeting, the passive damage, and why torpedo bombers stop firing at a flagship (2026-10-28, flown)
+
+- **Settings:** `[creep] bomber_capital_only` (the bombers' list keeps only the phase's capital ships; the app's
+  "Bombers attack"); `capital_damage = 0` keeps the stock rule (h_aicheck exempts creep only above 0); the TargetTags 2
+  lock filter is back while bombers put capital ships first (bombers that fight starfighters had torpedoed each other),
+  not with capital-only, where every target is a capital ship already.
+- **The capital ships' passive damage** (DamageOverTimeSettings, FUN_1415b3110) calls the hull apply 0x1417dbe90
+  (at 0x1415b3693) with a record at rbp+0x50 whose flags +0xa4 are 0x08 (0x1415b335f; 0x40 is added when it splits
+  between ships, and the damage is then read from elsewhere) and whose attacker resolves to an unmarked starship. The
+  ignore-AI rule keeps flag 8 before it looks at the attacker, so the exemption never touched it, but `capital_damage`
+  scaled it as creep: the corvette's single-target passive damage came through at 30%. Fixed: a flag-8 hit is its own
+  class in `capital_damage_log` and is never scaled.
+- **Torpedo bombers stop firing at a flagship; bombs don't.** On the Star Destroyer, Y-wings fired well for about a
+  minute and then hardly at all, with 15 still holding it as their target to the end. `fire_log` (h_fire on
+  FUN_14182a310; see the hook's comment for the node map, the agent map at [0x1441c8a40]+0x26c0, the settings and the
+  raycast) showed why: line of sight blocked once in about 100,000 checks; the cone failed. The AI fires only with the
+  target's point inside a 30-degree full cone (settings +0x38; range band 1-10000 m). A flagship's point is its centre,
+  inside the hull. In the first minute, coming in nose-on, 35-68% of checks passed (point a median 26 degrees off the
+  nose when they failed); after that 7-10%, the point a median 80-100 degrees off, the Y-wings 380-500 m from it and
+  pressed against the hull below it. Shields and destroyed sections only lined up with the time it takes them to close
+  in. Bombs drop on the bomb run's own rule and don't go through this check: flown with capital-only bombers, they hit
+  the Star Destroyer through three shield regenerations and took its hull to 696. A wider cone alone wouldn't bring the
+  torpedoes back (their lock cone is a separate 10 degrees); the fix would be flying, the way the bomb run does.
+  Set aside: bombs are the flagship weapon; torpedoes work on the corvette, the Raider and the cruisers.

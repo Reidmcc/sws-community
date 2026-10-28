@@ -62,6 +62,8 @@ HAND = {
     0x1412e5e50: (0x1412e8100, "same code (strict check, 38 targets agree, none disagree); missed by the size alignment"),
     0x14169cf00: (0x14169f090, "entry only: EA drops one member's SteamAPI_RegisterCallback, the rest alike"),
     0x1412df8a0: (0x1412e1ce0, "entry only: rebuilt; identity from its only caller (a verified pair, both at +0xa7)"),
+    0x1418259d0: (0x14182a170, "same code (strict check, 12/12 targets agree); a small leaf the unwind tables don't list; "
+                               "its only caller is a verified pair, both calling it at +0x1beb"),
 }
 
 # Slots of the game's own import table (the protection wrappers fill it at start, so the PE import directory doesn't
@@ -375,12 +377,18 @@ def hook_sites():
     return out
 
 
-def relocatable(code, at):
-    """The instructions in code, whole, with no RIP-relative operand or relative branch."""
+# Hooks whose detour replaces the function and never calls the original: their stolen bytes are never run from the
+# trampoline, so they need only be whole instructions, and may hold relative branches.
+REPLACED = {0x1417da0e0}   # the ignore-AI-damage check (sws_probe.cpp h_aicheck)
+
+
+def relocatable(code, at, replaced=False):
+    """The instructions in code, whole, with no RIP-relative operand or relative branch (whole only, if replaced)."""
     n = 0
     for ins in cs.disasm(code, at):
-        if "rip" in ins.op_str: return False
-        if ins.mnemonic == "call" or ins.mnemonic.startswith("j") or ins.mnemonic.startswith("loop"): return False
+        if not replaced:
+            if "rip" in ins.op_str: return False
+            if ins.mnemonic == "call" or ins.mnemonic.startswith("j") or ins.mnemonic.startswith("loop"): return False
         n += ins.size
     return n == len(code)
 
@@ -391,7 +399,7 @@ def expects(table):
         sb = S.read(a - BASE, steal)
         if sb != src: sys.exit("%s: the source's expected bytes differ from the Steam exe" % name)
         eb = D.read(table[a][0] - BASE, steal)
-        if not relocatable(eb, table[a][0]): sys.exit("%s: the EA bytes to steal are not whole, position-free instructions" % name)
+        if not relocatable(eb, table[a][0], a in REPLACED): sys.exit("%s: the EA bytes to steal are not whole, position-free instructions" % name)
         if eb != sb: out.append((a, eb, name))
     for a, n, what in CHECKS:
         sb, eb = S.read(a - BASE, n), D.read(table[a][0] - BASE, n)

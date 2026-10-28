@@ -88,6 +88,19 @@ else echo "FAIL  spawn_log lines missing from the log"; STATUS=1; fi
 if [ -n "$LOG" ] && grep -q "hit: starshiphealthdamagedata_uwing: transform found in the physics component+0x80; the impact point is info+0x30" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (1.00, 2.00, 3.00) velocity ?[[:space:]]*$" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (-4.00, 0.50, 10.00) velocity (-[2-5][0-9]\.[0-9], 0\.0, 0\.0)" "$LOG"; then
     echo "PASS  hit_log found the ship's frame and logged both hits in it"
 else echo "FAIL  hit_log lines missing or wrong"; STATUS=1; fi
+# capital_damage_log: the light cruiser's hull (ignores AI damage) takes a blast and a hit from a starship without the player
+# mark; the drop rule's verdict, the 5 s summary and the shield bubble's first hit are logged
+if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_LightCruiser (hull, which ignores AI damage)" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull: blast of 4000 from starships without the player mark (mark 0) -> 2000 taken (creep: the ignore-AI rule set aside); health 46000" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull, 5\.[0-9] s; starships without the player mark 1 hits, 4000 asked, 2000 taken; no starship 1 hits, 1000 asked, 0 taken (some dropped); health 46000" "$LOG" \
+   && grep -q "creep: capital ships take creep damage, hull and shield (the PvP levels' ignore-AI-damage rule set aside for creep)" "$LOG" \
+   && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
+    echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker, at the profile's capital_damage 50%"
+else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
+# fire_log: the bomber's node on the capital ship was read back twice, valid both times
+if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
+    echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"
+else echo "FAIL  fire_log line missing or wrong"; STATUS=1; fi
 # creep hull by ship type: the profile's Y-wing value wins over the creep default; the A-wing pack keeps the default
 if [ -n "$LOG" ] && grep -q "creep: ywing creep: hull 900 (the profile's), shields 600 (the creep default)" "$LOG" && grep -q "creep: awing creep: hull 125 (the creep default)" "$LOG"; then
     echo "PASS  creep hull and shields: a profile value wins over the creep default, by ship type"

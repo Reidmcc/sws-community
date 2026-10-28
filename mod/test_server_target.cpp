@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <initializer_list>
 static volatile unsigned long long g_scorerList;   // the creep scorer stand-in's eighth argument, last call
+static volatile unsigned long long g_scorerRules;  // ... and its seventh (the squadron's targeting rules)
 #pragma comment(lib, "ws2_32.lib")
 #include <stdio.h>
 #include <stdint.h>
@@ -168,6 +169,43 @@ int main() {
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x14057dd20ll - 0x1417db400ll);
       put(0x1417db3f7, site, sizeof site); }
+    // the ignore-AI-damage check (FUN_1417da0e0, replaced whole by the DLL): its real first 20 bytes. The starship cast it
+    // uses (FUN_1412631b0): here, rcx if its vtable is ServerStarshipEntity's (0x1436184e8), else 0.
+    { const uint8_t aicheck[] = {0x48,0x83,0xec,0x28,0xf6,0x82,0xa4,0x00,0x00,0x00,0x08,0x75,0x71,0x80,0xb9,0xc8,0x01,0x00,0x00,0x00, 0x31,0xc0,0xc3};
+      put(0x1417da0e0, aicheck, sizeof aicheck); }
+    if (map(0x141260000, 0x10000) != (void*)0x141260000) { printf("FAIL  could not map the starship-cast region\n"); return 1; }
+    { const uint8_t cast[] = {0x48,0x85,0xc9, 0x74,0x13, 0x48,0xba,0xe8,0x84,0x61,0x43,0x01,0x00,0x00,0x00, 0x48,0x39,0x11, 0x75,0x04,
+                              0x48,0x89,0xc8, 0xc3, 0x31,0xc0, 0xc3};
+      put(0x1412631b0, cast, sizeof cast); }
+    // capital hull damage (FUN_1417dbe90): its real 14-byte prologue (mov rax, rsp; seven pushes), then, as the real one,
+    // it asks the check (component, record) and unless told to drop the hit, health (the fake component's +0x40) -= the
+    // record's +0x88: rsi, rdi, r12 keep the component, out and record across the call (sub rsp, 0x20 for its shadow
+    // space; the stack stays aligned); mov rax, rdi and the pops. Its blast caller is planted like the grid's:
+    // entered at 0x1417dbde3, it calls from 0x1417dbde7 so the apply returns to 0x1417dbdec. The components' health getter
+    // (vtable +0x108): movss xmm0, [rcx+0x40]; ret, at 0x1417dc800. The capital shield's direct hit (FUN_140582ab0, the same
+    // 14 bytes) and blast (FUN_140582d90, 19 bytes: five pushes, lea rbp, sub rsp, 0x150) take the info's +0x84 or +0x74
+    // off the same health and return out.
+    const uint8_t capapply[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,
+                                0x48,0x89,0xce, 0x48,0x89,0xd7, 0x4d,0x89,0xc4, 0x48,0x83,0xec,0x20, 0x4c,0x89,0xc2,
+                                0x48,0xb8,0xe0,0xa0,0x7d,0x41,0x01,0x00,0x00,0x00, 0xff,0xd0, 0x48,0x83,0xc4,0x20,
+                                0x84,0xc0, 0x75,0x14,
+                                0xf3,0x0f,0x10,0x46,0x40, 0xf3,0x41,0x0f,0x5c,0x84,0x24,0x88,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x46,0x40,
+                                0x48,0x89,0xf8,
+                                0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+    put(0x1417dbe90, capapply, sizeof capapply);
+    { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
+      *(int32_t*)(site + 5) = (int32_t)(0x1417dbe90ll - 0x1417dbdecll);
+      put(0x1417dbde3, site, sizeof site); }
+    { const uint8_t getHealth[] = {0xf3,0x0f,0x10,0x41,0x40, 0xc3}; put(0x1417dc800, getHealth, sizeof getHealth); }
+    if (map(0x140580000, 0x10000) != (void*)0x140580000) { printf("FAIL  could not map the capital-shield region\n"); return 1; }
+    const uint8_t shdirect[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,
+                                0xf3,0x0f,0x10,0x41,0x40, 0xf3,0x41,0x0f,0x5c,0x80,0x84,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x41,0x40, 0x48,0x89,0xd0,
+                                0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+    put(0x140582ab0, shdirect, sizeof shdirect);
+    const uint8_t shblast[] = {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00,
+                               0xf3,0x0f,0x10,0x41,0x40, 0xf3,0x41,0x0f,0x5c,0x40,0x74, 0xf3,0x0f,0x11,0x41,0x40, 0x48,0x89,0xd0,
+                               0x48,0x81,0xc4,0x50,0x01,0x00,0x00, 0x41,0x5e,0x5f,0x5e,0x5b,0x5d,0xc3};
+    put(0x140582d90, shblast, sizeof shblast);
     // the AI controller's field-change handler (FUN_1416feaf0): its real 15-byte prologue, then its BehaviourIndex store
     // (mov rax, [rdx+8]; mov edx, [rax]; mov [rcx+0xb4], edx) and the epilogue; and the target-score lookup (FUN_141617a00):
     // its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
@@ -177,9 +215,21 @@ int main() {
     const uint8_t scorerHead[] = {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55, 0x48,0x8b,0x44,0x24,0x68, 0x48,0xa3};
     const uint8_t scorerTail[] = {0x41,0x5d, 0x41,0x5c, 0x5f, 0x5e, 0x5d, 0xc3};
     if (map(0x141820000, 0x10000) != (void*)0x141820000) { printf("FAIL  could not map the scorer region\n"); return 1; }
-    { uint8_t code[64]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
-      uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8; memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
+    // ... and its seventh (the targeting rules, [rsp+0x60]) in g_scorerRules; and, when its tenth (the output vector,
+    // [rsp+0x78]) is given, appends two 0x38-byte entries as the real one appends one per candidate (end +8 += 0x70; the
+    // test writes the entries' contents ahead)
+    { uint8_t code[128]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
+      uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8;
+      const uint8_t rulesLoad[] = {0x48,0x8b,0x44,0x24,0x60, 0x48,0xa3}; memcpy(code + at, rulesLoad, sizeof rulesLoad); at += sizeof rulesLoad;
+      uint64_t whereR = (uint64_t)&g_scorerRules; memcpy(code + at, &whereR, 8); at += 8;
+      const uint8_t outAppend[] = {0x48,0x8b,0x44,0x24,0x78, 0x48,0x85,0xc0, 0x74,0x05, 0x48,0x83,0x40,0x08,0x70};
+      memcpy(code + at, outAppend, sizeof outAppend); at += sizeof outAppend;
+      memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
       put(0x14182ade0, code, at); }
+    // the AI fire check (fire_log's hook): its real prologue, then the matching pops and a return
+    { const uint8_t fire[] = {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff,
+                              0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5d,0xc3};
+      put(0x14182a310, fire, sizeof fire); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
                                  0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
@@ -412,11 +462,19 @@ int main() {
     uint8_t* bhvIface = bhvObj(0x144999100); uint8_t* bhvPdv = bhvObj(0x144999101); uint8_t* bhvPdv2 = bhvObj(0x144999101);
     uint8_t* allowBool = bhvObj(0x144a58840); uint8_t* flagBool = bhvObj(0x144a58840); uint8_t* bombsBool = bhvObj(0x144a58840);
     uint8_t* orNode = bhvObj(0x144999102); uint8_t* dogInfo = bhvObj(0x144999103); uint8_t* minSel = bhvObj(0x144999104); uint8_t* rule = bhvObj(0x144999105);
+    // creep wingmen ([creep] wingmen=1): the two loadout gates' Ors take an interface field (555857281) into In4
+    // (193450870); the AllowCountermeasures input (-1073460925) into its PropertyDefaultValue, whose HasValueSet
+    // (-645606250) feeds a Not's In (5862146). The mod repoints the two In4 connections at that Not's Out (193453899).
+    uint8_t* gateOr1 = bhvObj(0x144999106); uint8_t* gateOr2 = bhvObj(0x144999106); uint8_t* cmPdv = bhvObj(0x144999101); uint8_t* cmNot = bhvObj(0x144999107);
+    uint8_t* otherNot = bhvObj(0x144999107); uint8_t* otherAnd = bhvObj(0x144999108);   // a decoy: another Not's Out into another And's In4
     struct PcEntry { uint8_t* s; uint8_t* d; int32_t sf, tf; };
     const PcEntry bhvPc[] = { { bhvIface, bhvPdv, 1336394533, 1658462601 }, { allowBool, bhvPdv, 225375086, 2066049125 },
                               { minSel, rule, 193453899, -1814841251 }, { flagBool, orNode, 225375086, 193450867 },
                               { dogInfo, orNode, 215512070, 193450864 }, { bhvIface, bhvPdv2, -737100000, 1658462601 },
-                              { bombsBool, bhvPdv2, 225375086, 2066049125 } };
+                              { bombsBool, bhvPdv2, 225375086, 2066049125 },
+                              { bhvIface, gateOr1, 555857281, 193450870 }, { bhvIface, gateOr2, 555857281, 193450870 },
+                              { bhvIface, cmPdv, -1073460925, 1658462601 }, { cmPdv, cmNot, -645606250, 5862146 },
+                              { otherNot, otherAnd, 193453899, 193450870 } };
     const int nBhvPc = sizeof bhvPc / sizeof bhvPc[0];
     uint8_t* bhvPcArr = fake_alloc(16 + nBhvPc * 32); *(uint32_t*)(bhvPcArr + 12) = nBhvPc;
     for (int i = 0; i < nBhvPc; i++) {
@@ -431,12 +489,14 @@ int main() {
     // top-level: inside another asset's partition, as the game keeps them) and the bots' torpedo collection (ClassInfo
     // 0x144a156a0: bot hull, two weapon slots 0x1449fc3f0, bot movement), each an Asset, the collection's Configs at +0x20
     uint8_t* torpWeapon = nullptr; uint8_t* torpFiring = nullptr;   // the Y-wing AI torpedo, for the lock-filter check
+    uint8_t* raidData = nullptr; uint8_t* raidBp = nullptr; uint8_t* bombCfg = nullptr;   // the run-data check
     auto cfgNamed = [](const char* name, uint64_t cls) { uint8_t* c = fake_alloc(0x400); *(uint64_t*)(c + 8) = cls; *(const char**)(c + 0x18) = name; return c; };
     uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP", 0x144a8ca00);
     uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP", 0x144a8c980);
     uint8_t* botHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_BOT_PvB", 0);
     uint8_t* slotTorp = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/SlotConfig_YWing_Torpedos_AI_Instalock", 0x1449fc3f0);
-    uint8_t* slotBomb = cfgNamed("Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb", 0x1449fc3f0);
+    uint8_t* slotBomb = fake_alloc(16 + 0x400) + 16;   // with the 16 bytes (a GUID) ahead of it, which the mod's copy takes too
+    *(uint64_t*)(slotBomb + 8) = 0x1449fc3f0; *(const char**)(slotBomb + 0x18) = "Game/Gameplay/Starships/YWing/Config/SlotConfig_YWing_Bomb";
     uint8_t* botMove = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipMovementConfig_YWingAI_BOT", 0x144ab56a0);
     auto collection = [&](const char* name, std::initializer_list<uint8_t*> cs) {
         uint8_t* c = fake_alloc(16 + 0x30) + 16; *(uint64_t*)(c + 8) = 0x144a156a0; *(const char**)(c + 0x18) = name;
@@ -454,9 +514,26 @@ int main() {
         torpWeapon = fake_alloc(0x200); *(uint64_t*)(torpWeapon + 8) = 0x1449fc370;
         *(const char**)(torpWeapon + 0x18) = "Game/Gameplay/Starships/YWing_AI/Projectiles/StarshipWeaponConfig_HighYieldTorpedo_YWing_AI_Instalock";
         torpFiring = fake_alloc(0x200); *(int32_t*)(torpFiring + 224) = 2; *(uint8_t**)(torpWeapon + 96) = torpFiring;
+        // its MinLockDistanceAttribute (+184): an IncomAttributeFloat at 500 (+32), id 0x5157 (its id object +24 -> +32), also
+        // in the weapon config's float registration list (+0x40) as {0x5157, 500}
+        { uint8_t* at = fake_alloc(0x40); uint8_t* idObj = fake_alloc(0x40); *(uint32_t*)(idObj + 32) = 0x5157;
+          *(float*)(at + 32) = 500.f; *(uint8_t**)(at + 24) = idObj; *(uint8_t**)(torpFiring + 184) = at;
+          uint8_t* fl = fake_alloc(16 + 16) + 16; *(uint32_t*)(fl - 4) = 1; *(uint32_t*)fl = 0x5157; *(float*)(fl + 4) = 500.f;
+          *(uint8_t**)(torpWeapon + 0x40) = fl; }
+        *(uint8_t**)(slotTorp + 96) = torpWeapon;   // the torpedo slot's weapon (StarshipBaseSlotConfig Config +96)
+        *(uint8_t**)(slotBomb + 96) = bhvObj(0x1449fc370);   // the bombs' slot: a bomb weapon
         spInsts[6] = botMove;
-        { uint8_t** in2 = (uint8_t**)fake_alloc(8 * 8); memcpy(in2, spInsts, 7 * 8); in2[7] = torpWeapon;
-          *(uint8_t***)(spPart + 0x20) = in2; *(uint16_t*)(spPart + 0x28) = 8; }
+        // the AI bombs (StarshipWeaponConfig) carry the bombing-run blueprint (+120): an IncomSquadronAIHostBehaviourBlueprint
+        // whose Objects (+72) hold a root and the run data (ClassInfo 0x144a48340) with the stock values
+        raidData = fake_alloc(0x80); *(uint64_t*)(raidData + 8) = 0x144a48340;
+        *(float*)(raidData + 40) = 400.f; *(float*)(raidData + 44) = 100.f; *(float*)(raidData + 48) = 50.f; *(float*)(raidData + 52) = 250.f;
+        *(float*)(raidData + 56) = 50.f; *(float*)(raidData + 68) = 500.f; *(uint8_t*)(raidData + 72) = 1;
+        raidBp = fake_alloc(0x100); { uint8_t* ro = fake_alloc(16 + 16) + 16; *(uint32_t*)(ro - 4) = 2;
+          ((uint8_t**)ro)[0] = fake_alloc(0x40); ((uint8_t**)ro)[1] = raidData; *(uint8_t**)(raidBp + 72) = ro; }
+        bombCfg = fake_alloc(0x200); *(uint64_t*)(bombCfg + 8) = 0x1449fc370; *(uint8_t**)(bombCfg + 120) = raidBp;
+        *(const char**)(bombCfg + 0x18) = "Game/Gameplay/Starships/TieBomber_AI/Projectiles/StarshipWeaponConfig_Bomb_Standard_TieBomber_AI";
+        { uint8_t** in2 = (uint8_t**)fake_alloc(9 * 8); memcpy(in2, spInsts, 7 * 8); in2[7] = torpWeapon; in2[8] = bombCfg;
+          *(uint8_t***)(spPart + 0x20) = in2; *(uint16_t*)(spPart + 0x28) = 9; }
         uint8_t** grown = (uint8_t**)fake_alloc(10 * 8); memcpy(grown, parts, 8 * 8); grown[8] = spPart; grown[9] = onePart(ywingTorp);
         *(uint8_t***)(domain + 0x138) = grown; *(uint8_t***)(domain + 0x140) = grown + 10;
     }
@@ -504,6 +581,22 @@ int main() {
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)part4, 0);
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
+    }
+    {   // the Raider's blueprint loads with its one damage section (DamageSectionComponentData 0x144a245c0, ClearFaces
+        // +292..+297, none clear); runs on it were tried and dropped with the torpedo runs, so it stays as it is, and so does a frigate's
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        auto bpPart = [](const char* name, uint8_t* sec) {
+            uint8_t* bp = fake_alloc(0x100); *(uint64_t*)(bp + 8) = 0x144ade220; *(const char**)(bp + 0x18) = name;
+            uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = bp; in[1] = sec;
+            uint8_t* p = fake_alloc(0x40); *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 2; return p; };
+        uint8_t* raiderSec = fake_alloc(0x200); *(uint64_t*)(raiderSec + 8) = 0x144a245c0;
+        uint8_t* frigateSec = fake_alloc(0x200); *(uint64_t*)(frigateSec + 8) = 0x144a245c0;
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Raider/Starship_Raider", raiderSec), 0);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Frigate/Starship_Frigate", frigateSec), 0);
+        bool sides = !raiderSec[292] && !raiderSec[293] && !raiderSec[294] && !raiderSec[295];
+        bool frigate = true; for (int k = 0; k < 6; k++) frigate = frigate && !frigateSec[292 + k];
+        check(!raiderSec[296] && !raiderSec[297] && sides && frigate,
+              "creep: the Raider's and a frigate's damage sections load untouched");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
@@ -555,21 +648,21 @@ int main() {
         bool lists = nl != lst && *(uint32_t*)(nl - 4) == 7;
         uint8_t* L[7] = {}; for (int p = 0; lists && p < 7; p++) L[p] = ((uint8_t**)nl)[p];
         bool shared = lists && L[0] && L[0] == L[1] && L[0] == L[2] && L[0] == L[3] && L[0] == L[4] && L[0] == L[5] && L[0] == L[6];
-        bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4 && score(L[0], turret) == 5;
+        bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 10 && score(L[0], turret) == 5;
         // the phase arrives as the controller's behaviour: the controller entity's field-change handler stores it
         uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = ctrlData;
         int32_t bi = 1; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
         typedef void(__fastcall* cf_t)(uint8_t*, uint8_t*);
         ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 1 = phase 0, a Rebel zone: Imperial offense
-        bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
+        bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 10 && score(L[0], flagship) == 9 && score(L[0], smallcap) == 8 && score(L[0], turret) == 5;
         bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
-        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4;
+        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 10;
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
-        bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
+        bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 10;
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
         bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
         check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,
-              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (offense: frigates 4, flagship 3; face-off and defense: the small capital ship)");
+              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (the bombers' list, offense: frigates 10, flagship 9, the small capital ship 8, above turrets 5; face-off and defense: the small capital ship 10)");
         check(*(uint8_t**)(pcArr + 8) == debugDisp && *(int32_t*)(pcArr + 20) == 5685821 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
               *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
@@ -721,6 +814,61 @@ int main() {
         uint64_t r2 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
         check(*(uint8_t*)0x14168a8b0 == 0xFF && r1 == (uint64_t)out && r2 == (uint64_t)out, "starship direct hit hooked and passes the result through");
     }
+    {   // creep damage against capital ships ([creep] aggressive=1) and capital_damage_log=1: a light cruiser's hull that
+        // ignores AI damage (+0x1c8, as every PvP level sets it) takes a 4000 blast (through the planted blast caller) from a
+        // starship (vtable 0x1436184e8) without the player mark (+0x338), reached as the drop rule reaches it: record +0xb0 ->
+        // +0x40 -> [] - 8. That is creep, so it counts and the flag is put back. 5 s on, a 1000 hit with no starship behind it
+        // is still dropped, then a 50 creep hit counts. Its name comes from its data (0x144a24a40) +128's asset name. A Raider's
+        // shield bubble (data 0x144a244c0, settings at +160) takes a 30 hit off its 17000.
+        uint8_t* ship = fake_alloc(0x400); *(uint64_t*)ship = 0x1436184e8;
+        uint8_t* ctl = fake_alloc(0x10); *(uint64_t*)ctl = (uint64_t)(ship + 8);
+        uint8_t* inst = fake_alloc(0x80); *(uint8_t**)(inst + 0x40) = ctl;
+        uint8_t* noShip = fake_alloc(0x80);
+        uint8_t* vt = fake_alloc(0x200); *(uint64_t*)(vt + 0x108) = 0x1417dc800;
+        uint8_t* hs = fake_alloc(0x40); *(const char**)(hs + 0x18) = "CapitalShipHealthSettings_LightCruiser";
+        uint8_t* hd = fake_alloc(0xa0); *(uint64_t*)(hd + 8) = 0x144a24a40; *(uint8_t**)(hd + 128) = hs;
+        uint8_t* comp = fake_alloc(0x200); *(uint64_t*)comp = (uint64_t)vt; *(uint8_t**)(comp + 0x20) = hd;
+        *(float*)(comp + 0x40) = 48000; comp[0x1c8] = 1;
+        uint8_t* rec = fake_alloc(0x100); *(float*)(rec + 0x88) = 4000; *(uint8_t**)(rec + 0xb0) = inst;
+        uint8_t* out = fake_alloc(0x40);
+        typedef uint64_t(__fastcall* apply_t)(uint64_t, uint64_t, uint64_t, uint8_t);
+        uint64_t r1 = ((apply_t)0x1417dbde3)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        bool putBack = comp[0x1c8] == 1;
+        Sleep(5100); *(float*)(rec + 0x88) = 1000; *(uint8_t**)(rec + 0xb0) = noShip;
+        uint64_t r2 = ((apply_t)0x1417dbe90)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        *(float*)(rec + 0x88) = 50; *(uint8_t**)(rec + 0xb0) = inst;
+        ((apply_t)0x1417dbe90)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        uint8_t* ss = fake_alloc(0x40); *(const char**)(ss + 0x18) = "ShieldHealthSettings_Raider";
+        uint8_t* sd = fake_alloc(0xb0); *(uint64_t*)(sd + 8) = 0x144a244c0; *(uint8_t**)(sd + 160) = ss;
+        uint8_t* scomp = fake_alloc(0x200); *(uint64_t*)scomp = (uint64_t)vt; *(uint8_t**)(scomp + 0x18) = sd; *(float*)(scomp + 0x40) = 17000;
+        uint8_t* sinfo = fake_alloc(0x100); *(float*)(sinfo + 0x84) = 30; *(uint8_t**)(sinfo + 0xc0) = inst;
+        uint8_t* sout = fake_alloc(0x40);
+        typedef uint64_t(__fastcall* shieldhit_t)(uint64_t, uint64_t, uint64_t);
+        uint64_t r3 = ((shieldhit_t)0x140582ab0)((uint64_t)scomp, (uint64_t)sout, (uint64_t)sinfo);
+        check(*(uint8_t*)0x1417dbe90 == 0xFF && *(uint8_t*)0x140582ab0 == 0xFF && *(uint8_t*)0x140582d90 == 0xFF &&
+              r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(scomp + 0x40) == 17000 - 15 && *(float*)(sinfo + 0x84) == 30,
+              "capital hull damage and both shield hits hooked, and they pass the hits and results through");
+        // a flagged hit (record +0xa4 flag 8, as the capital ships' passive damage carries) from the same starship is the stock
+        // rule's to keep and isn't scaled: 100 asked, 100 off
+        rec[0xa4] = 8; *(float*)(rec + 0x88) = 100; *(uint8_t**)(rec + 0xb0) = inst;
+        ((apply_t)0x1417dbe90)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        bool flagged = *(float*)(rec + 0x88) == 100; rec[0xa4] = 0;
+        // the check itself: an unmarked starship (creep) is let through, a marked one and a player keep the stock "keep",
+        // no starship behind the hit keeps the stock "drop", and a component that doesn't ignore AI damage keeps everything
+        typedef bool(__fastcall* aicheck_t)(uint64_t, uint64_t);
+        aicheck_t chk = (aicheck_t)0x1417da0e0;
+        uint8_t* marked = fake_alloc(0x400); *(uint64_t*)marked = 0x1436184e8; marked[0x338] = 1;
+        uint8_t* mctl = fake_alloc(0x10); *(uint64_t*)mctl = (uint64_t)(marked + 8);
+        uint8_t* minst = fake_alloc(0x80); *(uint8_t**)(minst + 0x40) = mctl;
+        uint8_t* pl = fake_alloc(0x10); *(uint64_t*)pl = 0x5000;   // a player directly: [[attacker+8]] - 8 != 0
+        uint8_t* pinst = fake_alloc(0x80); *(uint8_t**)(pinst + 8) = pl;
+        uint8_t* r4 = fake_alloc(0x100);
+        auto ask = [&](uint8_t* c, uint8_t* who) { *(uint8_t**)(r4 + 0xb0) = who; return chk((uint64_t)c, (uint64_t)r4); };
+        uint8_t* plain = fake_alloc(0x200);   // a component that doesn't ignore AI damage
+        bool cases = !ask(comp, inst) && !ask(comp, minst) && !ask(comp, pinst) && ask(comp, noShip) && !ask(plain, noShip);
+        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 2125 && flagged && putBack && comp[0x1c8] == 1,
+              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage, at the profile's 50%; marked ships and players kept, other hits still dropped, a flagged hit (passive damage) unscaled");
+    }
 
     alignas(16) static uint8_t obj[0x700];
     uint64_t r = ((uint64_t(__fastcall*)(void*, char, uint64_t, uint64_t))0x1401ae7d0)(obj, 0, 0, 0);
@@ -763,14 +911,17 @@ int main() {
           *(uint64_t*)(creepSpawn[1][0] + 0xC0) == (uint64_t)xwingAi && *(uint64_t*)(creepSpawn[1][1] + 0xC0) == (uint64_t)xwingAi &&
           *(uint64_t*)(decoySpawn + 0xC0) == (uint64_t)xwingAi,
           "creep: Rebel pack 1 (x -303) spawns Y-wings and pack 3 A-wings (no loadout); pack 2 and a non-creep spawn point stay stock");
-    {   // the Y-wing pack's torpedo loadout: the SP hull and shields, then the bots' two weapon slots; nothing else
+    {   // the Y-wing pack's torpedo loadout: the SP hull and shields, the bots' torpedo slot, a copy of their bombs' slot
+        // carrying the torpedo, and the bots' movement
         uint8_t* lo0 = *(uint8_t**)(creepSpawn[0][0] + 0x1F0); uint8_t* lo1 = *(uint8_t**)(creepSpawn[0][1] + 0x1F0);
         uint8_t* arr = lo0 ? *(uint8_t**)(lo0 + 0x20) : nullptr;
+        uint8_t* slot2 = arr ? ((uint8_t**)arr)[3] : nullptr;
         check(lo0 && lo0 == lo1 && lo0 != ywingSp && lo0 != ywingTorp && arr && *(uint32_t*)(arr - 4) == 5 &&
-              ((uint8_t**)arr)[0] == spHull && ((uint8_t**)arr)[1] == spShield && ((uint8_t**)arr)[2] == slotTorp && ((uint8_t**)arr)[3] == slotBomb &&
-              ((uint8_t**)arr)[4] == botMove &&
+              ((uint8_t**)arr)[0] == spHull && ((uint8_t**)arr)[1] == spShield && ((uint8_t**)arr)[2] == slotTorp &&
+              slot2 && slot2 != slotBomb && *(uint8_t**)(slot2 + 96) == torpWeapon && *(uint64_t*)(slot2 + 8) == 0x1449fc3f0 &&
+              *(uint8_t**)(slotBomb + 96) != torpWeapon && ((uint8_t**)arr)[4] == botMove &&
               *(uint32_t*)(*(uint8_t**)(ywingSp + 0x20) - 4) == 2 && *(uint32_t*)(*(uint8_t**)(ywingTorp + 0x20) - 4) == 4,
-              "creep torpedoes and handling: the Y-wing pack carries the bots' torpedo and bomb slots and their movement, with the creep's own hull and shields; the game's collections untouched");
+              "creep torpedoes and handling: the Y-wing pack carries the bots' torpedo slot, their bombs' slot with a torpedo in it, and their movement, with the creep's own hull and shields; the game's collections untouched");
         // the stock X-wing pack (with [creep] bot_handling): its own creep hull and the bots' movement; its ship unchanged
         uint8_t* st = *(uint8_t**)(creepSpawn[1][0] + 0x1F0); uint8_t* sa = st ? *(uint8_t**)(st + 0x20) : nullptr;
         check(st && st != creepCfg && st == *(uint8_t**)(creepSpawn[1][1] + 0x1F0) && sa && *(uint32_t*)(sa - 4) == 2 &&
@@ -827,23 +978,70 @@ int main() {
         uint8_t* fighterShip = spawnFrom(creepSpawn[1][0]);   // Rebel pack 2: stock X-wings
         auto listFor = [&](uint8_t* ship, uint8_t* list) { g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, 0, (uint64_t)list, 0, 0, 0, 0); return (uint8_t*)g_scorerList; };
         uint8_t* bl = creepList ? listFor(bomberShip, creepList) : nullptr; uint8_t* fl = creepList ? listFor(fighterShip, creepList) : nullptr;
-        bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 4 && score(fl, smallcap) == 1;
+        bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 10 && score(fl, smallcap) == 1;
         uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = creepCtrlData;
         int32_t bi = 4; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
         ((cf_t)0x1416feaf0)(ent, chg);   // defense
-        bool defense = fl && score(listFor(bomberShip, creepList), smallcap) == 4 && score(listFor(fighterShip, creepList), smallcap) == 1;
+        bool defense = fl && score(listFor(bomberShip, creepList), smallcap) == 10 && score(listFor(fighterShip, creepList), smallcap) == 1;
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // back to face-off
         bool pass = listFor(fighterShip, ywingAi) == ywingAi;
         check(opener && defense && pass,
-              "creep per ship type: the Y-wing keeps the corvette at 4, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
+              "creep per ship type: the Y-wing keeps the corvette at 10, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
+        // [creep] wingmen: a bomber is scored with a copy of the targeting rules allowing 15 attackers per target and no
+        // penalty for another leader's target; another creep ship with the squadron's own rules, untouched
+        uint8_t* rulesData = fake_alloc(0x40); *(int32_t*)(rulesData + 4) = 1; *(float*)(rulesData + 32) = 0.2f; *(float*)(rulesData + 8) = 1200.f;
+        auto rulesFor = [&](uint8_t* ship) { g_scorerRules = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, (uint64_t)rulesData, (uint64_t)creepList, 0, 0, 0, 0); return (uint8_t*)g_scorerRules; };
+        uint8_t* rb = rulesFor(bomberShip); uint8_t* rf = rulesFor(fighterShip);
+        check(rb && rb != rulesData && *(int32_t*)(rb + 4) == 15 && *(float*)(rb + 32) == 1.0f && *(float*)(rb + 8) == 1200.f &&
+              rf == rulesData && *(int32_t*)(rulesData + 4) == 1 && *(float*)(rulesData + 32) == 0.2f,
+              "creep wingmen: a bomber may share its target with the whole squadron (15 attackers, no penalty), other creep keep the squadron's rules");
+        // ... but only a capital ship: of the entries the scorer appends (candidate +0x10, cap +0x1c), a capital ship's
+        // (tag bit 2) keeps 15 and a starfighter's gets the squadron's 1 back
+        uint8_t* capT = fake_alloc(0x600); *(uint32_t*)(capT + 0x5d0) = 2; *(uint8_t**)(capT + 0x30) = fake_alloc(0x40);
+        uint8_t* fighterT = fake_alloc(0x600); *(uint32_t*)(fighterT + 0x5d0) = 0x14; *(uint8_t**)(fighterT + 0x30) = fake_alloc(0x40);
+        uint8_t* ents = fake_alloc(4 * 0x38);
+        *(uint8_t**)(ents + 0x10) = capT; *(int32_t*)(ents + 0x1c) = 15;
+        *(uint8_t**)(ents + 0x38 + 0x10) = fighterT; *(int32_t*)(ents + 0x38 + 0x1c) = 15;
+        uint8_t* outVec = fake_alloc(0x20); *(uint8_t**)outVec = ents; *(uint8_t**)(outVec + 8) = ents; *(uint8_t**)(outVec + 0x10) = ents + 4 * 0x38;
+        ((sc_t)0x14182ade0)(0, (uint64_t)bomberShip, 0, 0, 0, 0, (uint64_t)rulesData, (uint64_t)creepList, 0, (uint64_t)outVec, 0, 0);
+        check(*(uint8_t**)(outVec + 8) == ents + 0x70 && *(int32_t*)(ents + 0x1c) == 15 && *(int32_t*)(ents + 0x38 + 0x1c) == 1,
+              "creep wingmen: bombers may all take a capital ship (its candidate entry keeps 15 attackers); a starfighter gets the squadron's 1 back");
+        // fire_log=1: the fire check's map (header +0xc8, first node +0xd0) holds one node, the bomber on the capital ship,
+        // VALID (+0x58); the hook walks it after each call and logs the 5 s tally (run_standin.sh reads the line)
+        uint8_t* fself = fake_alloc(0x100); uint8_t* hdr = fself + 0xc8; uint8_t* node = fake_alloc(0x80);
+        uint8_t* shipRef = fake_alloc(0x10); *(uint8_t**)shipRef = bomberShip + 8;
+        uint8_t* tRef = fake_alloc(0x10); *(uint8_t**)tRef = capT + 0x10;
+        *(uint8_t**)(fself + 0xd0) = node; *(uint8_t**)hdr = node; *(uint8_t**)(hdr + 0x10) = node;
+        *(uint8_t**)(node + 0x10) = hdr; *(uint8_t**)(node + 0x30) = shipRef; *(uint8_t**)(node + 0x38) = tRef;
+        *(uint32_t*)(node + 0x50) = 2; node[0x58] = 1;
+        typedef uint64_t(__fastcall* fire_t)(uint64_t);
+        ((fire_t)0x14182a310)((uint64_t)fself); Sleep(5100); ((fire_t)0x14182a310)((uint64_t)fself);
+        check(*(uint8_t*)0x14182a310 == 0xFF && node[0x58] == 1, "fire_log: the AI fire check is hooked, runs, and its map is read back");
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
-          "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
+          "creep torpedoes: bombers that put capital ships first lock their AI torpedoes only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
+    {   // [creep] torpedo_lock_min=150: the minimum lock distance, attribute and list entry, with no vs-AI bots loaded
+        uint8_t* at = torpFiring ? *(uint8_t**)(torpFiring + 184) : nullptr; uint8_t* fl = torpWeapon ? *(uint8_t**)(torpWeapon + 0x40) : nullptr;
+        check(at && fl && *(float*)(at + 32) == 150.f && *(float*)(fl + 4) == 150.f,
+              "creep torpedoes: they lock from the profile's 150 m (attribute and its list entry), with no vs-AI bots loaded");
+    }
+    check(torpWeapon && raidBp && *(uint8_t**)(torpWeapon + 120) == nullptr && *(uint8_t**)(bombCfg + 120) == raidBp &&
+          *(float*)(raidData + 40) == 400.f && *(float*)(raidData + 48) == 50.f && *(float*)(raidData + 52) == 250.f &&
+          *(float*)(raidData + 56) == 50.f && *(float*)(raidData + 68) == 500.f && *(float*)(raidData + 44) == 100.f,
+          "creep torpedoes: the AI torpedo carries no run behaviour, and with torpedoes on the bombs' run data stays stock");
     // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
     check(creepSquadForMode && *(int32_t*)(creepSquadForMode + 32) == 1,
           "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");
     check(allowBool[36] == 1 && flagBool[36] == 1 && *(int32_t*)(minSel + 48) == 1 && bombsBool[36] == 0,
           "creep missiles: the squad behaviour's missile default and bot test on, the minimum distance on the bots' 200 m; another input's default untouched");
+    {   // creep wingmen: both loadout gates' In4 now from the Not's Out; the other connections as they were; the run open to wingmen
+        uint8_t* e7 = bhvPcArr + 16 + 7 * 32; uint8_t* e8 = bhvPcArr + 16 + 8 * 32; uint8_t* e10 = bhvPcArr + 16 + 10 * 32;
+        check(*(uint8_t**)e7 == cmNot && *(int32_t*)(e7 + 16) == 193453899 && *(uint8_t**)(e7 + 8) == gateOr1 && *(int32_t*)(e7 + 20) == 193450870 &&
+              *(uint8_t**)e8 == cmNot && *(int32_t*)(e8 + 16) == 193453899 && *(uint8_t**)(e8 + 8) == gateOr2 &&
+              *(uint8_t**)e10 == cmPdv && *(int32_t*)(e10 + 16) == -645606250 && raidData && raidData[72] == 0 &&
+              *(uint8_t**)(bhvPcArr + 16 + 11 * 32) == otherNot && *(uint8_t**)(bhvPcArr + 16 + 11 * 32 + 8) == otherAnd,
+              "creep wingmen: the loadout gates take the creep-only Not (wingmen run the bombers' runs), and the run data is open to wingmen");
+    }
     check(maxShield->value == 900.0f, "value engine: shield config written");
     check(blastDmg->value == 2500.0f && *(float*)(*(uint64_t*)(blast + 0x40) + 4) == 2500.0f,
           "limits: blast damage asked 3000, clamped to its limit 2500, written to the field and its list entry");
@@ -968,7 +1166,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.missiles=1;creep.torpedoes=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
