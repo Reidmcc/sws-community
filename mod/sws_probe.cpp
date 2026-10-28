@@ -210,6 +210,7 @@ static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 static bool g_bomberCapitalOnly;   // [server] bomber_capital_only: test switch, bomber creep target capital ships only
 static bool g_torpCapitalLock;     // [server] torpedo_capital_lock: test switch, the creep torpedoes lock onto capital ships only (TargetTags 2)
+static bool g_torpRuns = true;     // [server] torpedo_runs: test switch (default on), 0 = the creep torpedoes carry no run behaviour
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
 static int creep_role(int fac, int p) {
@@ -713,6 +714,8 @@ static void read_server_ini() {
       if (g_bomberCapitalOnly) status("server: bomber_capital_only=1 (test): bomber creep target capital ships only, and their torpedoes lock as stock");
       g_torpCapitalLock = GetPrivateProfileIntW(L"server", L"torpedo_capital_lock", 0, ini) != 0;
       status("server: torpedo_capital_lock=%d (test: 1 = creep torpedoes lock onto capital ships only)", (int)g_torpCapitalLock);
+      g_torpRuns = GetPrivateProfileIntW(L"server", L"torpedo_runs", 1, ini) != 0;
+      if (!g_torpRuns) status("server: torpedo_runs=0 (test): the creep torpedoes carry no run behaviour");
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -2506,7 +2509,10 @@ static void creep_scan() {
     });
     // The lock filter (TargetTags 2) only with the test switch torpedo_capital_lock=1, and not with bomber_capital_only
     // (every bomber target is a capital ship then): 2026-10-27, one torpedo a flight since it went in, many before.
-    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly || !g_torpCapitalLock); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
+    if (g_creepTorpedoes) {
+        creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly || !g_torpCapitalLock);
+        if (g_torpRuns) creep_torpedo_runs(torpWeapon, raidBp, botsLoaded);   // test switch torpedo_runs=0: no runs
+    }
     if (g_creepWingmen) creep_wingmen_raid(raidBp, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;
