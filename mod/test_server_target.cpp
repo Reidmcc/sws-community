@@ -576,21 +576,21 @@ int main() {
         bool lists = nl != lst && *(uint32_t*)(nl - 4) == 7;
         uint8_t* L[7] = {}; for (int p = 0; lists && p < 7; p++) L[p] = ((uint8_t**)nl)[p];
         bool shared = lists && L[0] && L[0] == L[1] && L[0] == L[2] && L[0] == L[3] && L[0] == L[4] && L[0] == L[5] && L[0] == L[6];
-        bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4 && score(L[0], turret) == 5;
+        bool opener = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 10 && score(L[0], turret) == 5;
         // the phase arrives as the controller's behaviour: the controller entity's field-change handler stores it
         uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = ctrlData;
         int32_t bi = 1; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
         typedef void(__fastcall* cf_t)(uint8_t*, uint8_t*);
         ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 1 = phase 0, a Rebel zone: Imperial offense
-        bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 4 && score(L[0], flagship) == 3 && score(L[0], smallcap) == 2 && score(L[0], turret) == 5;
+        bool offense = shared && *(int32_t*)(ent + 0xb4) == 1 && score(L[0], frigate) == 10 && score(L[0], flagship) == 9 && score(L[0], smallcap) == 8 && score(L[0], turret) == 5;
         bi = 4; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 4 = phase 3, an Imperial zone: defense
-        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 4;
+        bool defense = shared && score(L[0], frigate) == 0 && score(L[0], flagship) == 0 && score(L[0], smallcap) == 10;
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // behaviour 3 = face-off or transition: the opener's scores again
-        bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 4;
+        bool back = shared && score(L[0], frigate) == 0 && score(L[0], smallcap) == 10;
         uint8_t* other = fake_alloc(0x200); *(uint8_t**)(other + 0x28) = debugDisp; bi = 1; ((cf_t)0x1416feaf0)(other, chg);
         bool untouched = shared && score(L[0], frigate) == 0;   // another controller's behaviour leaves the creep alone
         check(opener && offense && defense && back && untouched && *(uint32_t*)(L[0] + 16) >= 0x10000000 && *(uint8_t*)0x1416feaf0 == 0xFF,
-              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (offense: frigates 4, flagship 3; face-off and defense: the small capital ship)");
+              "aggressive creep: one shared target list, its scores switched as the controller's behaviour follows the phase (the bombers' list, offense: frigates 10, flagship 9, the small capital ship 8, above turrets 5; face-off and defense: the small capital ship 10)");
         check(*(uint8_t**)(pcArr + 8) == debugDisp && *(int32_t*)(pcArr + 20) == 5685821 && *(int32_t*)(pcArr + 16) == 862952468 &&
               *(uint8_t**)(pcArr + 40) == selInt && *(int32_t*)(pcArr + 52) == 858290427 &&
               *(int32_t*)(squad + 32) == 0 && *(float*)(squad + 40) == 1200.0f && *(int32_t*)(squad + 124) == 2 &&
@@ -851,15 +851,15 @@ int main() {
         uint8_t* fighterShip = spawnFrom(creepSpawn[1][0]);   // Rebel pack 2: stock X-wings
         auto listFor = [&](uint8_t* ship, uint8_t* list) { g_scorerList = 0; ((sc_t)0x14182ade0)(0, (uint64_t)ship, 0, 0, 0, 0, 0, (uint64_t)list, 0, 0, 0, 0); return (uint8_t*)g_scorerList; };
         uint8_t* bl = creepList ? listFor(bomberShip, creepList) : nullptr; uint8_t* fl = creepList ? listFor(fighterShip, creepList) : nullptr;
-        bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 4 && score(fl, smallcap) == 1;
+        bool opener = bl == creepList && fl && fl != creepList && score(bl, smallcap) == 10 && score(fl, smallcap) == 1;
         uint8_t* ent = fake_alloc(0x200); *(uint8_t**)(ent + 0x28) = creepCtrlData;
         int32_t bi = 4; uint8_t chg[16] = {}; *(int32_t*)chg = 875081154; *(int32_t**)(chg + 8) = &bi;
         ((cf_t)0x1416feaf0)(ent, chg);   // defense
-        bool defense = fl && score(listFor(bomberShip, creepList), smallcap) == 4 && score(listFor(fighterShip, creepList), smallcap) == 1;
+        bool defense = fl && score(listFor(bomberShip, creepList), smallcap) == 10 && score(listFor(fighterShip, creepList), smallcap) == 1;
         bi = 3; ((cf_t)0x1416feaf0)(ent, chg);   // back to face-off
         bool pass = listFor(fighterShip, ywingAi) == ywingAi;
         check(opener && defense && pass,
-              "creep per ship type: the Y-wing keeps the corvette at 4, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
+              "creep per ship type: the Y-wing keeps the corvette at 10, another ship scores it 1, in the opener and on defense; a list that isn't the creep's passes through");
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
           "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");

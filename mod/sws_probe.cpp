@@ -209,6 +209,7 @@ static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 static bool g_bomberCapitalOnly;   // [server] bomber_capital_only: test switch, bomber creep target capital ships only
+static bool g_torpCapitalLock;     // [server] torpedo_capital_lock: test switch, the creep torpedoes lock onto capital ships only (TargetTags 2)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
 static int creep_role(int fac, int p) {
@@ -710,6 +711,8 @@ static void read_server_ini() {
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
       g_bomberCapitalOnly = GetPrivateProfileIntW(L"server", L"bomber_capital_only", 0, ini) != 0;
       if (g_bomberCapitalOnly) status("server: bomber_capital_only=1 (test): bomber creep target capital ships only, and their torpedoes lock as stock");
+      g_torpCapitalLock = GetPrivateProfileIntW(L"server", L"torpedo_capital_lock", 0, ini) != 0;
+      status("server: torpedo_capital_lock=%d (test: 1 = creep torpedoes lock onto capital ships only)", (int)g_torpCapitalLock);
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -1879,6 +1882,11 @@ static void creep_ai_partition(uint64_t part) {
     // for it first; the other creep (fighters, interceptors, dropships) only below the starfighters, so they don't swarm
     // it (Pseudo, 2026-10-26: fighters and interceptors swarmed it on defense and got wrecked; the opener the same way).
     static const float kSmallcapOthers = 1;
+    // The bombers' list (v 0) puts the capital ships above everything the stock scores hold (turrets 5, starfighters and
+    // players 3): frigates 10, flagship 9, the small capital ship 8 on offense; the small capital ship 10 in the opener
+    // and on defense. (2026-10-27: at 4/3/2 a nearby starfighter tied with the flagship and beat the corvette, and
+    // bombers near a capital ship targeted a starfighter 3 times in 4.) The others' list keeps kExtra.
+    static const float kBomberPrio[3][3] = { { 10, 0, 0 }, { 9, 0, 0 }, { 8, 10, 10 } };
     uint64_t arrs[3] = {}, arrsF[3] = {};
     for (int v = 0; v < 2; v++)
         for (int r = 0; r < 3; r++) {
@@ -1888,7 +1896,7 @@ static void creep_ai_partition(uint64_t part) {
                 uint64_t s = creep_copy(tmpl, 48); if (!s) { tmpl = 0; break; }
                 *(uint64_t*)(s + 24) = 0; *(uint64_t*)(s + 32) = 0;
                 *(uint32_t*)(s + 40) = kExtra[e].tags;
-                *(float*)(s + 44) = v == 1 && r != 0 && kExtra[e].tags == 1u << 28 ? kSmallcapOthers : kExtra[e].prio[r];
+                *(float*)(s + 44) = v == 0 ? kBomberPrio[e][r] : r != 0 && kExtra[e].tags == 1u << 28 ? kSmallcapOthers : kExtra[e].prio[r];
                 *(uint64_t*)(arr + m++ * 8ull) = s;
             }
             if (!tmpl) break;
@@ -2473,10 +2481,9 @@ static void creep_scan() {
             if (!dup && nl < 128) links[nl++] = { src, dst };
         }
     });
-    // With bomber_capital_only every bomber target is a capital ship already, and the lock filter (TargetTags 2) seems to
-    // stop locks on frigates and flagships (2026-10-27: one torpedo a flight since it went in, many before), so it's left
-    // stock then.
-    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
+    // The lock filter (TargetTags 2) only with the test switch torpedo_capital_lock=1, and not with bomber_capital_only
+    // (every bomber target is a capital ship then): 2026-10-27, one torpedo a flight since it went in, many before.
+    if (g_creepTorpedoes) { creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly || !g_torpCapitalLock); creep_torpedo_runs(torpWeapon, raidBp, botsLoaded); }
     if (g_creepWingmen) creep_wingmen_raid(raidBp, botsLoaded);
     // packs: one per placement, its faction from the prefab's name
     struct Pack { uint64_t src; int faction, n; uint64_t dst[4]; float c[3]; } packs[16]; int np = 0;
