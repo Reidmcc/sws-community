@@ -526,6 +526,22 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
+    {   // runs on the corvette and the Raider ([creep] torpedoes=1): the Raider's blueprint loads with its one damage section
+        // (DamageSectionComponentData 0x144a245c0, ClearFaces +292..+297, none clear); a frigate's section stays as it is
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        auto bpPart = [](const char* name, uint8_t* sec) {
+            uint8_t* bp = fake_alloc(0x100); *(uint64_t*)(bp + 8) = 0x144ade220; *(const char**)(bp + 0x18) = name;
+            uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = bp; in[1] = sec;
+            uint8_t* p = fake_alloc(0x40); *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 2; return p; };
+        uint8_t* raiderSec = fake_alloc(0x200); *(uint64_t*)(raiderSec + 8) = 0x144a245c0;
+        uint8_t* frigateSec = fake_alloc(0x200); *(uint64_t*)(frigateSec + 8) = 0x144a245c0;
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Raider/Starship_Raider", raiderSec), 0);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Frigate/Starship_Frigate", frigateSec), 0);
+        bool sides = !raiderSec[292] && !raiderSec[293] && !raiderSec[294] && !raiderSec[295];
+        bool frigate = true; for (int k = 0; k < 6; k++) frigate = frigate && !frigateSec[292 + k];
+        check(raiderSec[296] == 1 && raiderSec[297] == 1 && sides && frigate,
+              "creep torpedo runs: the Raider's damage section has its top and bottom open to runs as its blueprint loads; a frigate's untouched");
+    }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
     {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition

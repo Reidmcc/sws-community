@@ -2116,6 +2116,28 @@ static float __fastcall h_scorelookup(uint64_t settings, uint32_t tags, uint64_t
     ReleaseSRWLockExclusive(&g_creepLogLock);
     return r;
 }
+// Runs on the corvette and the Raider ([creep] torpedoes, 2026-10-27). A bombing run is planned over a target's damage
+// sections that have a clear side (DamageSectionComponentData 0x144a245c0, ClearFaces +292: Zpos, Zneg, Xpos, Xneg, Ypos
+// +296, Yneg +297), which a section copies when it's built. The corvette's and the Raider's single section has none, so no
+// run can start on them and a bomber assigned one falls back to dogfighting it, sitting on its tail (flown: "parked
+// behind the Raider, the leader using lasers and the rest doing nothing"). Their top and bottom are marked clear as the
+// ship's blueprint loads, before any is built. Only when the blueprint holds exactly one section with no clear side.
+static const char* inst_leaf(uint64_t inst, char* out, size_t cap);
+static void smallcap_runs_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    char leaf[128] = ""; bool ours = false; uint64_t sec = 0; int nsec = 0;
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
+        uint64_t ci = rd<uint64_t>(o, 8);
+        if (ci == G(0x144ade220)) { inst_leaf(o, leaf, sizeof leaf); ours = !_stricmp(leaf, "starship_raider") || !_stricmp(leaf, "starship_corvette"); if (!ours) return; }
+        else if (ci == G(0x144a245c0)) { sec = o; nsec++; }
+    }
+    if (!ours) return;
+    bool none = sec != 0; for (int k = 0; k < 6 && none; k++) none = rd<uint8_t>(sec, 292 + k) == 0;
+    if (nsec != 1 || !none) { status("creep: %s's damage sections aren't as expected (%d, %s); bombers can't run on it", leaf, nsec, sec ? "some side already clear" : "none"); return; }
+    bool ok = leaf_write(sec + 296, false, 1, true) && leaf_write(sec + 297, false, 1, true);
+    status("creep: %s: %s", leaf, ok ? "top and bottom open to bombing runs" : "a write failed; bombers can't run on it");
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
@@ -2123,6 +2145,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
+    if (part && g_creepTorpedoes) smallcap_runs_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
