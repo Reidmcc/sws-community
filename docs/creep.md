@@ -30,6 +30,8 @@ capital_damage=100
 missiles=1
 ; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs
 torpedoes=1
+; how close the bombers' torpedoes may lock on, in metres (0 to 1000; 500 is stock)
+torpedo_lock_min=500
 ; 1 = creep wingmen attack and fly the bombers' runs like their squadron's leader
 wingmen=1
 ; 1 = every pack flies with the vs-AI bots' handling for its ship
@@ -95,7 +97,10 @@ fifteen bombers take a capital ship down very fast. Their hits on turrets and we
 damage, such as capital ships' turrets firing on each other, keeps the stock rule.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
-never do). This also gives creep the bots' tail-chasing dogfighting. With **torpedoes**, Y-wing and TIE bomber packs carry
+never do). This also gives creep the bots' tail-chasing dogfighting. Bombs need no setting: bomber creep always drop them.
+**Minimum lock distance** (`torpedo_lock_min`) sets how close the bombers' torpedoes may lock on. Stock is 500 m, but
+bombers attacking a capital ship close in to 200-300 m and then can't lock, so a shorter distance lets them fire far more
+often. With **torpedoes**, Y-wing and TIE bomber packs carry
 the vs-AI bots' torpedoes instead of bombs (the TIE bomber also gets the bots' flares), with the creep's own hull and
 shields, and fly **torpedo runs** on capital ships: a straight run in from about 1,200 m, which gives them time to lock
 past the torpedoes' 500 m minimum, then across the target about 150 m above its hull and 600 m out the far side before

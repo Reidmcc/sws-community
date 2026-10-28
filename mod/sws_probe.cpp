@@ -193,6 +193,7 @@ static bool g_creepBotHandling;
 // fingerprint only when aggressive is on and it isn't 2000, so profiles from before it keep theirs.
 static int g_creepRadius = 2000;
 static int g_creepCapDamage = 100;   // [creep] capital_damage: percent of their damage creep hits do to capital ships (aggressive creep)
+static int g_creepTorpMinLock = 500;   // [creep] torpedo_lock_min: metres, the creep torpedoes' minimum lock distance (500 = stock)
 // the per-faction phase switch (creep_ai_partition, h_ctrlfield): the creep squadron's and controller's data, the shared
 // target list, and the score arrays for offense, face-off and defense; last = the last behaviour seen (-1 none)
 // Bomb raids: a bomber's aux bombs load a raid behaviour (IncomSquadronAIBombingFlightBehaviour, from the bomb weapon
@@ -253,6 +254,7 @@ static uint32_t profile_fingerprint() {
     if (g_creepAggressive && g_creepCapDamage != 100) { sprintf_s(b, "creep.capital_damage=%d;", g_creepCapDamage); h = fnv1a(h, b); }
     if (g_creepMissiles) h = fnv1a(h, "creep.missiles=1;");
     if (g_creepTorpedoes) h = fnv1a(h, "creep.torpedo_runs=1;");
+    if (g_creepTorpedoes && g_creepTorpMinLock != 500) { sprintf_s(b, "creep.torpedo_lock_min=%d;", g_creepTorpMinLock); h = fnv1a(h, b); }
     if (g_creepWingmen) h = fnv1a(h, "creep.wingmen=1;");
     if (g_creepBotHandling) h = fnv1a(h, "creep.bothandling=1;");
     for (int i = 0; i < g_overrideCount; i++) { sprintf_s(b, "%s=%.9g;", g_overrides[order[i]].key, g_overrides[order[i]].value); h = fnv1a(h, b); }
@@ -457,6 +459,11 @@ static void load_profile(const wchar_t* dir) {
                 int was = g_creepCapDamage; g_creepCapDamage = g_creepCapDamage < 0 ? 0 : 100;
                 status("profile: [creep] capital_damage = %d is outside 0..100; clamped to %d", was, g_creepCapDamage);
             }
+            g_creepTorpMinLock = (int)GetPrivateProfileIntW(L"creep", L"torpedo_lock_min", 500, pf);
+            if (g_creepTorpMinLock < 0 || g_creepTorpMinLock > 1000) {
+                int was = g_creepTorpMinLock; g_creepTorpMinLock = g_creepTorpMinLock < 0 ? 0 : 1000;
+                status("profile: [creep] torpedo_lock_min = %d is outside 0..1000; clamped to %d", was, g_creepTorpMinLock);
+            }
             if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
@@ -491,7 +498,8 @@ static void load_profile(const wchar_t* dir) {
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
     if (g_creepAggressive) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
     if (g_creepMissiles) status("  creep: fire missiles and torpedoes");
-    if (g_creepTorpedoes) status("  creep: Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs");
+    if (g_creepTorpedoes) status("  creep: Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs; they lock from %d m%s",
+                                 g_creepTorpMinLock, g_creepTorpMinLock == 500 ? " (stock)" : "");
     if (g_creepWingmen) status("  creep: wingmen attack and fly runs like their leader");
     if (g_creepBotHandling) status("  creep: every pack flies with the vs-AI bots' handling");
     for (int i = 0; i < g_overrideCount; i++) status("  value %s = %.9g (%s)", g_overrides[i].key, g_overrides[i].value,
@@ -2390,6 +2398,32 @@ static uint64_t creep_loadout(int f, int t, const CreepSources& s, bool torpedoe
 // carry all of, 0 = anything). TargetTags = 2 (the capital-ship tag, which the corvette, the Raider, the frigates and the
 // flagships carry) keeps them from locking onto creep. Those weapons are the vs-AI bots' too, so only while no bot logic
 // is loaded (Fleet Battles: pf_pvb_botlogic is loaded only with bots); with bots loaded, a filter the mod set goes back.
+// [creep] torpedo_lock_min: the creep torpedoes' minimum lock distance (stock 500 m). Flown 2026-10-27: bombers attacking a
+// capital ship close in to 200-300 m, inside the stock minimum, and so held their torpedoes; at 150 m they fired far more.
+// The firing data's MinLockDistanceAttribute (+184) points to an IncomAttributeFloat: value +32, its id object +24 -> +32;
+// the same value sits in the weapon config's float registration list (+0x40, {id, value at +4}), and both are written, as
+// the value engine does. The bots' weapons too, so only while no bot logic is loaded; the stock value goes back if it loads.
+static void creep_torpedo_minlock(const uint64_t weapon[2], bool botsLoaded) {
+    static uint64_t set[2]; static float stock[2];
+    static const char* kShip[2] = { "ywing", "tiebomber" };
+    for (int b = 0; b < 2; b++) {
+        uint64_t f = weapon[b] ? rd<uint64_t>(weapon[b], 96) : 0, at = f ? rd<uint64_t>(f, 184) : 0; if (!at) continue;
+        uint64_t idObj = rd<uint64_t>(at, 24); uint32_t id = idObj ? rd<uint32_t>(idObj, 32) : 0;
+        uint64_t reg = register_slot(weapon[b], 1, id, 0);
+        float now = rdf(at, 32);
+        if (botsLoaded) {
+            if (set[b] == weapon[b] && leaf_write(at + 32, false, stock[b]) && (!reg || leaf_write(reg, false, stock[b]))) {
+                set[b] = 0; status("creep: %s torpedoes: vs-AI bots are loaded, so they lock from %g m again", kShip[b], (double)stock[b]); }
+            continue;
+        }
+        if (set[b] != weapon[b]) { stock[b] = now; set[b] = weapon[b]; }
+        float want = (float)g_creepTorpMinLock;
+        if (now == want && (!reg || rdf(reg, 0) == want)) continue;
+        bool ok = leaf_write(at + 32, false, want) && (!reg || leaf_write(reg, false, want));
+        status("creep: %s torpedoes lock from %d m (stock %g m)%s%s", kShip[b], g_creepTorpMinLock, (double)stock[b],
+               reg ? "" : "; no list entry", ok ? "" : "; a write failed");
+    }
+}
 static void creep_torpedo_targets(const uint64_t weapon[2], bool botsLoaded) {
     static uint64_t set[2];   // the firing data the mod changed, to put back if bots load
     static const char* kShip[2] = { "ywing", "tiebomber" };
@@ -2555,6 +2589,7 @@ static void creep_scan() {
     // (every bomber target is a capital ship then): 2026-10-27, one torpedo a flight since it went in, many before.
     if (g_creepTorpedoes) {
         creep_torpedo_targets(torpWeapon, botsLoaded || g_bomberCapitalOnly || !g_torpCapitalLock);
+        if (g_creepTorpMinLock != 500) creep_torpedo_minlock(torpWeapon, botsLoaded);
         if (g_torpRuns) creep_torpedo_runs(torpWeapon, raidBp, botsLoaded);   // test switch torpedo_runs=0: no runs
     }
     else if (g_creepAggressive) creep_run_data(raidBp, botsLoaded, 1);   // bombers that keep their bombs: mid-range runs

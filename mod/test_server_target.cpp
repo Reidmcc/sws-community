@@ -506,6 +506,12 @@ int main() {
         torpWeapon = fake_alloc(0x200); *(uint64_t*)(torpWeapon + 8) = 0x1449fc370;
         *(const char**)(torpWeapon + 0x18) = "Game/Gameplay/Starships/YWing_AI/Projectiles/StarshipWeaponConfig_HighYieldTorpedo_YWing_AI_Instalock";
         torpFiring = fake_alloc(0x200); *(int32_t*)(torpFiring + 224) = 2; *(uint8_t**)(torpWeapon + 96) = torpFiring;
+        // its MinLockDistanceAttribute (+184): an IncomAttributeFloat at 500 (+32), id 0x5157 (its id object +24 -> +32), also
+        // in the weapon config's float registration list (+0x40) as {0x5157, 500}
+        { uint8_t* at = fake_alloc(0x40); uint8_t* idObj = fake_alloc(0x40); *(uint32_t*)(idObj + 32) = 0x5157;
+          *(float*)(at + 32) = 500.f; *(uint8_t**)(at + 24) = idObj; *(uint8_t**)(torpFiring + 184) = at;
+          uint8_t* fl = fake_alloc(16 + 16) + 16; *(uint32_t*)(fl - 4) = 1; *(uint32_t*)fl = 0x5157; *(float*)(fl + 4) = 500.f;
+          *(uint8_t**)(torpWeapon + 0x40) = fl; }
         *(uint8_t**)(slotTorp + 96) = torpWeapon;   // the torpedo slot's weapon (StarshipBaseSlotConfig Config +96)
         *(uint8_t**)(slotBomb + 96) = bhvObj(0x1449fc370);   // the bombs' slot: a bomb weapon
         spInsts[6] = botMove;
@@ -979,6 +985,11 @@ int main() {
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
           "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
+    {   // [creep] torpedo_lock_min=150: the minimum lock distance, attribute and list entry, with no vs-AI bots loaded
+        uint8_t* at = torpFiring ? *(uint8_t**)(torpFiring + 184) : nullptr; uint8_t* fl = torpWeapon ? *(uint8_t**)(torpWeapon + 0x40) : nullptr;
+        check(at && fl && *(float*)(at + 32) == 150.f && *(float*)(fl + 4) == 150.f,
+              "creep torpedoes: they lock from the profile's 150 m (attribute and its list entry), with no vs-AI bots loaded");
+    }
     check(torpWeapon && raidBp && *(uint8_t**)(torpWeapon + 120) == raidBp && *(uint8_t**)(bombCfg + 120) == raidBp &&
           *(float*)(raidData + 40) == 1200.f && *(float*)(raidData + 48) == 100.f && *(float*)(raidData + 52) == 600.f &&
           *(float*)(raidData + 56) == 150.f && *(float*)(raidData + 68) == 1350.f && *(float*)(raidData + 44) == 100.f,
@@ -1120,7 +1131,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
