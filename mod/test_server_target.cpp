@@ -215,11 +215,15 @@ int main() {
     const uint8_t scorerHead[] = {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55, 0x48,0x8b,0x44,0x24,0x68, 0x48,0xa3};
     const uint8_t scorerTail[] = {0x41,0x5d, 0x41,0x5c, 0x5f, 0x5e, 0x5d, 0xc3};
     if (map(0x141820000, 0x10000) != (void*)0x141820000) { printf("FAIL  could not map the scorer region\n"); return 1; }
-    // ... and its seventh (the targeting rules, [rsp+0x60]) in g_scorerRules
-    { uint8_t code[96]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
+    // ... and its seventh (the targeting rules, [rsp+0x60]) in g_scorerRules; and, when its tenth (the output vector,
+    // [rsp+0x78]) is given, appends two 0x38-byte entries as the real one appends one per candidate (end +8 += 0x70; the
+    // test writes the entries' contents ahead)
+    { uint8_t code[128]; size_t at = 0; memcpy(code, scorerHead, sizeof scorerHead); at = sizeof scorerHead;
       uint64_t where = (uint64_t)&g_scorerList; memcpy(code + at, &where, 8); at += 8;
       const uint8_t rulesLoad[] = {0x48,0x8b,0x44,0x24,0x60, 0x48,0xa3}; memcpy(code + at, rulesLoad, sizeof rulesLoad); at += sizeof rulesLoad;
       uint64_t whereR = (uint64_t)&g_scorerRules; memcpy(code + at, &whereR, 8); at += 8;
+      const uint8_t outAppend[] = {0x48,0x8b,0x44,0x24,0x78, 0x48,0x85,0xc0, 0x74,0x05, 0x48,0x83,0x40,0x08,0x70};
+      memcpy(code + at, outAppend, sizeof outAppend); at += sizeof outAppend;
       memcpy(code + at, scorerTail, sizeof scorerTail); at += sizeof scorerTail;
       put(0x14182ade0, code, at); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
@@ -481,7 +485,7 @@ int main() {
     // top-level: inside another asset's partition, as the game keeps them) and the bots' torpedo collection (ClassInfo
     // 0x144a156a0: bot hull, two weapon slots 0x1449fc3f0, bot movement), each an Asset, the collection's Configs at +0x20
     uint8_t* torpWeapon = nullptr; uint8_t* torpFiring = nullptr;   // the Y-wing AI torpedo, for the lock-filter check
-    uint8_t* raidData = nullptr; uint8_t* raidBp = nullptr; uint8_t* bombCfg = nullptr;   // the torpedo-run check
+    uint8_t* raidData = nullptr; uint8_t* raidBp = nullptr; uint8_t* bombCfg = nullptr;   // the run-data check
     auto cfgNamed = [](const char* name, uint64_t cls) { uint8_t* c = fake_alloc(0x400); *(uint64_t*)(c + 8) = cls; *(const char**)(c + 0x18) = name; return c; };
     uint8_t* spHull = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipHealthDamageData_YWing_AI_SP", 0x144a8ca00);
     uint8_t* spShield = cfgNamed("Game/Gameplay/Starships/YWing_AI/Config/StarshipShieldData_YWing_AI_SP", 0x144a8c980);
@@ -516,7 +520,7 @@ int main() {
         *(uint8_t**)(slotBomb + 96) = bhvObj(0x1449fc370);   // the bombs' slot: a bomb weapon
         spInsts[6] = botMove;
         // the AI bombs (StarshipWeaponConfig) carry the bombing-run blueprint (+120): an IncomSquadronAIHostBehaviourBlueprint
-        // whose Objects (+72) hold a root and the run data (ClassInfo 0x144a48340) with the stock values, for the torpedo runs
+        // whose Objects (+72) hold a root and the run data (ClassInfo 0x144a48340) with the stock values
         raidData = fake_alloc(0x80); *(uint64_t*)(raidData + 8) = 0x144a48340;
         *(float*)(raidData + 40) = 400.f; *(float*)(raidData + 44) = 100.f; *(float*)(raidData + 48) = 50.f; *(float*)(raidData + 52) = 250.f;
         *(float*)(raidData + 56) = 50.f; *(float*)(raidData + 68) = 500.f; *(uint8_t*)(raidData + 72) = 1;
@@ -574,8 +578,8 @@ int main() {
         check(e[1 * 8 + 5] == 230891742 && e[0 * 8 + 5] == 230891742 && e[2 * 8 + 5] == 230891742 && e[3 * 8 + 5] == -597186424,
               "map fix: Zavian Abyss's miswired creep spawn event becomes Spawn as its layer loads; the other connections untouched");
     }
-    {   // runs on the corvette and the Raider ([creep] torpedoes=1): the Raider's blueprint loads with its one damage section
-        // (DamageSectionComponentData 0x144a245c0, ClearFaces +292..+297, none clear); a frigate's section stays as it is
+    {   // the Raider's blueprint loads with its one damage section (DamageSectionComponentData 0x144a245c0, ClearFaces
+        // +292..+297, none clear); runs on it were tried and dropped with the torpedo runs, so it stays as it is, and so does a frigate's
         typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         auto bpPart = [](const char* name, uint8_t* sec) {
             uint8_t* bp = fake_alloc(0x100); *(uint64_t*)(bp + 8) = 0x144ade220; *(const char**)(bp + 0x18) = name;
@@ -587,8 +591,8 @@ int main() {
         ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Frigate/Starship_Frigate", frigateSec), 0);
         bool sides = !raiderSec[292] && !raiderSec[293] && !raiderSec[294] && !raiderSec[295];
         bool frigate = true; for (int k = 0; k < 6; k++) frigate = frigate && !frigateSec[292 + k];
-        check(raiderSec[296] == 1 && raiderSec[297] == 1 && sides && frigate,
-              "creep torpedo runs: the Raider's damage section has its top and bottom open to runs as its blueprint loads; a frigate's untouched");
+        check(!raiderSec[296] && !raiderSec[297] && sides && frigate,
+              "creep: the Raider's and a frigate's damage sections load untouched");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
@@ -982,18 +986,27 @@ int main() {
         check(rb && rb != rulesData && *(int32_t*)(rb + 4) == 15 && *(float*)(rb + 32) == 1.0f && *(float*)(rb + 8) == 1200.f &&
               rf == rulesData && *(int32_t*)(rulesData + 4) == 1 && *(float*)(rulesData + 32) == 0.2f,
               "creep wingmen: a bomber may share its target with the whole squadron (15 attackers, no penalty), other creep keep the squadron's rules");
+        // ... but only a capital ship: of the entries the scorer appends (candidate +0x10, cap +0x1c), a capital ship's
+        // (tag bit 2) keeps 15 and a starfighter's gets the squadron's 1 back
+        uint8_t* capT = fake_alloc(0x600); *(uint32_t*)(capT + 0x5d0) = 2; *(uint8_t**)(capT + 0x30) = fake_alloc(0x40);
+        uint8_t* fighterT = fake_alloc(0x600); *(uint32_t*)(fighterT + 0x5d0) = 0x14; *(uint8_t**)(fighterT + 0x30) = fake_alloc(0x40);
+        uint8_t* ents = fake_alloc(4 * 0x38);
+        *(uint8_t**)(ents + 0x10) = capT; *(int32_t*)(ents + 0x1c) = 15;
+        *(uint8_t**)(ents + 0x38 + 0x10) = fighterT; *(int32_t*)(ents + 0x38 + 0x1c) = 15;
+        uint8_t* outVec = fake_alloc(0x20); *(uint8_t**)outVec = ents; *(uint8_t**)(outVec + 8) = ents; *(uint8_t**)(outVec + 0x10) = ents + 4 * 0x38;
+        ((sc_t)0x14182ade0)(0, (uint64_t)bomberShip, 0, 0, 0, 0, (uint64_t)rulesData, (uint64_t)creepList, 0, (uint64_t)outVec, 0, 0);
+        check(*(uint8_t**)(outVec + 8) == ents + 0x70 && *(int32_t*)(ents + 0x1c) == 15 && *(int32_t*)(ents + 0x38 + 0x1c) == 1,
+              "creep wingmen: bombers may all take a capital ship (its candidate entry keeps 15 attackers); a starfighter gets the squadron's 1 back");
     }
-    check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
-          "creep torpedoes: the bombers' AI torpedo locks only onto capital ships (TargetTags 2), with no vs-AI bots loaded");
     {   // [creep] torpedo_lock_min=150: the minimum lock distance, attribute and list entry, with no vs-AI bots loaded
         uint8_t* at = torpFiring ? *(uint8_t**)(torpFiring + 184) : nullptr; uint8_t* fl = torpWeapon ? *(uint8_t**)(torpWeapon + 0x40) : nullptr;
         check(at && fl && *(float*)(at + 32) == 150.f && *(float*)(fl + 4) == 150.f,
               "creep torpedoes: they lock from the profile's 150 m (attribute and its list entry), with no vs-AI bots loaded");
     }
-    check(torpWeapon && raidBp && *(uint8_t**)(torpWeapon + 120) == raidBp && *(uint8_t**)(bombCfg + 120) == raidBp &&
-          *(float*)(raidData + 40) == 1200.f && *(float*)(raidData + 48) == 100.f && *(float*)(raidData + 52) == 600.f &&
-          *(float*)(raidData + 56) == 150.f && *(float*)(raidData + 68) == 1350.f && *(float*)(raidData + 44) == 100.f,
-          "creep torpedo runs: the AI torpedo carries the bombs' run behaviour, set for torpedo runs (1200 m in, 150 m above, 600 m out)");
+    check(torpWeapon && raidBp && *(uint8_t**)(torpWeapon + 120) == nullptr && *(uint8_t**)(bombCfg + 120) == raidBp &&
+          *(float*)(raidData + 40) == 400.f && *(float*)(raidData + 48) == 50.f && *(float*)(raidData + 52) == 250.f &&
+          *(float*)(raidData + 56) == 50.f && *(float*)(raidData + 68) == 500.f && *(float*)(raidData + 44) == 100.f,
+          "creep torpedoes: the AI torpedo carries no run behaviour, and with torpedoes on the bombs' run data stays stock");
     // the last behaviour the test reported was 3 (face-off): bomb raids back to the stock Defensive (1) after the ticks
     check(creepSquadForMode && *(int32_t*)(creepSquadForMode + 32) == 1,
           "aggressive creep: outside offense the squadron's data engagement mode is back to the stock Defensive (bomb raids only on the current target)");

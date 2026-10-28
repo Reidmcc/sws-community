@@ -783,8 +783,8 @@ namespace SwsSettings
             }
             rule(creepMissiles, "Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep never do). This also has creep dogfight the way the bots do, " +
                 "chasing a target's tail. Applies to every pack of both factions. Bombs need no setting: bomber creep always drop them.");
-            rule(creepTorpedoes, "Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs on capital ships: a long straight run in, over the target, and out again " +
-                "before turning back for another. Their torpedoes lock only onto capital ships. They fire them only with creep missiles on, above.");
+            rule(creepTorpedoes, "Y-wing and TIE bomber packs carry the vs-AI bots' torpedoes instead of bombs, and fire them as they attack, at capital ships and starfighters alike. " +
+                "They fire them only with creep missiles on, above. Without this, bomber creep keep their bombs and make bombing runs on capital ships.");
             {
                 var row = Theme.Row(6); row.Margin = new Padding(28, 2, 0, 6);
                 row.Controls.Add(new Label { Text = "Minimum lock distance (500 m is stock)", AutoSize = true, Font = Theme.Small, ForeColor = Theme.Muted, Margin = new Padding(0, 8, 8, 0) });
@@ -796,7 +796,8 @@ namespace SwsSettings
                 row.Controls.Add(creepTorpMinLock); col.Controls.Add(row);
             }
             rule(creepWingmen, "In stock, only a creep squadron's leader attacks on its own and flies the bombers' runs; the wingmen follow it in formation. With this, " +
-                "wingmen attack, and bomber wingmen make their own runs, as the leader does. Applies to every pack of both factions.");
+                "wingmen attack, and bomber wingmen make their own runs, as the leader does. Bombers may also all attack the same capital ship, while other targets keep " +
+                "the stock rule of one attacker each. Applies to every pack of both factions.");
             rule(creepBotHandling, "Every creep pack flies with the vs-AI bots' movement for its ship (their drift handling, roll and catch-up tuning) instead of the AI ship's own. " +
                 "Hull and shields stay the creep's.");
 

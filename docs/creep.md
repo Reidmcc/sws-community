@@ -25,14 +25,14 @@ aggressive=1
 ; how far aggressive creep look for targets, in metres (500 to 3000; 2000 is the bots' value)
 radius=2000
 ; how much of their damage aggressive creep do to capital ships, in percent (0 to 100)
-capital_damage=100
+capital_damage=30
 ; 1 = creep fire missiles (and torpedoes, when they carry them)
 missiles=1
-; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs, and fly torpedo runs
+; 1 = Y-wing and TIE bomber packs carry torpedoes instead of bombs
 torpedoes=1
 ; how close the bombers' torpedoes may lock on, in metres (0 to 1000; 500 is stock)
 torpedo_lock_min=500
-; 1 = creep wingmen attack and fly the bombers' runs like their squadron's leader
+; 1 = creep wingmen attack and fly the bombers' runs like their squadron's leader, and bombers may all attack one capital ship
 wingmen=1
 ; 1 = every pack flies with the vs-AI bots' handling for its ship
 bot_handling=1
@@ -60,7 +60,7 @@ same as using it, though: the creep's squad behaviour switches some aux off, and
 - **missiles:** only with **missiles** on; stock creep never fire it.
 - **never:** switched off in the creep's behaviour, with any settings.
 - **With torpedoes on,** Y-wing and TIE bomber packs carry torpedoes instead of bombs and their assault shield (fired
-  only with **missiles** on, and only at capital ships), and the TIE bomber's chaff becomes flares.
+  only with **missiles** on), and the TIE bomber's chaff becomes flares.
 - **Countermeasures:** creep aren't allowed them, except possibly the bombers and dropships, which the rule lets through
   when nothing else decides; nobody has seen creep use one.
 
@@ -84,7 +84,8 @@ bots do, and their targets follow the match's phase:
 | Their side on offense | the enemy frigates, then the flagship once the frigates are gone |
 | Their side on defense | the enemy corvette or Raider (the attacker brings a new one each offense phase): bombers go for it first; fighters, interceptors and dropships only once no starfighter is in reach |
 
-Players and other creep are targets in every phase. Bombers' bomb runs follow the same phases: on offense they raid the
+Players and other creep are targets in every phase. Bombers rank the phase's capital ships above everything else and
+fight starfighters when none is in reach. Bombers' bomb runs follow the same phases: on offense they raid the
 nearest enemy capital ship; otherwise only their current target, which can be the corvette or Raider but never a frigate
 or the flagship. Bombers that keep their bombs start their runs further out than stock (800 m instead of 400) and fly
 them higher over the hull (100 m instead of 50), so they don't fly into their target.
@@ -92,8 +93,8 @@ them higher over the hull (100 m instead of 50), so they don't fly into their ta
 **Damage to capital ships.** In stock Fleet Battles, creep can't hurt capital ships at all: every PvP level sets its
 capital ships to ignore damage from AI starships that aren't the vs-AI bots, hull, shields, turrets and weak points alike.
 With aggressive creep their hits count, and on hulls and shields they're scaled by **Damage to capital ships**
-(`capital_damage`, beside the engagement range in the app): at 100% a creep torpedo hits as hard as a player's, and
-fifteen bombers take a capital ship down very fast. Their hits on turrets and weak points count in full. Other AI
+(`capital_damage`, beside the engagement range in the app), 30% by default: at 100% a creep torpedo hits as hard as a
+player's, and fifteen bombers take a capital ship down very fast. Their hits on turrets and weak points count in full. Other AI
 damage, such as capital ships' turrets firing on each other, keeps the stock rule.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
@@ -102,19 +103,19 @@ never do). This also gives creep the bots' tail-chasing dogfighting. Bombs need 
 bombers attacking a capital ship close in to 200-300 m and then can't lock, so a shorter distance lets them fire far more
 often. With **torpedoes**, Y-wing and TIE bomber packs carry
 the vs-AI bots' torpedoes instead of bombs (the TIE bomber also gets the bots' flares), with the creep's own hull and
-shields, and fly **torpedo runs** on capital ships: a straight run in from about 1,200 m, which gives them time to lock
-past the torpedoes' 500 m minimum, then across the target about 150 m above its hull and 600 m out the far side before
-turning back for the next run. The runs are the game's own bombing-run flight, set for torpedoes; it picks the target's
-side and line afresh each time. Their torpedoes lock only onto capital ships (the corvette, the Raider, frigates and
-flagships), so they aren't spent on creep. The torpedo weapons and the run flight are the vs-AI bots' too, so all of
-this is only set while no bots are loaded, which is to say in Fleet Battles. (Until v0.5.0 bombers carried torpedoes as
-well as bombs, without runs: Y-wings fired one torpedo on the approach and then switched to bombing runs.)
+shields. They fire them as they attack, at capital ships and starfighters alike: on a capital ship, the bombers' own
+attack makes a fair torpedo pass, firing, pulling out and coming back. The torpedo weapons are the vs-AI bots' too, so
+the lock distance is only set while no bots are loaded, which is to say in Fleet Battles. (Until v0.5.0 bombers carried
+torpedoes as well as bombs: Y-wings fired one torpedo on the approach and then switched to bombing runs.)
 
 **Wingmen like their leader.** In stock, two things are a creep squadron leader's alone: attacking on its own, and the
 weapon behaviours the squad AI runs for its aux weapons, which is where the bombers' runs come from. The wingmen follow
 the leader in formation. With **wingmen**, they attack on their own, and bomber wingmen plan and fly their own runs
-(each picks its own line across the target). The run behaviour is the vs-AI bots' too, so its part is only set while no
-bots are loaded; the bots' own gates don't change (they feed the inputs the creep-only switch reads).
+(each picks its own line across the target). And in stock a creep squadron (one per faction, all three packs) lets only
+one ship attack each target, so wingmen were left with nothing; with **wingmen**, bombers may all attack the same capital
+ship, while every other target keeps the stock rule of one attacker each, so a squadron doesn't pile onto a player. The
+run behaviour is the vs-AI bots' too, so its part is only set while no bots are loaded; the bots' own gates don't change
+(they feed the inputs the creep-only switch reads).
 
 **The bots' handling.** Every pack flies the vs-AI bots' movement for its ship (their drift, roll and catch-up tuning)
 instead of the AI ship's own, which makes creep noticeably sharper in a dogfight. Hull and shields stay the creep's.
