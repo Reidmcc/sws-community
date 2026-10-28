@@ -99,7 +99,7 @@ With aggressive creep their hits count, and on hulls and shields they're scaled 
 (`capital_damage`, beside the engagement range in the app), 30% by default: at 100% a creep torpedo hits as hard as a
 player's, and fifteen bombers take a capital ship down very fast. At 0% the stock rule stays, and creep do capital ships
 no harm at all. Their hits on turrets and weak points count in full. Other AI
-damage, such as capital ships' turrets firing on each other, keeps the stock rule.
+damage, such as capital ships' turrets firing on each other and their passive damage, keeps the stock rule and full strength.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
 never do). This also gives creep the bots' tail-chasing dogfighting. Bombs need no setting: bomber creep always drop them.
@@ -130,6 +130,17 @@ Bots follow the player ship's movement values, so with this on, creep follow a p
 `incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileondefense` (3 as shipped) and
 `...whileonoffense` (1). It counts for every creep, changed packs included.
 
+## Known limitation: torpedoes and lasers against a flagship
+
+Against a flagship, bombers with torpedoes fire well for about a minute and then hardly at all, though they keep the
+flagship as their target. (Seen with Y-wings on the Star Destroyer; TIE bombers on the MC75 haven't been flown, and
+should do the same.) The AI lets a ship fire only while its target's point is close to the nose (within 15 degrees for
+the creep Y-wings), and a flagship's point is its centre, inside the hull. Coming in, the bombers point at it; once
+they're pressed against the hull below it, it sits about 90 degrees off their nose, and their lasers and torpedoes stay
+quiet. Bombs aren't affected: the bomb run releases them on its own rule. So against flagships, bombs are the weapon
+that works. Torpedoes work well against the corvette, the Raider and the cruisers. (Flown 2026-10-28, measured with
+`fire_log`; the details are in the research notes.)
+
 ## How it works
 
 The game's own data does nearly all of it; the mod only rewires and copies.
@@ -154,4 +165,12 @@ The research behind it, with the addresses, offsets and what was ruled out, is i
 
 `creep_log=1` under `[server]` in `server.ini` logs the creep squadrons' target-score lookups, and any target list
 that scores a frigate above zero, with the code that asked. The log always says what each pack flies, its loadout,
-the phase the creep are in, and when bomb raids switch.
+the phase the creep are in, and when bomb raids switch. Three more, also under `[server]` and off by default:
+
+- `capital_damage_log=1`: each capital ship's hull and shield, every 5 s of fighting, with the hits by attacker (bomber
+  creep, other unmarked starships, players and marked starships, hits with no starship behind them, and hits the stock
+  rule always keeps, such as passive damage), what was asked and what was taken; each blast on its own line.
+- `track_log=1`: each bomber's position, its target, the distance and the target's tags, twice a second, into the
+  flight record (`record=1`); `tools/track_report.py` turns it into holding-station and run counts.
+- `fire_log=1`: per bomber, every 5 s, how often the AI let it fire at its target, and which check stopped it when it
+  didn't (the target's tags, the range, the cone off the nose, line of sight).
