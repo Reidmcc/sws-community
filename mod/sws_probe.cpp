@@ -666,6 +666,7 @@ static bool g_loadoutLog = false;       // [server] loadout_log: 1 = log the loa
 static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every starship the server spawns, and whether it worked
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
+static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what reaches capital ships' hulls and shields, and from whom
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -722,6 +723,8 @@ static void read_server_ini() {
         status("server: local_loadouts=%d", (int)g_localLoadouts);
         if (g_localLoadouts) ld_load(); }
       g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
+      g_capDmgLog = GetPrivateProfileIntW(L"server", L"capital_damage_log", 0, ini) != 0;
+      if (g_capDmgLog) status("server: capital_damage_log=1: what reaches capital ships' hulls and shields is logged, by attacker");
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -2157,6 +2160,25 @@ static void smallcap_runs_partition(uint64_t part) {
     bool ok = leaf_write(sec + 296, false, 1, true) && leaf_write(sec + 297, false, 1, true);
     status("creep: %s: %s", leaf, ok ? "top and bottom open to bombing runs" : "a write failed; bombers can't run on it");
 }
+// Creep can damage the light cruiser ([creep] aggressive, 2026-10-27). Of all the capital ships only the light cruiser (the
+// Imperial cruiser in Fleet Battles) has CapitalShipHealthComponentData (0x144a24a40) IgnoreAIDamage (+144) set. Its
+// component copies it (+0x1c8, ctor 0x1417d86a0), and the hull's damage code (0x1417dbe90 -> 0x1417da0e0) then drops every
+// hit whose attacker isn't a starship with its byte +0x338 set, which creep never are: flown, torpedoes and lasers landed on
+// the cruisers and did nothing. Cleared as the blueprint loads, before any cruiser is built.
+static void cruiser_ai_damage_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    char leaf[128] = ""; bool ours = false; uint64_t hc = 0; int nhc = 0;
+    for (uint16_t i = 0; insts && i < n; i++) {
+        uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
+        uint64_t ci = rd<uint64_t>(o, 8);
+        if (ci == G(0x144ade220)) { inst_leaf(o, leaf, sizeof leaf); ours = !_stricmp(leaf, "starship_lightcruiser"); if (!ours) return; }
+        else if (ci == G(0x144a24a40)) { hc = o; nhc++; }
+    }
+    if (!ours) return;
+    if (nhc != 1 || rd<uint8_t>(hc, 144) != 1) { status("creep: %s's health isn't as expected (%d, %s); it still ignores creep damage", leaf, nhc, hc ? "IgnoreAIDamage not set" : "none"); return; }
+    bool ok = leaf_write(hc + 144, false, 0, true);
+    status("creep: %s: %s", leaf, ok ? "creep damage counts against it (IgnoreAIDamage cleared)" : "the write failed; it still ignores creep damage");
+}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
@@ -2164,6 +2186,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
+    if (part && g_creepAggressive) cruiser_ai_damage_partition(part);
     if (part && g_creepTorpedoes) smallcap_runs_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
@@ -2942,6 +2965,100 @@ static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info)
         ReleaseSRWLockExclusive(&g_hitLock);
     }
     return o_shiphit(comp, out, info);
+}
+// capital_damage_log=1 (2026-10-27): what reaches each capital ship's hull and shield bubble, and from whom (creep torpedo
+// hits on the Raider seemed to do nothing). The hull: every direct hit (0x1417db200) and blast (0x1417dbca0) builds a hit
+// record and passes it to FUN_1417dbe90(component, out, record, skipTeamFilter), which drops it through 0x1417da0e0 when the
+// component ignores AI damage (+0x1c8), the record's flags (+0xa4) lack 8, and its attacker (+0xb0, the hit's +0xc0) is
+// neither a player directly ([[+8]] - 8) nor a ServerStarshipEntity (through [[+0x40]] - 8) whose byte +0x338 is set. The
+// record's +0x88 is the damage after the material grid; the health is the component's vtable +0x108, read around the call
+// as the hit functions do. The shield bubble: ServerIncomShieldHealthComponent's direct hit (0x140582ab0) and blast
+// (0x140582d90) take (component, out, info) and return what they took off as out's first float [inferred from the code's
+// shape, as the hull's; not yet seen]; the damage asked is info +0x84 (direct) or +0x74 (blast), the attacker info +0xc0.
+static const char* kCapFrom[4] = { "bomber creep", "starships without the player mark", "players or marked starships", "no starship" };
+struct CapStat { uint64_t comp; bool shield; uint8_t ignoresAI; char name[96]; int hits[4], dropped[4]; double asked[4], dealt[4]; ULONGLONG since; };
+static CapStat g_capStats[64]; static int g_capStatCount; static SRWLOCK g_capLock = SRWLOCK_INIT;
+static int cap_from(uint64_t inst, uint8_t* mark) {   // the drop rule's own reads, without calling into the game
+    *mark = 0; if (!inst) return 3;
+    uint64_t p = rd<uint64_t>(inst, 8), pp = p ? rd<uint64_t>(p, 0) : 0;
+    if (pp && pp != 8) return 2;
+    uint64_t c = rd<uint64_t>(inst, 0x40), s = c ? rd<uint64_t>(c, 0) : 0; if (s) s -= 8;
+    if (!s || rd<uint64_t>(s, 0) != G(0x1436184e8)) return 3;
+    *mark = rd<uint8_t>(s, 0x338);
+    for (int i = 0; i < 256; i++) if (g_bomberShips[i] == s) return 0;
+    return *mark ? 2 : 1;
+}
+static void cap_name(uint64_t comp, bool shield, char* out, size_t n) {   // the health settings asset its data points at
+    uint64_t want = shield ? G(0x144a244c0) : G(0x144a24a40);
+    for (uint32_t off = 0; off < 0x200; off += 8) {
+        uint64_t d = rd<uint64_t>(comp, off); if (d < 0x10000 || rd<uint64_t>(d, 8) != want) continue;
+        uint64_t s = rd<uint64_t>(d, shield ? 160 : 128); if (s < 0x10000) continue;
+        safe_copy(rd<uint64_t>(s, 0x18), out, n); if (out[0]) return;
+    }
+    strcpy_s(out, n, "?");
+}
+static float cap_health(uint64_t comp) {
+    typedef float(__fastcall* health_t)(uint64_t);
+    health_t f = (health_t)rd<uint64_t>(rd<uint64_t>(comp, 0), 0x108);
+    if (!f) return -1;
+    __try { return f(comp); } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t mark, float asked, float dealt, bool dropped, float health) {
+    AcquireSRWLockExclusive(&g_capLock);
+    CapStat* s = nullptr;
+    for (int i = 0; i < g_capStatCount && !s; i++) if (g_capStats[i].comp == comp) s = &g_capStats[i];
+    if (!s && g_capStatCount < 64) {
+        s = &g_capStats[g_capStatCount++]; *s = {}; s->comp = comp; s->shield = shield; s->since = GetTickCount64();
+        s->ignoresAI = shield ? 0 : rd<uint8_t>(comp, 0x1c8); cap_name(comp, shield, s->name, sizeof s->name);
+        status("capdmg: first hit on %s (%s%s)", s->name, shield ? "shield bubble" : "hull",
+               shield ? "" : s->ignoresAI ? ", which ignores AI damage" : ", which takes AI damage");
+    }
+    if (s) {
+        s->hits[from]++; s->asked[from] += asked; s->dealt[from] += dealt; if (dropped) s->dropped[from]++;
+        if (blast) status("capdmg: %s %s: blast of %.0f from %s (mark %d) -> %.0f taken%s; health %.0f", s->name,
+                          shield ? "shield" : "hull", (double)asked, kCapFrom[from], mark, (double)dealt, dropped ? " (DROPPED: AI damage ignored)" : "", (double)health);
+        ULONGLONG now = GetTickCount64();
+        if (now - s->since >= 5000) {
+            char line[640]; size_t at = 0;
+            for (int k = 0; k < 4; k++) if (s->hits[k])
+                at += sprintf_s(line + at, sizeof line - at, "; %s %d hits, %.0f asked, %.0f taken%s", kCapFrom[k], s->hits[k],
+                                s->asked[k], s->dealt[k], s->dropped[k] ? " (some dropped)" : "");
+            status("capdmg: %s %s, %.1f s%s; health %.0f", s->name, shield ? "shield" : "hull", (now - s->since) / 1000.0, line, (double)health);
+            for (int k = 0; k < 4; k++) { s->hits[k] = s->dropped[k] = 0; s->asked[k] = s->dealt[k] = 0; }
+            s->since = now;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_capLock);
+}
+typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
+static capapply_t o_capapply;
+static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
+    if (!g_capDmgLog || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    float asked = rd<float>(rec, 0x88); uint64_t inst = rd<uint64_t>(rec, 0xb0);
+    uint8_t mark; int from = cap_from(inst, &mark);
+    bool dropped = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
+    bool blast = _ReturnAddress() == (void*)G(0x1417dbdec);
+    float before = cap_health(comp);
+    uint64_t r = o_capapply(comp, out, rec, skipTeam);
+    float after = cap_health(comp);
+    cap_note(comp, false, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, dropped, after);
+    return r;
+}
+typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
+static shieldhit_t o_shdirect, o_shblast;
+static void cap_shield(uint64_t comp, uint64_t out, uint64_t info, bool blast) {
+    uint8_t mark; int from = cap_from(rd<uint64_t>(info, 0xc0), &mark);
+    cap_note(comp, true, blast, from, mark, rd<float>(info, blast ? 0x74 : 0x84), rd<float>(out, 0), false, -1);
+}
+static uint64_t __fastcall h_shdirect(uint64_t comp, uint64_t out, uint64_t info) {
+    uint64_t r = o_shdirect(comp, out, info);
+    if (g_capDmgLog && comp && out && info) cap_shield(comp, out, info, false);
+    return r;
+}
+static uint64_t __fastcall h_shblast(uint64_t comp, uint64_t out, uint64_t info) {
+    uint64_t r = o_shblast(comp, out, info);
+    if (g_capDmgLog && comp && out && info) cap_shield(comp, out, info, true);
+    return r;
 }
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
@@ -3907,6 +4024,15 @@ static Site g_sites[] = {
     {"starship-direct-hit 0x14168a8b0", 0x14168a8b0, 18,
      {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0},
      (void*)h_shiphit, (void**)&o_shiphit},
+    {"capital-damage-apply 0x1417dbe90", 0x1417dbe90, 14,
+     {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57},
+     (void*)h_capapply, (void**)&o_capapply},
+    {"capital-shield-hit 0x140582ab0", 0x140582ab0, 14,
+     {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57},
+     (void*)h_shdirect, (void**)&o_shdirect},
+    {"capital-shield-blast 0x140582d90", 0x140582d90, 19,
+     {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00},
+     (void*)h_shblast, (void**)&o_shblast},
     {"partition-new 0x140273060", 0x140273060, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20},
      (void*)h_partnew, (void**)&o_partnew},

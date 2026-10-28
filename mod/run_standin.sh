@@ -88,6 +88,14 @@ else echo "FAIL  spawn_log lines missing from the log"; STATUS=1; fi
 if [ -n "$LOG" ] && grep -q "hit: starshiphealthdamagedata_uwing: transform found in the physics component+0x80; the impact point is info+0x30" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (1.00, 2.00, 3.00) velocity ?[[:space:]]*$" "$LOG"    && grep -q "hit: starshiphealthdamagedata_uwing part 2 kind 0 material 3 damage 27.0 at (-4.00, 0.50, 10.00) velocity (-[2-5][0-9]\.[0-9], 0\.0, 0\.0)" "$LOG"; then
     echo "PASS  hit_log found the ship's frame and logged both hits in it"
 else echo "FAIL  hit_log lines missing or wrong"; STATUS=1; fi
+# capital_damage_log: the light cruiser's hull (ignores AI damage) takes a blast and a hit from a starship without the player
+# mark; the drop rule's verdict, the 5 s summary and the shield bubble's first hit are logged
+if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_LightCruiser (hull, which ignores AI damage)" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull: blast of 4000 from starships without the player mark (mark 0) -> 4000 taken (DROPPED: AI damage ignored); health 44000" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull, 5\.[0-9] s; starships without the player mark 2 hits, 4050 asked, 4050 taken (some dropped); health 43950" "$LOG" \
+   && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
+    echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker"
+else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
 # creep hull by ship type: the profile's Y-wing value wins over the creep default; the A-wing pack keeps the default
 if [ -n "$LOG" ] && grep -q "creep: ywing creep: hull 900 (the profile's), shields 600 (the creep default)" "$LOG" && grep -q "creep: awing creep: hull 125 (the creep default)" "$LOG"; then
     echo "PASS  creep hull and shields: a profile value wins over the creep default, by ship type"

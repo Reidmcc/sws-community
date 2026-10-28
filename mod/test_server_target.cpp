@@ -169,6 +169,29 @@ int main() {
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x14057dd20ll - 0x1417db400ll);
       put(0x1417db3f7, site, sizeof site); }
+    // capital hull damage (FUN_1417dbe90): its real 14-byte prologue (mov rax, rsp; seven pushes), then health (the fake
+    // component's +0x40) -= the hit record's +0x88, mov rax, rdx and the pops. Its blast caller is planted like the grid's:
+    // entered at 0x1417dbde3, it calls from 0x1417dbde7 so the apply returns to 0x1417dbdec. The component's health getter
+    // (vtable +0x108): movss xmm0, [rcx+0x40]; ret, at 0x1417dc800. The capital shield's direct hit (FUN_140582ab0, the same
+    // 14 bytes) and blast (FUN_140582d90, 19 bytes: five pushes, lea rbp, sub rsp, 0x150) put the info's +0x84 or +0x74 in
+    // out's first float, as what they took off, and return out.
+    const uint8_t capapply[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,
+                                0xf3,0x0f,0x10,0x41,0x40, 0xf3,0x41,0x0f,0x5c,0x80,0x88,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x41,0x40, 0x48,0x89,0xd0,
+                                0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+    put(0x1417dbe90, capapply, sizeof capapply);
+    { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
+      *(int32_t*)(site + 5) = (int32_t)(0x1417dbe90ll - 0x1417dbdecll);
+      put(0x1417dbde3, site, sizeof site); }
+    { const uint8_t getHealth[] = {0xf3,0x0f,0x10,0x41,0x40, 0xc3}; put(0x1417dc800, getHealth, sizeof getHealth); }
+    if (map(0x140580000, 0x10000) != (void*)0x140580000) { printf("FAIL  could not map the capital-shield region\n"); return 1; }
+    const uint8_t shdirect[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,
+                                0xf3,0x41,0x0f,0x10,0x80,0x84,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x02, 0x48,0x89,0xd0,
+                                0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
+    put(0x140582ab0, shdirect, sizeof shdirect);
+    const uint8_t shblast[] = {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0x6c,0x24,0xb0,0x48,0x81,0xec,0x50,0x01,0x00,0x00,
+                               0xf3,0x41,0x0f,0x10,0x40,0x74, 0xf3,0x0f,0x11,0x02, 0x48,0x89,0xd0,
+                               0x48,0x81,0xc4,0x50,0x01,0x00,0x00, 0x41,0x5e,0x5f,0x5e,0x5b,0x5d,0xc3};
+    put(0x140582d90, shblast, sizeof shblast);
     // the AI controller's field-change handler (FUN_1416feaf0): its real 15-byte prologue, then its BehaviourIndex store
     // (mov rax, [rdx+8]; mov edx, [rax]; mov [rcx+0xb4], edx) and the epilogue; and the target-score lookup (FUN_141617a00):
     // its real 21-byte prologue, xorps xmm0, xmm0, the epilogue
@@ -546,6 +569,14 @@ int main() {
         bool frigate = true; for (int k = 0; k < 6; k++) frigate = frigate && !frigateSec[292 + k];
         check(raiderSec[296] == 1 && raiderSec[297] == 1 && sides && frigate,
               "creep torpedo runs: the Raider's damage section has its top and bottom open to runs as its blueprint loads; a frigate's untouched");
+        // creep damage counts against the light cruiser ([creep] aggressive=1): its health data (CapitalShipHealthComponentData
+        // 0x144a24a40) loads with IgnoreAIDamage (+144) set, which is cleared; a frigate's (set here as a decoy) stays
+        uint8_t* cruiserHealth = fake_alloc(0xa0); *(uint64_t*)(cruiserHealth + 8) = 0x144a24a40; cruiserHealth[144] = 1;
+        uint8_t* frigateHealth = fake_alloc(0xa0); *(uint64_t*)(frigateHealth + 8) = 0x144a24a40; frigateHealth[144] = 1;
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/LightCruiser/Starship_LightCruiser", cruiserHealth), 0);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)bpPart("Game/Gameplay/Starships/CapitalShips/Frigate/Starship_Frigate", frigateHealth), 0);
+        check(cruiserHealth[144] == 0 && frigateHealth[144] == 1,
+              "creep damage: the light cruiser's IgnoreAIDamage is cleared as its blueprint loads; a frigate's health data untouched");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
@@ -762,6 +793,35 @@ int main() {
         *(float*)(info + 0x30) = 1010; *(float*)(info + 0x34) = 50.5f; *(float*)(info + 0x38) = -1991;
         uint64_t r2 = ((shiphit_t)0x14168a8b0)((uint64_t)comp, (uint64_t)out, (uint64_t)info);
         check(*(uint8_t*)0x14168a8b0 == 0xFF && r1 == (uint64_t)out && r2 == (uint64_t)out, "starship direct hit hooked and passes the result through");
+    }
+    {   // capital_damage_log=1: a light cruiser's hull that ignores AI damage (+0x1c8) takes a 4000 blast (through the planted
+        // blast caller) and, 5 s on, a 50 hit, both from a starship (vtable 0x1436184e8) without the player mark (+0x338),
+        // reached as the drop rule reaches it: record +0xb0 -> +0x40 -> [] - 8. Its name comes from its data (0x144a24a40)
+        // +128's asset name. A Raider's shield bubble (data 0x144a244c0, settings at +160) takes a 30 hit.
+        uint8_t* ship = fake_alloc(0x400); *(uint64_t*)ship = 0x1436184e8;
+        uint8_t* ctl = fake_alloc(0x10); *(uint64_t*)ctl = (uint64_t)(ship + 8);
+        uint8_t* inst = fake_alloc(0x80); *(uint8_t**)(inst + 0x40) = ctl;
+        uint8_t* vt = fake_alloc(0x200); *(uint64_t*)(vt + 0x108) = 0x1417dc800;
+        uint8_t* hs = fake_alloc(0x40); *(const char**)(hs + 0x18) = "CapitalShipHealthSettings_LightCruiser";
+        uint8_t* hd = fake_alloc(0xa0); *(uint64_t*)(hd + 8) = 0x144a24a40; *(uint8_t**)(hd + 128) = hs;
+        uint8_t* comp = fake_alloc(0x200); *(uint64_t*)comp = (uint64_t)vt; *(uint8_t**)(comp + 0x20) = hd;
+        *(float*)(comp + 0x40) = 48000; comp[0x1c8] = 1;
+        uint8_t* rec = fake_alloc(0x100); *(float*)(rec + 0x88) = 4000; *(uint8_t**)(rec + 0xb0) = inst;
+        uint8_t* out = fake_alloc(0x40);
+        typedef uint64_t(__fastcall* apply_t)(uint64_t, uint64_t, uint64_t, uint8_t);
+        uint64_t r1 = ((apply_t)0x1417dbde3)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        Sleep(5100); *(float*)(rec + 0x88) = 50;
+        uint64_t r2 = ((apply_t)0x1417dbe90)((uint64_t)comp, (uint64_t)out, (uint64_t)rec, 0);
+        uint8_t* ss = fake_alloc(0x40); *(const char**)(ss + 0x18) = "ShieldHealthSettings_Raider";
+        uint8_t* sd = fake_alloc(0xb0); *(uint64_t*)(sd + 8) = 0x144a244c0; *(uint8_t**)(sd + 160) = ss;
+        uint8_t* scomp = fake_alloc(0x200); *(uint8_t**)(scomp + 0x18) = sd;
+        uint8_t* sinfo = fake_alloc(0x100); *(float*)(sinfo + 0x84) = 30; *(uint8_t**)(sinfo + 0xc0) = inst;
+        uint8_t* sout = fake_alloc(0x40);
+        typedef uint64_t(__fastcall* shieldhit_t)(uint64_t, uint64_t, uint64_t);
+        uint64_t r3 = ((shieldhit_t)0x140582ab0)((uint64_t)scomp, (uint64_t)sout, (uint64_t)sinfo);
+        check(*(uint8_t*)0x1417dbe90 == 0xFF && *(uint8_t*)0x140582ab0 == 0xFF && *(uint8_t*)0x140582d90 == 0xFF &&
+              r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(comp + 0x40) == 48000 - 4050 && *(float*)sout == 30,
+              "capital hull damage and both shield hits hooked, and they pass the hits and results through");
     }
 
     alignas(16) static uint8_t obj[0x700];
