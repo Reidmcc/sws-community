@@ -2160,25 +2160,6 @@ static void smallcap_runs_partition(uint64_t part) {
     bool ok = leaf_write(sec + 296, false, 1, true) && leaf_write(sec + 297, false, 1, true);
     status("creep: %s: %s", leaf, ok ? "top and bottom open to bombing runs" : "a write failed; bombers can't run on it");
 }
-// Creep can damage the light cruiser ([creep] aggressive, 2026-10-27). Of all the capital ships only the light cruiser (the
-// Imperial cruiser in Fleet Battles) has CapitalShipHealthComponentData (0x144a24a40) IgnoreAIDamage (+144) set. Its
-// component copies it (+0x1c8, ctor 0x1417d86a0), and the hull's damage code (0x1417dbe90 -> 0x1417da0e0) then drops every
-// hit whose attacker isn't a starship with its byte +0x338 set, which creep never are: flown, torpedoes and lasers landed on
-// the cruisers and did nothing. Cleared as the blueprint loads, before any cruiser is built.
-static void cruiser_ai_damage_partition(uint64_t part) {
-    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
-    char leaf[128] = ""; bool ours = false; uint64_t hc = 0; int nhc = 0;
-    for (uint16_t i = 0; insts && i < n; i++) {
-        uint64_t o = rd<uint64_t>(insts, i * 8ull); if (!o) continue;
-        uint64_t ci = rd<uint64_t>(o, 8);
-        if (ci == G(0x144ade220)) { inst_leaf(o, leaf, sizeof leaf); ours = !_stricmp(leaf, "starship_lightcruiser"); if (!ours) return; }
-        else if (ci == G(0x144a24a40)) { hc = o; nhc++; }
-    }
-    if (!ours) return;
-    if (nhc != 1 || rd<uint8_t>(hc, 144) != 1) { status("creep: %s's health isn't as expected (%d, %s); it still ignores creep damage", leaf, nhc, hc ? "IgnoreAIDamage not set" : "none"); return; }
-    bool ok = leaf_write(hc + 144, false, 0, true);
-    status("creep: %s: %s", leaf, ok ? "creep damage counts against it (IgnoreAIDamage cleared)" : "the write failed; it still ignores creep damage");
-}
 typedef uint64_t(__fastcall* partnew_t)(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4);
 static partnew_t o_partnew;
 static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loader, uint64_t a4) {
@@ -2186,7 +2167,6 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
-    if (part && g_creepAggressive) cruiser_ai_damage_partition(part);
     if (part && g_creepTorpedoes) smallcap_runs_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
@@ -2973,8 +2953,9 @@ static uint64_t __fastcall h_shiphit(uint64_t comp, uint64_t out, uint64_t info)
 // neither a player directly ([[+8]] - 8) nor a ServerStarshipEntity (through [[+0x40]] - 8) whose byte +0x338 is set. The
 // record's +0x88 is the damage after the material grid; the health is the component's vtable +0x108, read around the call
 // as the hit functions do. The shield bubble: ServerIncomShieldHealthComponent's direct hit (0x140582ab0) and blast
-// (0x140582d90) take (component, out, info) and return what they took off as out's first float [inferred from the code's
-// shape, as the hull's; not yet seen]; the damage asked is info +0x84 (direct) or +0x74 (blast), the attacker info +0xc0.
+// (0x140582d90) take (component, out, info); the damage asked is info +0x84 (direct) or +0x74 (blast), the attacker info
+// +0xc0. Out's first float isn't what they took off (flown, the Raider's 17000 shield "took" 92 blasts of 3400), so like
+// the hull's, a shield's health is read around the call: both components' vtable +0x108 is 0x140412280, the float at +0x20.
 static const char* kCapFrom[4] = { "bomber creep", "starships without the player mark", "players or marked starships", "no starship" };
 struct CapStat { uint64_t comp; bool shield; uint8_t ignoresAI; char name[96]; int hits[4], dropped[4]; double asked[4], dealt[4]; ULONGLONG since; };
 static CapStat g_capStats[64]; static int g_capStatCount; static SRWLOCK g_capLock = SRWLOCK_INIT;
@@ -3003,7 +2984,7 @@ static float cap_health(uint64_t comp) {
     if (!f) return -1;
     __try { return f(comp); } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
 }
-static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t mark, float asked, float dealt, bool dropped, float health) {
+static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t mark, float asked, float dealt, bool dropped, bool creepThrough, float health) {
     AcquireSRWLockExclusive(&g_capLock);
     CapStat* s = nullptr;
     for (int i = 0; i < g_capStatCount && !s; i++) if (g_capStats[i].comp == comp) s = &g_capStats[i];
@@ -3016,7 +2997,8 @@ static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t m
     if (s) {
         s->hits[from]++; s->asked[from] += asked; s->dealt[from] += dealt; if (dropped) s->dropped[from]++;
         if (blast) status("capdmg: %s %s: blast of %.0f from %s (mark %d) -> %.0f taken%s; health %.0f", s->name,
-                          shield ? "shield" : "hull", (double)asked, kCapFrom[from], mark, (double)dealt, dropped ? " (DROPPED: AI damage ignored)" : "", (double)health);
+                          shield ? "shield" : "hull", (double)asked, kCapFrom[from], mark, (double)dealt,
+                          dropped ? " (DROPPED: AI damage ignored)" : creepThrough ? " (creep: the ignore-AI rule set aside)" : "", (double)health);
         ULONGLONG now = GetTickCount64();
         if (now - s->since >= 5000) {
             char line[640]; size_t at = 0;
@@ -3030,36 +3012,48 @@ static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t m
     }
     ReleaseSRWLockExclusive(&g_capLock);
 }
+// Creep damage counts against capital ships ([creep] aggressive). Every PvP level connects a level field (default true)
+// into each capital ship's IgnoreAIDamage (blueprint interface field -1337701026 -> its health component; the component's
+// property handler, vtable slot 2 0x1417d9450, sets +0x1c8). So in Fleet Battles every capital hull drops hits from
+// starships without the mark (+0x338), which is creep: flown 2026-10-27, every creep torpedo and laser on the Raider,
+// corvette, frigates and cruisers was dropped (capital_damage_log), while a player's counted. For a creep starship's hit the
+// flag is set aside for that one call and put back; every other hit keeps the stock rule.
 typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
 static capapply_t o_capapply;
 static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
-    if (!g_capDmgLog || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
-    float asked = rd<float>(rec, 0x88); uint64_t inst = rd<uint64_t>(rec, 0xb0);
+    if ((!g_capDmgLog && !g_creepAggressive) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
-    bool dropped = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
+    bool wouldDrop = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
+    bool creepThrough = g_creepAggressive && wouldDrop && (from == 0 || from == 1) && leaf_write(comp + 0x1c8, false, 0, true);
+    if (creepThrough) { static volatile LONG told; if (!InterlockedExchange(&told, 1)) status("creep: capital ships take creep damage (the PvP levels' ignore-AI-damage rule set aside for creep hits)"); }
+    if (!g_capDmgLog) {
+        uint64_t r = o_capapply(comp, out, rec, skipTeam);
+        if (creepThrough) leaf_write(comp + 0x1c8, false, 1, true);
+        return r;
+    }
+    float asked = rd<float>(rec, 0x88);
     bool blast = _ReturnAddress() == (void*)G(0x1417dbdec);
     float before = cap_health(comp);
     uint64_t r = o_capapply(comp, out, rec, skipTeam);
     float after = cap_health(comp);
-    cap_note(comp, false, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, dropped, after);
+    if (creepThrough) leaf_write(comp + 0x1c8, false, 1, true);
+    cap_note(comp, false, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, wouldDrop && !creepThrough, creepThrough, after);
     return r;
 }
 typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shieldhit_t o_shdirect, o_shblast;
-static void cap_shield(uint64_t comp, uint64_t out, uint64_t info, bool blast) {
+static uint64_t cap_shield(shieldhit_t orig, uint64_t comp, uint64_t out, uint64_t info, bool blast) {
+    if (!g_capDmgLog || !comp || !out || !info) return orig(comp, out, info);
     uint8_t mark; int from = cap_from(rd<uint64_t>(info, 0xc0), &mark);
-    cap_note(comp, true, blast, from, mark, rd<float>(info, blast ? 0x74 : 0x84), rd<float>(out, 0), false, -1);
-}
-static uint64_t __fastcall h_shdirect(uint64_t comp, uint64_t out, uint64_t info) {
-    uint64_t r = o_shdirect(comp, out, info);
-    if (g_capDmgLog && comp && out && info) cap_shield(comp, out, info, false);
+    float before = cap_health(comp);
+    uint64_t r = orig(comp, out, info);
+    float after = cap_health(comp);
+    cap_note(comp, true, blast, from, mark, rd<float>(info, blast ? 0x74 : 0x84), before >= 0 && after >= 0 ? before - after : 0, false, false, after);
     return r;
 }
-static uint64_t __fastcall h_shblast(uint64_t comp, uint64_t out, uint64_t info) {
-    uint64_t r = o_shblast(comp, out, info);
-    if (g_capDmgLog && comp && out && info) cap_shield(comp, out, info, true);
-    return r;
-}
+static uint64_t __fastcall h_shdirect(uint64_t comp, uint64_t out, uint64_t info) { return cap_shield(o_shdirect, comp, out, info, false); }
+static uint64_t __fastcall h_shblast(uint64_t comp, uint64_t out, uint64_t info) { return cap_shield(o_shblast, comp, out, info, true); }
 typedef uint64_t(__fastcall* matlookup_t)(uint64_t grid, const uint32_t* a, const uint32_t* b);
 static matlookup_t o_matlookup;
 struct MatSeen { uint32_t a, b; uint64_t ret; };

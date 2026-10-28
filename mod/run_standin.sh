@@ -91,8 +91,9 @@ else echo "FAIL  hit_log lines missing or wrong"; STATUS=1; fi
 # capital_damage_log: the light cruiser's hull (ignores AI damage) takes a blast and a hit from a starship without the player
 # mark; the drop rule's verdict, the 5 s summary and the shield bubble's first hit are logged
 if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_LightCruiser (hull, which ignores AI damage)" "$LOG" \
-   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull: blast of 4000 from starships without the player mark (mark 0) -> 4000 taken (DROPPED: AI damage ignored); health 44000" "$LOG" \
-   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull, 5\.[0-9] s; starships without the player mark 2 hits, 4050 asked, 4050 taken (some dropped); health 43950" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull: blast of 4000 from starships without the player mark (mark 0) -> 4000 taken (creep: the ignore-AI rule set aside); health 44000" "$LOG" \
+   && grep -q "capdmg: CapitalShipHealthSettings_LightCruiser hull, 5\.[0-9] s; starships without the player mark 1 hits, 4000 asked, 4000 taken; no starship 1 hits, 1000 asked, 0 taken (some dropped); health 44000" "$LOG" \
+   && grep -q "creep: capital ships take creep damage (the PvP levels' ignore-AI-damage rule set aside for creep hits)" "$LOG" \
    && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
     echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker"
 else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
