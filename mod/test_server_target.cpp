@@ -169,16 +169,28 @@ int main() {
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x14057dd20ll - 0x1417db400ll);
       put(0x1417db3f7, site, sizeof site); }
-    // capital hull damage (FUN_1417dbe90): its real 14-byte prologue (mov rax, rsp; seven pushes), then, unless the
-    // component ignores AI damage (cmp byte [rcx+0x1c8], 0; jne: the real one drops such hits from creep), health (the fake
-    // component's +0x40) -= the hit record's +0x88; mov rax, rdx and the pops. Its blast caller is planted like the grid's:
+    // the ignore-AI-damage check (FUN_1417da0e0, replaced whole by the DLL): its real first 20 bytes. The starship cast it
+    // uses (FUN_1412631b0): here, rcx if its vtable is ServerStarshipEntity's (0x1436184e8), else 0.
+    { const uint8_t aicheck[] = {0x48,0x83,0xec,0x28,0xf6,0x82,0xa4,0x00,0x00,0x00,0x08,0x75,0x71,0x80,0xb9,0xc8,0x01,0x00,0x00,0x00, 0x31,0xc0,0xc3};
+      put(0x1417da0e0, aicheck, sizeof aicheck); }
+    if (map(0x141260000, 0x10000) != (void*)0x141260000) { printf("FAIL  could not map the starship-cast region\n"); return 1; }
+    { const uint8_t cast[] = {0x48,0x85,0xc9, 0x74,0x13, 0x48,0xba,0xe8,0x84,0x61,0x43,0x01,0x00,0x00,0x00, 0x48,0x39,0x11, 0x75,0x04,
+                              0x48,0x89,0xc8, 0xc3, 0x31,0xc0, 0xc3};
+      put(0x1412631b0, cast, sizeof cast); }
+    // capital hull damage (FUN_1417dbe90): its real 14-byte prologue (mov rax, rsp; seven pushes), then, as the real one,
+    // it asks the check (component, record) and unless told to drop the hit, health (the fake component's +0x40) -= the
+    // record's +0x88: rsi, rdi, r12 keep the component, out and record across the call (sub rsp, 0x20 for its shadow
+    // space; the stack stays aligned); mov rax, rdi and the pops. Its blast caller is planted like the grid's:
     // entered at 0x1417dbde3, it calls from 0x1417dbde7 so the apply returns to 0x1417dbdec. The components' health getter
     // (vtable +0x108): movss xmm0, [rcx+0x40]; ret, at 0x1417dc800. The capital shield's direct hit (FUN_140582ab0, the same
     // 14 bytes) and blast (FUN_140582d90, 19 bytes: five pushes, lea rbp, sub rsp, 0x150) take the info's +0x84 or +0x74
     // off the same health and return out.
     const uint8_t capapply[] = {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,
-                                0x80,0xb9,0xc8,0x01,0x00,0x00,0x00, 0x75,0x13,
-                                0xf3,0x0f,0x10,0x41,0x40, 0xf3,0x41,0x0f,0x5c,0x80,0x88,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x41,0x40, 0x48,0x89,0xd0,
+                                0x48,0x89,0xce, 0x48,0x89,0xd7, 0x4d,0x89,0xc4, 0x48,0x83,0xec,0x20, 0x4c,0x89,0xc2,
+                                0x48,0xb8,0xe0,0xa0,0x7d,0x41,0x01,0x00,0x00,0x00, 0xff,0xd0, 0x48,0x83,0xc4,0x20,
+                                0x84,0xc0, 0x75,0x14,
+                                0xf3,0x0f,0x10,0x46,0x40, 0xf3,0x41,0x0f,0x5c,0x84,0x24,0x88,0x00,0x00,0x00, 0xf3,0x0f,0x11,0x46,0x40,
+                                0x48,0x89,0xf8,
                                 0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0x5d,0xc3};
     put(0x1417dbe90, capapply, sizeof capapply);
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
@@ -822,8 +834,21 @@ int main() {
         check(*(uint8_t*)0x1417dbe90 == 0xFF && *(uint8_t*)0x140582ab0 == 0xFF && *(uint8_t*)0x140582d90 == 0xFF &&
               r1 == (uint64_t)out && r2 == (uint64_t)out && r3 == (uint64_t)sout && *(float*)(scomp + 0x40) == 17000 - 30,
               "capital hull damage and both shield hits hooked, and they pass the hits and results through");
-        check(*(float*)(comp + 0x40) == 48000 - 4050 && putBack && comp[0x1c8] == 1,
-              "creep damage: creep hits on a capital hull that ignores AI damage count, the flag is put back, other dropped hits stay dropped");
+        // the check itself: an unmarked starship (creep) is let through, a marked one and a player keep the stock "keep",
+        // no starship behind the hit keeps the stock "drop", and a component that doesn't ignore AI damage keeps everything
+        typedef bool(__fastcall* aicheck_t)(uint64_t, uint64_t);
+        aicheck_t chk = (aicheck_t)0x1417da0e0;
+        uint8_t* marked = fake_alloc(0x400); *(uint64_t*)marked = 0x1436184e8; marked[0x338] = 1;
+        uint8_t* mctl = fake_alloc(0x10); *(uint64_t*)mctl = (uint64_t)(marked + 8);
+        uint8_t* minst = fake_alloc(0x80); *(uint8_t**)(minst + 0x40) = mctl;
+        uint8_t* pl = fake_alloc(0x10); *(uint64_t*)pl = 0x5000;   // a player directly: [[attacker+8]] - 8 != 0
+        uint8_t* pinst = fake_alloc(0x80); *(uint8_t**)(pinst + 8) = pl;
+        uint8_t* r4 = fake_alloc(0x100);
+        auto ask = [&](uint8_t* c, uint8_t* who) { *(uint8_t**)(r4 + 0xb0) = who; return chk((uint64_t)c, (uint64_t)r4); };
+        uint8_t* plain = fake_alloc(0x200);   // a component that doesn't ignore AI damage
+        bool cases = !ask(comp, inst) && !ask(comp, minst) && !ask(comp, pinst) && ask(comp, noShip) && !ask(plain, noShip);
+        check(*(uint8_t*)0x1417da0e0 == 0xFF && cases && *(float*)(comp + 0x40) == 48000 - 4050 && putBack && comp[0x1c8] == 1,
+              "creep damage: the ignore-AI check lets creep hits through on a capital that ignores AI damage; marked ships and players kept, other hits still dropped");
     }
 
     alignas(16) static uint8_t obj[0x700];

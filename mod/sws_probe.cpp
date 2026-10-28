@@ -3014,31 +3014,48 @@ static void cap_note(uint64_t comp, bool shield, bool blast, int from, uint8_t m
 }
 // Creep damage counts against capital ships ([creep] aggressive). Every PvP level connects a level field (default true)
 // into each capital ship's IgnoreAIDamage (blueprint interface field -1337701026 -> its health component; the component's
-// property handler, vtable slot 2 0x1417d9450, sets +0x1c8). So in Fleet Battles every capital hull drops hits from
-// starships without the mark (+0x338), which is creep: flown 2026-10-27, every creep torpedo and laser on the Raider,
-// corvette, frigates and cruisers was dropped (capital_damage_log), while a player's counted. For a creep starship's hit the
-// flag is set aside for that one call and put back; every other hit keeps the stock rule.
+// property handler, vtable slot 2 0x1417d9450, sets +0x1c8). FUN_1417da0e0(capital health component, hit record) then
+// says to drop a hit from a starship without the mark (+0x338), which is creep, and four places ask it: the hull's apply
+// (0x1417dc005), the shield bubble (its vtable 0x14362d508 slot 43, 0x1417e1c70, asking with the ship's hull component
+// [+0x570]), the turrets (0x1416ed5b0) and the weak points (0x1417dfc50). Flown 2026-10-27: every creep torpedo and laser
+// on the Raider, corvette, frigates and cruisers was dropped, hull and shield, while a player's counted. So the check is
+// replaced whole, never called: the same reads in the same order (flag 8 on the record lets anything through; no flag on
+// the component, no attacker, or a player behind it ([[attacker+8]] - 8) keeps the hit; else the attacker's starship,
+// cast through 0x1412631b0 from [[attacker+0x40]] - 8, keeps it if marked), and with aggressive creep an unmarked
+// starship's hit is kept too. Hits with no starship behind them keep the stock rule.
+typedef bool(__fastcall* aicheck_t)(uint64_t comp, uint64_t rec);
+static aicheck_t o_aicheck;   // its trampoline is never called
+static bool __fastcall h_aicheck(uint64_t comp, uint64_t rec) {
+    if (rd<uint8_t>(rec, 0xa4) & 8) return false;
+    if (!rd<uint8_t>(comp, 0x1c8)) return false;
+    uint64_t inst = rd<uint64_t>(rec, 0xb0); if (!inst) return false;
+    uint64_t p = rd<uint64_t>(inst, 8), q = p ? rd<uint64_t>(p, 0) : 0;
+    if (q && q != 8) return false;
+    uint64_t c = rd<uint64_t>(inst, 0x40), s = c ? rd<uint64_t>(c, 0) : 0; if (s) s -= 8;
+    uint64_t ship = 0;
+    if (s) __try { ship = ((uint64_t(__fastcall*)(uint64_t))G(0x1412631b0))(s); } __except (EXCEPTION_EXECUTE_HANDLER) { ship = 0; }
+    if (ship && rd<uint8_t>(ship, 0x338)) return false;
+    if (ship && g_creepAggressive) {
+        static volatile LONG told;
+        if (!InterlockedExchange(&told, 1)) status("creep: capital ships take creep damage, hull and shield (the PvP levels' ignore-AI-damage rule set aside for creep)");
+        return false;
+    }
+    return true;
+}
 typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
 static capapply_t o_capapply;
 static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
-    if ((!g_capDmgLog && !g_creepAggressive) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    if (!g_capDmgLog || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
     uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
-    bool wouldDrop = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
-    bool creepThrough = g_creepAggressive && wouldDrop && (from == 0 || from == 1) && leaf_write(comp + 0x1c8, false, 0, true);
-    if (creepThrough) { static volatile LONG told; if (!InterlockedExchange(&told, 1)) status("creep: capital ships take creep damage (the PvP levels' ignore-AI-damage rule set aside for creep hits)"); }
-    if (!g_capDmgLog) {
-        uint64_t r = o_capapply(comp, out, rec, skipTeam);
-        if (creepThrough) leaf_write(comp + 0x1c8, false, 1, true);
-        return r;
-    }
+    bool stockDrop = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
+    bool creepThrough = stockDrop && g_creepAggressive && (from == 0 || from == 1);
     float asked = rd<float>(rec, 0x88);
     bool blast = _ReturnAddress() == (void*)G(0x1417dbdec);
     float before = cap_health(comp);
     uint64_t r = o_capapply(comp, out, rec, skipTeam);
     float after = cap_health(comp);
-    if (creepThrough) leaf_write(comp + 0x1c8, false, 1, true);
-    cap_note(comp, false, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, wouldDrop && !creepThrough, creepThrough, after);
+    cap_note(comp, false, blast, from, mark, asked, before >= 0 && after >= 0 ? before - after : 0, stockDrop && !creepThrough, creepThrough, after);
     return r;
 }
 typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
@@ -4018,6 +4035,9 @@ static Site g_sites[] = {
     {"starship-direct-hit 0x14168a8b0", 0x14168a8b0, 18,
      {0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xa0},
      (void*)h_shiphit, (void**)&o_shiphit},
+    {"ignore-ai-damage-check 0x1417da0e0", 0x1417da0e0, 20,
+     {0x48,0x83,0xec,0x28,0xf6,0x82,0xa4,0x00,0x00,0x00,0x08,0x75,0x71,0x80,0xb9,0xc8,0x01,0x00,0x00,0x00},
+     (void*)h_aicheck, (void**)&o_aicheck},
     {"capital-damage-apply 0x1417dbe90", 0x1417dbe90, 14,
      {0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57},
      (void*)h_capapply, (void**)&o_capapply},
