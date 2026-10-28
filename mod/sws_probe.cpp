@@ -171,6 +171,14 @@ static float flagbits(uint64_t s) {
 enum : uint32_t { R_RULE = 9 };
 static bool g_rulePinball, g_ruleMultidrift;
 static bool g_ruleZavianCreep;   // fix_zavian_creep_pack (see map_fix_partition); in the fingerprint when on
+// [rules] player_capital_hull_damage (percent, 0..100, 100 = stock) and player_capital_shields (1 = stock): how much of their
+// damage players' hits, and the vs-AI bots', do to capital ships' hulls, and whether they hurt their shield bubbles (Pseudo,
+// 2026-10-28: a mode where only the creep bombers can sink capital ships, and the players fight over them). Scaled where the
+// hit arrives (h_capapply, cap_shield), so everything that reaches the hull component counts: lasers, ion and ordnance, and
+// the SD's and MC75's subsystems, which are damage sections of the hull. Turrets and weak points are their own components,
+// and keep the stock rule; a weak point's damage on destruction is a profile value. Each in the fingerprint when not stock.
+static int g_playerCapHull = 100;
+static bool g_playerCapShields = true;
 // [creep] <faction>_pack<1-3> = <ship> (creep_scan): each creep pack's ship, an index into kCreepShips; 0 = the stock ship
 static const char* kCreepShips[2][4] = { { "xwing", "ywing", "awing", "uwing" }, { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
 static const char* kCreepFaction[2] = { "rebel", "imperial" };
@@ -244,7 +252,7 @@ static char g_profileName[64] = "(rules.ini)";
 static uint32_t g_profileFp;
 static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
 static uint32_t profile_fingerprint() {
-    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes && !g_creepWingmen && !g_creepBotHandling) return 0;
+    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && g_playerCapHull == 100 && g_playerCapShields && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes && !g_creepWingmen && !g_creepBotHandling) return 0;
     int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
     for (int i = 0; i < g_overrideCount; i++) order[i] = i;
     for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
@@ -253,6 +261,8 @@ static uint32_t profile_fingerprint() {
     char b[192]; uint32_t h = 2166136261u;
     sprintf_s(b, "pinball=%d;multidrift=%d;", (int)g_rulePinball, (int)g_ruleMultidrift); h = fnv1a(h, b);
     if (g_ruleZavianCreep) h = fnv1a(h, "zaviancreep=1;");   // only when on, so profiles without it keep their fingerprint
+    if (g_playerCapHull != 100) { sprintf_s(b, "players.capital_hull_damage=%d;", g_playerCapHull); h = fnv1a(h, b); }
+    if (!g_playerCapShields) h = fnv1a(h, "players.capital_shields=0;");
     for (int f = 0; f < 2; f++)   // creep packs: only the ones changed from the stock ship
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) { sprintf_s(b, "creep.%s_pack%d=%s;", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]); h = fnv1a(h, b); }
@@ -442,6 +452,12 @@ static void load_profile(const wchar_t* dir) {
             g_rulePinball = GetPrivateProfileIntW(L"rules", L"no_zero_throttle_pinball", 0, pf) != 0;
             g_ruleMultidrift = GetPrivateProfileIntW(L"rules", L"no_multidrift", 0, pf) != 0;
             g_ruleZavianCreep = GetPrivateProfileIntW(L"rules", L"fix_zavian_creep_pack", 0, pf) != 0;
+            g_playerCapShields = GetPrivateProfileIntW(L"rules", L"player_capital_shields", 1, pf) != 0;
+            g_playerCapHull = (int)GetPrivateProfileIntW(L"rules", L"player_capital_hull_damage", 100, pf);
+            if (g_playerCapHull < 0 || g_playerCapHull > 100) {
+                int was = g_playerCapHull; g_playerCapHull = g_playerCapHull < 0 ? 0 : 100;
+                status("profile: [rules] player_capital_hull_damage = %d is outside 0..100; clamped to %d", was, g_playerCapHull);
+            }
             for (int f = 0; f < 2; f++)
                 for (int p = 0; p < 3; p++) {
                     wchar_t key[32], v[32] = L""; swprintf_s(key, L"%hs_pack%d", kCreepFaction[f], p + 1);
@@ -505,6 +521,8 @@ static void load_profile(const wchar_t* dir) {
     for (int f = 0; f < 2; f++)
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
+    if (g_playerCapHull != 100) status("  players: their hits (and the vs-AI bots') do %d%% damage to capital ship hulls and the subsystems in them", g_playerCapHull);
+    if (!g_playerCapShields) status("  players: their hits (and the vs-AI bots') do no damage to capital ship shields");
     if (g_creepAggressive && g_creepCapDamage > 0) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
     if (g_creepAggressive && g_creepCapDamage == 0) status("  creep: aggressive within %d m, with targets by phase; their hits do no damage to capital ships, as in stock", g_creepRadius);
     if (g_creepAggressive) status("  creep: bombers attack %s", g_creepBomberCapOnly ? "capital ships only" : "capital ships first, starfighters when none is in reach");
@@ -3093,17 +3111,26 @@ static bool __fastcall h_aicheck(uint64_t comp, uint64_t rec) {
 // copy); the shield's direct hit reads the info's +0x84 (times the grid's multiplier), its blast +0x74, and those belong to
 // the caller, so they're put back after.
 static bool creep_scaled(int from) { return g_creepAggressive && g_creepCapDamage > 0 && g_creepCapDamage != 100 && (from == 0 || from == 1); }
+// The percent a hit of this class keeps: creep by [creep] capital_damage, players and marked starships (the vs-AI bots) by
+// [rules] player_capital_hull_damage on a hull and player_capital_shields on a shield; anything else 100.
+static int cap_percent(int from, bool shield) {
+    if (creep_scaled(from)) return g_creepCapDamage;
+    if (from == 2) return shield ? (g_playerCapShields ? 100 : 0) : g_playerCapHull;
+    return 100;
+}
+static bool cap_scaling() { return creep_scaled(0) || g_playerCapHull != 100 || !g_playerCapShields; }
 typedef uint64_t(__fastcall* capapply_t)(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam);
 static capapply_t o_capapply;
 static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec, uint8_t skipTeam) {
-    if ((!g_capDmgLog && !creep_scaled(0)) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
+    if ((!g_capDmgLog && !cap_scaling()) || !comp || !rec) return o_capapply(comp, out, rec, skipTeam);
     uint64_t inst = rd<uint64_t>(rec, 0xb0);
     uint8_t mark; int from = cap_from(inst, &mark);
     // A flagged hit (flag 8) is kept by the stock rule whoever is behind it, so it isn't the mod's to scale: the capital ships'
     // passive damage names a starship as its attacker, and was scaled as creep until 2026-10-28 (flown: the corvette's took 30%).
     if (rd<uint8_t>(rec, 0xa4) & 8) from = 4;
     float asked = rd<float>(rec, 0x88);
-    if (creep_scaled(from)) leaf_write(rec + 0x88, false, asked * g_creepCapDamage / 100.0);
+    int pct = cap_percent(from, false);
+    if (pct != 100) leaf_write(rec + 0x88, false, asked * pct / 100.0);
     if (!g_capDmgLog) return o_capapply(comp, out, rec, skipTeam);
     bool stockDrop = !(rd<uint8_t>(rec, 0xa4) & 8) && rd<uint8_t>(comp, 0x1c8) && inst && from != 2;
     bool creepThrough = stockDrop && g_creepAggressive && (from == 0 || from == 1);
@@ -3117,10 +3144,11 @@ static uint64_t __fastcall h_capapply(uint64_t comp, uint64_t out, uint64_t rec,
 typedef uint64_t(__fastcall* shieldhit_t)(uint64_t comp, uint64_t out, uint64_t info);
 static shieldhit_t o_shdirect, o_shblast;
 static uint64_t cap_shield(shieldhit_t orig, uint64_t comp, uint64_t out, uint64_t info, bool blast) {
-    if ((!g_capDmgLog && !creep_scaled(0)) || !comp || !out || !info) return orig(comp, out, info);
+    if ((!g_capDmgLog && !cap_scaling()) || !comp || !out || !info) return orig(comp, out, info);
     uint8_t mark; int from = cap_from(rd<uint64_t>(info, 0xc0), &mark);
     uint32_t at = blast ? 0x74 : 0x84; float asked = rd<float>(info, at);
-    bool scaled = creep_scaled(from) && leaf_write(info + at, false, asked * g_creepCapDamage / 100.0);
+    int pct = cap_percent(from, true);
+    bool scaled = pct != 100 && leaf_write(info + at, false, asked * pct / 100.0);
     float before = g_capDmgLog ? cap_health(comp) : 0;
     uint64_t r = orig(comp, out, info);
     if (scaled) leaf_write(info + at, false, asked);

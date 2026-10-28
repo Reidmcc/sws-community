@@ -97,6 +97,11 @@ if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_Ligh
    && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
     echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker, at the profile's capital_damage 50%"
 else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
+# players against capital ships ([rules] in StandIn.ini): the profile summary names both settings
+if [ -n "$LOG" ] && grep -q "players: their hits (and the vs-AI bots') do 40% damage to capital ship hulls" "$LOG" \
+   && grep -q "players: their hits (and the vs-AI bots') do no damage to capital ship shields" "$LOG"; then
+    echo "PASS  the profile summary names players' damage to capital hulls (40%) and shields (off)"
+else echo "FAIL  the players-against-capital-ships summary lines are missing"; STATUS=1; fi
 # fire_log: the bomber's node on the capital ship was read back twice, valid both times
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
     echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"

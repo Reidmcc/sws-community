@@ -98,7 +98,8 @@ capital ships to ignore damage from AI starships that aren't the vs-AI bots, hul
 With aggressive creep their hits count, and on hulls and shields they're scaled by **Damage to capital ships**
 (`capital_damage`, beside the engagement range in the app), 30% by default: at 100% a creep torpedo hits as hard as a
 player's, and fifteen bombers take a capital ship down very fast. At 0% the stock rule stays, and creep do capital ships
-no harm at all. Their hits on turrets and weak points count in full. Other AI
+no harm at all. Their hits on turrets and weak points count in full. Players' own damage to capital ships has its settings too (the
+README's **Players against capital ships**), for a match where only the creep can sink them. Other AI
 damage, such as capital ships' turrets firing on each other and their passive damage, keeps the stock rule and full strength.
 
 **Missiles and torpedoes.** Creep fire their missiles, and the bombers their torpedoes, as the vs-AI bots do (stock creep
