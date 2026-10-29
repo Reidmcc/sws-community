@@ -145,6 +145,9 @@ namespace SwsSettings
 
         // rules page: the profile's yes/no rules and fixes, each off by default (the game as shipped)
         readonly CheckBox ruleZavian = Theme.Check("Zavian Abyss: full middle X-wing creep pack");
+        readonly ComboBox playerCapHull = Theme.Combo();
+        readonly CheckBox playerCapShields = Theme.Check("Players damage capital ship shields");
+        static readonly int[] PlayerCapHulls = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
@@ -319,6 +322,10 @@ namespace SwsSettings
             loading = true;
             rulePinball.Checked = profile.NoPinball; ruleMultidrift.Checked = profile.NoMultidrift; ruleZavian.Checked = profile.FixZavianCreep;
             rulePinball.Enabled = ruleMultidrift.Enabled = ruleZavian.Enabled = !profile.BuiltIn;
+            string phull = profile.PlayerCapHull + "%";
+            if (!playerCapHull.Items.Contains(phull)) playerCapHull.Items.Add(phull);
+            playerCapHull.SelectedItem = phull; playerCapHull.Enabled = !profile.BuiltIn;
+            playerCapShields.Checked = profile.PlayerCapShields; playerCapShields.Enabled = !profile.BuiltIn;
             for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
             creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles; creepTorpedoes.Checked = profile.CreepTorpedoes; creepWingmen.Checked = profile.CreepWingmen; creepBotHandling.Checked = profile.CreepBotHandling;
             creepAggressive.Enabled = creepMissiles.Enabled = creepTorpedoes.Enabled = creepWingmen.Enabled = creepBotHandling.Enabled = !profile.BuiltIn;
@@ -691,6 +698,7 @@ namespace SwsSettings
             if (copy)
             {
                 p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
+                p.PlayerCapHull = profile.PlayerCapHull; p.PlayerCapShields = profile.PlayerCapShields;
                 for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
                 p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepWingmen = profile.CreepWingmen; p.CreepBotHandling = profile.CreepBotHandling;
                 p.CreepRadius = profile.CreepRadius; p.CreepCapDamage = profile.CreepCapDamage; p.CreepTorpMinLock = profile.CreepTorpMinLock; p.CreepBomberCapOnly = profile.CreepBomberCapOnly;
@@ -761,6 +769,22 @@ namespace SwsSettings
             rule(ruleMultidrift, "A drift can start only while the afterburner is on, so each boost allows one drift, as with the combined boost-and-drift input. Releasing and re-pressing drift mid-drift no longer starts a new drift.");
             section("Map fixes", "These are part of the fingerprint too, so everyone in a match knows the server plays the map the way they expect.");
             rule(ruleZavian, "In Zavian Abyss's data, one of the middle X-wing creep pack's two spawn points is told to return control instead of to spawn, so the pack has 3 ships instead of 5, at the start and on every respawn. This makes it spawn all 5.");
+
+            section("Players against capital ships", "How much players' hits, and the vs-AI bots', hurt capital ships. Set hull damage to 0% and leave the shields off for a match where only bomber creep can sink a capital ship. Part of the fingerprint.");
+            {
+                var row = Theme.Row(6); row.Margin = new Padding(0, 12, 0, 0);
+                row.Controls.Add(new Label { Text = "Players' damage to capital ship hulls", AutoSize = true, Font = Theme.Body, ForeColor = Theme.Text, Margin = new Padding(0, 6, 8, 0) });
+                playerCapHull.Width = 90; foreach (int d in PlayerCapHulls) playerCapHull.Items.Add(d + "%");
+                playerCapHull.SelectedIndexChanged += (s, e) => {
+                    if (loading || playerCapHull.SelectedItem == null) return;
+                    int d; if (int.TryParse(playerCapHull.SelectedItem.ToString().Replace("%", ""), out d)) { profile.PlayerCapHull = d; SaveProfile(); }
+                };
+                row.Controls.Add(playerCapHull); col.Controls.Add(row);
+                var d2 = Theme.Label("Every hit that reaches a capital ship's hull: lasers, ion and ordnance. On the Star Destroyer and MC75 that includes the power, shield and targeting subsystems. " +
+                    "Turrets and weak points take full damage; what a destroyed weak point does to the hull is a value, capitalshipweakpointssettings.damagedealtondestructionattribute (5,000 as shipped). 100% is stock.", Theme.Small, Theme.Muted);
+                d2.Margin = new Padding(0, 2, 0, 0); d2.MaximumSize = new Size(820, 0); col.Controls.Add(d2);
+            }
+            rule(playerCapShields, "Players' and bots' hits take down capital ships' shield bubbles, as in stock. Off, the shields ignore their hits.");
 
             section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
                 "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers, unless creep missiles are on below. " +
@@ -864,6 +888,7 @@ namespace SwsSettings
             rulePinball.CheckedChanged += (s, e) => { if (!loading) { profile.NoPinball = rulePinball.Checked; SaveProfile(); } };
             ruleMultidrift.CheckedChanged += (s, e) => { if (!loading) { profile.NoMultidrift = ruleMultidrift.Checked; SaveProfile(); } };
             ruleZavian.CheckedChanged += (s, e) => { if (!loading) { profile.FixZavianCreep = ruleZavian.Checked; SaveProfile(); } };
+            playerCapShields.CheckedChanged += (s, e) => { if (!loading) { profile.PlayerCapShields = playerCapShields.Checked; SaveProfile(); } };
             rulesPage.Controls.Add(col);
         }
 

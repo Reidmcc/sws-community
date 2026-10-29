@@ -180,6 +180,8 @@ namespace SwsSettings
         public string Name;                 // "Default" is built in
         public bool NoPinball, NoMultidrift;
         public bool FixZavianCreep;         // in the fingerprint only when on, so profiles without it keep theirs
+        public int PlayerCapHull = 100;     // [rules] player_capital_hull_damage: percent of players' (and bots') damage to capital hulls, 0..100
+        public bool PlayerCapShields = true;   // [rules] player_capital_shields: players' (and bots') hits damage capital shields
         // [creep] <faction>_pack<1-3>: each creep pack's ship, an index into CreepShips; 0 = the stock ship (the DLL's creep_scan)
         public static readonly string[][] CreepShips = { new[] { "xwing", "ywing", "awing", "uwing" }, new[] { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
         // Creep hull and shields by ship type (the DLL's kCreepDurability): profile values on the configs that ship's creep
@@ -226,6 +228,8 @@ namespace SwsSettings
             p.NoPinball = Ini.GetInt(file, "rules", "no_zero_throttle_pinball", 0) != 0;
             p.NoMultidrift = Ini.GetInt(file, "rules", "no_multidrift", 0) != 0;
             p.FixZavianCreep = Ini.GetInt(file, "rules", "fix_zavian_creep_pack", 0) != 0;
+            p.PlayerCapHull = Math.Max(0, Math.Min(100, Ini.GetInt(file, "rules", "player_capital_hull_damage", 100)));
+            p.PlayerCapShields = Ini.GetInt(file, "rules", "player_capital_shields", 1) != 0;
             for (int f = 0; f < 2; f++)
                 for (int k = 0; k < 3; k++)
                 {
@@ -263,7 +267,10 @@ namespace SwsSettings
             sb.Append("[rules]\r\n");
             sb.Append("no_zero_throttle_pinball=" + (NoPinball ? 1 : 0) + "\r\n");
             sb.Append("no_multidrift=" + (NoMultidrift ? 1 : 0) + "\r\n");
-            sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n\r\n[creep]\r\n");
+            sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n");
+            if (PlayerCapHull != 100) sb.Append("player_capital_hull_damage=" + PlayerCapHull + "\r\n");
+            if (!PlayerCapShields) sb.Append("player_capital_shields=0\r\n");
+            sb.Append("\r\n[creep]\r\n");
             for (int f = 0; f < 2; f++)
                 for (int k = 0; k < 3; k++)
                     sb.Append(CreepFaction[f] + "_pack" + (k + 1) + "=" + CreepShips[f][Creep[f, k]] + "\r\n");
@@ -312,20 +319,23 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen, p.CreepCapDamage, p.CreepTorpMinLock, p.CreepBomberCapOnly);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen, p.CreepCapDamage, p.CreepTorpMinLock, p.CreepBomberCapOnly, p.PlayerCapHull, p.PlayerCapShields);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
         public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values, int[,] creep = null,
-                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false, bool creepWingmen = false, int creepCapDamage = 30, int creepTorpMinLock = 500, bool creepBomberCapOnly = false)
+                                bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false, bool creepWingmen = false, int creepCapDamage = 30, int creepTorpMinLock = 500, bool creepBomberCapOnly = false,
+                                int playerCapHull = 100, bool playerCapShields = true)
         {
             bool anyCreep = creepAggressive || creepMissiles || creepTorpedoes || creepWingmen || creepBotHandling;
             if (creep != null) foreach (int t in creep) if (t != 0) anyCreep = true;
-            if (!pinball && !multidrift && !zavianCreep && values.Count == 0 && !anyCreep) return 0;
+            if (!pinball && !multidrift && !zavianCreep && playerCapHull == 100 && playerCapShields && values.Count == 0 && !anyCreep) return 0;
             uint h = 2166136261u;
             h = Fnv(h, "pinball=" + (pinball ? 1 : 0) + ";multidrift=" + (multidrift ? 1 : 0) + ";");
             if (zavianCreep) h = Fnv(h, "zaviancreep=1;");
+            if (playerCapHull != 100) h = Fnv(h, "players.capital_hull_damage=" + playerCapHull + ";");
+            if (!playerCapShields) h = Fnv(h, "players.capital_shields=0;");
             for (int f = 0; f < 2 && creep != null; f++)   // creep packs: only the ones changed from the stock ship
                 for (int k = 0; k < 3; k++)
                     if (creep[f, k] != 0) h = Fnv(h, "creep." + Profile.CreepFaction[f] + "_pack" + (k + 1) + "=" + Profile.CreepShips[f][creep[f, k]] + ";");

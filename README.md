@@ -153,6 +153,10 @@ no_zero_throttle_pinball=0
 no_multidrift=1
 ; 1 = Zavian Abyss's middle X-wing creep pack spawns all 5 ships (a mistake in the map's data)
 fix_zavian_creep_pack=0
+; players' (and vs-AI bots') damage to capital ship hulls, in percent (0-100; 100 = stock), and whether their hits
+; damage capital ship shields (1 = stock)
+player_capital_hull_damage=100
+player_capital_shields=1
 
 [values]
 ; <asset>.<field>=<number>
@@ -177,6 +181,18 @@ works, and the sizes closest to canon for every ship: [docs/ship-size.md](docs/s
 aggressive phase-following creep and their engagement range, missiles, bomber torpedoes and the bots' handling, plus
 creep hull and shields by ship type as ordinary values. What each does and how: [docs/creep.md](docs/creep.md).
 
+**Players against capital ships** (the app's section of that name, on Rules and fixes; `[rules]` in the profile) scales
+how much players' hits, and the vs-AI bots', hurt capital ships: `player_capital_hull_damage` (percent) for everything
+that reaches a capital ship's hull, lasers, ion and ordnance alike, including the Star Destroyer's and MC75's
+subsystems, which are sections of the hull; and `player_capital_shields` (0 or 1) for their shield bubbles. Creep are
+scaled by their own setting (docs/creep.md). Turrets and weak points aren't covered: a destroyed weak point's damage to
+the hull is the value `capitalshipweakpointssettings.damagedealtondestructionattribute` (5000 as shipped), and a
+destroyed turret takes about 200 off its ship's hull, whoever destroys it (measured in flight; it isn't a value). With
+hull damage at 0%, the shields off, that value at 0 and the capital ships' passive damage off
+(`damageovertimesettings.targethealthratiotostopattribute` at 1 stops it; at 1 on every config, the corvette's and
+Raider's attack stops too), the bomber creep do the capital ships' damage, apart from those turrets, and the players
+fight over them. Each setting is in the fingerprint when it isn't stock.
+
 **Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
 creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
 the kickoff and phase sizes of the morale bar, its optional drain over time, the match and kickoff timers, respawn time and
@@ -185,7 +201,8 @@ the passive-to-aggressive creep ratio; Dogfight's score to win, match time and p
 
 **Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
 a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match
-modifiers allow), down to 0.1× the lowest (0 where the game ships 0), with tighter bounds where they're known: speeds
+modifiers allow), down to 0.1× the lowest (0 where the game ships 0, and for two values where 0 means off: a destroyed
+weak point's hull damage and the capital ships' passive damage multiplier), with tighter bounds where they're known: speeds
 at most 300 (actual flight speed tops out there, measured), fractions at most 1, angles at most 180. Components are percentages: up to 5× the highest stock percentage, down to −0.9 (never below 10% of the
 base). Power levels and fields the game always ships as 0 are locked. A value outside its range is clamped, with a
 `limits:` line in the log; a locked field, or one with no limit, isn't applied.

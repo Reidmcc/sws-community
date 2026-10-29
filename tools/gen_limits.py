@@ -64,6 +64,17 @@ ANGLE = re.compile(r"angle(attribute)?$|anglethreshold$|anglezone$")
 FRACTION = re.compile(r"(ratio|threshold)(attribute)?$|percent|normalized|healthratio")
 INPUT_DEVICE = re.compile(r"gamepad|joystick|mouse")   # anywhere in the field path
 POWER_LEVEL = re.compile(r"powerlevel$|powerchargelevel$|regenlevel$|powerfloor$")
+# Fields where 0 means "off" and is a choice the game's own data never makes (Pseudo, 2026-10-28, for a mode where players
+# can't sink capital ships): a destroyed weak point's damage to the hull, and the capital ships' passive damage curve.
+ZERO_FLOOR = {
+    "capitalshipweakpointssettings.damagedealtondestructionattribute": "0 (a destroyed weak point does no hull damage)",
+    "damageovertimesettings.dotvalueovermatchlengthmultiplier": "0 (no passive damage)",
+}
+# Fractions whose 5x rule stops short of 1, where 1 is a choice that means something (Pseudo, 2026-10-28, the same mode): the
+# passive damage stops once hull <= max x this ratio (0x1415b3110), so at 1 it never starts.
+FULL_FRACTION = {
+    "damageovertimesettings.targethealthratiotostopattribute": "1 (stops at full hull: no passive damage)",
+}
 
 
 def category(asset, keys=()):
@@ -152,6 +163,10 @@ def limit(key, vals, is_int):
         # Pseudo, 2026-10-22: starfighter lasers should be able to do trivial damage to capital ships, so the floor is 0
         # (no damage at all); the ceiling is the usual 5x
         lo, src[1] = 0.0, "0 (no damage)"
+    elif key in ZERO_FLOOR:
+        lo, src[1] = 0.0, ZERO_FLOOR[key]
+    elif key in FULL_FRACTION:
+        hi, src[0] = 1.0, FULL_FRACTION[key]
     elif key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
         hi = SPEED_CAP; src[0] = "speed cap 300 (measured)"
     elif ANGLE.search(name):
