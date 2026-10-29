@@ -77,6 +77,10 @@ Or by hand (server.ini, open it in Notepad):
     Default        the game as shipped
     NoMultidrift   pinballing allowed, multidrifting removed
     AsIntended     both exploits removed
+    Bomber Escort Fleet Battle
+                   a Fleet Battles mode where only the AI bomber creep can sink capital ships: players' hits do
+                   nothing to them, and the players fight to escort their own bombers and stop the enemy's. A
+                   starting point to tune (creep damage, the bombers' hull, the packs).
   Profiles are files in the profiles folder; you can copy one and edit it, or use sws_settings.exe.
 
 
