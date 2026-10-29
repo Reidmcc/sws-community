@@ -70,6 +70,11 @@ ZERO_FLOOR = {
     "capitalshipweakpointssettings.damagedealtondestructionattribute": "0 (a destroyed weak point does no hull damage)",
     "damageovertimesettings.dotvalueovermatchlengthmultiplier": "0 (no passive damage)",
 }
+# Fractions whose 5x rule stops short of 1, where 1 is a choice that means something (Pseudo, 2026-10-28, the same mode): the
+# passive damage stops once hull <= max x this ratio (0x1415b3110), so at 1 it never starts.
+FULL_FRACTION = {
+    "damageovertimesettings.targethealthratiotostopattribute": "1 (stops at full hull: no passive damage)",
+}
 
 
 def category(asset, keys=()):
@@ -160,6 +165,8 @@ def limit(key, vals, is_int):
         lo, src[1] = 0.0, "0 (no damage)"
     elif key in ZERO_FLOOR:
         lo, src[1] = 0.0, ZERO_FLOOR[key]
+    elif key in FULL_FRACTION:
+        hi, src[0] = 1.0, FULL_FRACTION[key]
     elif key in SPEED_FIELDS and hi > SPEED_CAP and mx <= SPEED_CAP:
         hi = SPEED_CAP; src[0] = "speed cap 300 (measured)"
     elif ANGLE.search(name):
