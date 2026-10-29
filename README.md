@@ -155,52 +155,17 @@ percentage modifiers, named by the attribute they change (`hullcustom_heavy_xwin
 player ship's change also applies to its vs-AI bot version (copied, or scaled where the bot is tuned differently);
 the AI "creep" ships are left alone.
 
-**Ship size** (issue #20) is one value per starfighter, `shipscale_<ship>.scale` (the app lists it as **Size** under
-each ship): it resizes the ship's model and its laser hitbox together, for the player ship and its AI versions. How it
-works, and the sizes closest to canon for every ship: [docs/ship-size.md](docs/ship-size.md).
-
-**Creep** settings are a profile's `[creep]` section (the app's **Creep packs**, on Rules and fixes): each pack's ship,
-aggressive phase-following creep and their engagement range, missiles, bomber torpedoes and the bots' handling, plus
-creep hull and shields by ship type as ordinary values. What each does and how: [docs/creep.md](docs/creep.md).
-
-**Players against capital ships** (the app's section of that name, on Rules and fixes; `[rules]` in the profile) scales
-how much players' hits, and the vs-AI bots', hurt capital ships: `player_capital_hull_damage` (percent) for everything
-that reaches a capital ship's hull, lasers, ion and ordnance alike, including the Star Destroyer's and MC75's
-subsystems, which are sections of the hull; and `player_capital_shields` (0 or 1) for their shield bubbles. Creep are
-scaled by their own setting (docs/creep.md). Turrets and weak points aren't covered: a destroyed weak point's damage to
-the hull is the value `capitalshipweakpointssettings.damagedealtondestructionattribute` (5000 as shipped), and a
-destroyed turret takes about 200 off its ship's hull, whoever destroys it (measured in flight; it isn't a value). With
-hull damage at 0%, the shields off, that value at 0 and the capital ships' passive damage off
-(`damageovertimesettings.targethealthratiotostopattribute` at 1 stops it; at 1 on every config, the corvette's and
-Raider's attack stops too), the bomber creep do the capital ships' damage, apart from those turrets, and the players
-fight over them. Each setting is in the fingerprint when it isn't stock.
-The release ships this mode as the profile **Bomber Escort Fleet Battle** (`mod/release/profiles`): players at 0%
-and shields off, Y-wing and TIE bomber packs bombing capital ships only at 40% damage, passive and weak-point
-damage off, and sturdier bomber creep. It's a starting point for tuning, not a balanced final word.
-
-**Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
-creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
-the kickoff and phase sizes of the morale bar, its optional drain over time, the match and kickoff timers, respawn time and
-the passive-to-aggressive creep ratio; Dogfight's score to win, match time and pickup timings. Keys look like
-`incomschematicattributesconfig_fleetbattle.towpointsgainedforcreepkillwhileondefense` ("tow" is the tug-of-war morale bar).
-
-**Limits** (issue #11) keep every value inside a range the game can take. `limits.ini` beside the DLL gives each field
-a minimum and maximum: up to 5× the highest value the game itself ships for that field (the most its own custom-match
-modifiers allow), down to 0.1× the lowest (0 where the game ships 0, and for two values where 0 means off: a destroyed
-weak point's hull damage and the capital ships' passive damage multiplier), with tighter bounds where they're known: speeds
-at most 300 (actual flight speed tops out there, measured), fractions at most 1, angles at most 180. Components are percentages: up to 5× the highest stock percentage, down to −0.9 (never below 10% of the
-base). Power levels and fields the game always ships as 0 are locked. A value outside its range is clamped, with a
-`limits:` line in the log; a locked field, or one with no limit, isn't applied.
-The clamped value is the one in the fingerprint. `tools/gen_limits.py` writes `limits.ini` from `defaults.ini`.
-
-Everyone in a match must use the same profile. A fingerprint of it (the rules plus every value, normalized) is part of
-the network version, so players on different profiles are refused at connect; the log's `profile:` line shows it.
-`profile=Default` is built in: no rules, no changes, and the game's own network version. With no `profile=` line, the
-older `rules.ini` is read instead (missing rules count as on).
-
-All-unlocked reads `unlock_ids.txt` beside the DLL. It's generated from the game's data and ships with release builds.
-Local loadouts keep `loadouts.txt` beside the DLL: one line per saved loadout (pilot, ship, or the profile's default
-ships), its name, then its item ids. Delete it to start again from the loadouts EA has.
+**More on each feature**, in `docs/`:
+- [Ship size](docs/ship-size.md): one value per starfighter that resizes its model and laser hitbox together, with the
+  sizes closest to canon.
+- [Creep](docs/creep.md): the Fleet Battles AI packs: their ships, aggression, missiles, torpedoes, wingmen, and damage
+  to capital ships.
+- [Players against capital ships](docs/players-vs-capital-ships.md): how much players' hits hurt capital ships, and the
+  Bomber Escort Fleet Battle mode where only the bomber creep sink them.
+- [Match rules](docs/match-rules.md): morale, timers and scores for Fleet Battles and Dogfight.
+- [Limits](docs/limits.md): the range each value may take, and what happens outside it.
+- [Profiles and the fingerprint](docs/profiles.md): why everyone needs the same profile, and the ones a release ships.
+- [Unlocks and loadouts](docs/unlocks-and-loadouts.md): everything unlocked, and loadouts kept on your PC.
 
 ## Building
 
