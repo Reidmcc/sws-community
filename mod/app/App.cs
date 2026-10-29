@@ -515,14 +515,29 @@ namespace SwsSettings
             grid.CellEndEdit += GridEndEdit;
             grid.CellClick += (s, e) => { if (e.RowIndex >= 0 && grid.Columns[e.ColumnIndex].Name == "reset" && (string)grid.Rows[e.RowIndex].Cells["reset"].Value == "reset") ResetRow(e.RowIndex); };
             grid.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete && grid.CurrentCell != null && !grid.IsCurrentCellInEditMode) { ResetRow(grid.CurrentCell.RowIndex); e.Handled = true; } };
-            grid.CellToolTipTextNeeded += (s, e) =>
+            // the hover is the app's own tooltip, not the grid's: the grid cuts a cell's tooltip past 288 characters, and a
+            // tip with the key and limits under it runs longer. It stays up long enough to read.
+            grid.ShowCellToolTips = false;
+            var rowTip = new ToolTip { AutoPopDelay = 30000, InitialDelay = 400, ReshowDelay = 200 };
+            string shownTip = null;
+            grid.CellMouseEnter += (s, e) =>
             {
-                if (e.RowIndex < 0) return;
-                var key = grid.Rows[e.RowIndex].Tag as string; if (key == null) return;
-                int dot = key.IndexOf('.'); var l = limits.Find(key.Substring(0, dot), key.Substring(dot + 1));
-                e.ToolTipText = key + (l != null ? "\n" + l.Source : "\n(no limit known: the game won't apply a value here)");
+                string text = e.RowIndex >= 0 ? RowTip(e.RowIndex) : null;
+                if (text == shownTip) return;
+                shownTip = text; rowTip.SetToolTip(grid, text);
             };
+            grid.MouseLeave += (s, e) => { shownTip = null; rowTip.SetToolTip(grid, null); };
             grid.DataError += (s, e) => { e.ThrowException = false; };
+        }
+
+        // a value row's hover: what the value does first (tools/value_tips.tsv), then the key and where its limits come from
+        string RowTip(int row)
+        {
+            var key = row < grid.Rows.Count ? grid.Rows[row].Tag as string : null; if (key == null) return null;
+            int dot = key.IndexOf('.'); string asset = key.Substring(0, dot), field = key.Substring(dot + 1);
+            var l = limits.Find(asset, field);
+            string tip = Tips.Text(asset, field);
+            return (tip != null ? tip + "\n\n" : "") + key + (l != null ? "\n" + l.Source : "\n(no limit known: the game won't apply a value here)");
         }
 
         // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows the full name and the key
@@ -554,7 +569,7 @@ namespace SwsSettings
                 foreach (var f in keys)
                 {
                     string key = a + "." + f;
-                    string pretty = Words.Pretty(f);
+                    string pretty = Tips.Display(a, f);
                     if (q.Length > 0 && !f.Contains(q.Replace(" ", "")) && pretty.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     double v; bool changed = profile.Values.TryGetValue(key, out v);
                     if (changedOnly.Checked && !changed) continue;

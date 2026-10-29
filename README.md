@@ -103,7 +103,10 @@ Everyone needs the same build of the mod, the same profile, and a network path b
 - **Profile and values:** profiles (new, duplicate, rename, delete, import) and every changeable
   value by ship and system, each with its default (from `defaults.ini`) and its allowed range (from `limits.ini`).
   Values are clamped to their range as you type, locked fields are read-only, and changes are saved as you go. The
-  header shows the profile's fingerprint, computed the way the DLL does (`mod/app/Core.cs`).
+  header shows the profile's fingerprint, computed the way the DLL does (`mod/app/Core.cs`). Hovering over a value
+  says what it does in play, then its key and where its limits come from. The tips, and clearer names where the
+  generated ones read badly, are `tools/value_tips.tsv` (what each is based on: the game's code, its data, our notes,
+  or only the name and stock values, which the hover says), built into the app by `tools/gen_app_tips.py`.
 
 The rest of this section is the same by hand:
 
@@ -210,7 +213,8 @@ Windows, with Visual Studio 2022 Build Tools (C++). From `mod/`:
   `tools/gen_check_sites.py`, stored as hashes), and writes `sws_check_report.txt` beside itself.
 - `build_app.bat` builds the settings app, `sws_settings.exe` (C#, the .NET Framework that ships with Windows), and
   `sws_settings_test.exe`, which prints the fingerprint the app computes for a profile, to check against the DLL's log.
-  `sws_settings.exe --shot <png> [values]` renders the window to an image and exits.
+  `sws_settings.exe --shot <png> [values]` renders the window to an image and exits. `sws_settings_test.exe <build
+  folder> --tips` lists every value the app shows with its name and tip, and fails if one has no tip.
 - `build.bat` / `build_rules.bat` build the earlier probe and rules-only variants.
 
 `sws_probe.cpp` is one source file with several builds, selected by defines: `/DRULES` (movement rules), `/DSERVER`
