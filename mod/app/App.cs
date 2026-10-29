@@ -368,7 +368,7 @@ namespace SwsSettings
         TextBox DurabilityBox(Func<string> key, Func<double> def, int f, int k, string what)
         {
             var tb = new TextBox { Width = 58, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body, Margin = new Padding(0, 3, 0, 0) };
-            new ToolTip().SetToolTip(tb, (f == 0 ? CreepShipNames[0][k] : CreepShipNames[1][k]).Replace(" (stock)", "") + " creep " + what + ": " + key());
+            NewTip().SetToolTip(tb, (f == 0 ? CreepShipNames[0][k] : CreepShipNames[1][k]).Replace(" (stock)", "") + " creep " + what + ": " + key());
             Action commit = () => {
                 if (loading || profile.BuiltIn) return;
                 string k2 = key(); string txt = tb.Text.Trim(); double v;
@@ -436,6 +436,14 @@ namespace SwsSettings
             showLocked.CheckedChanged += (s, e) => FillGrid();
             filter.Controls.Add(showVariants); filter.Controls.Add(changedOnly); filter.Controls.Add(showLocked);
             tree.AfterSelect += (s, e) => FillGrid();
+            // the tree's own tooltip waits the same half second, moving onto a node from outside or from another node
+            tree.HandleCreated += (s, e) =>
+            {
+                IntPtr tip = SendMessage(tree.Handle, 0x1100 + 25, IntPtr.Zero, IntPtr.Zero);   // TVM_GETTOOLTIPS
+                if (tip == IntPtr.Zero) return;
+                SendMessage(tip, 0x0400 + 3, (IntPtr)3, (IntPtr)TipDelay);   // TTM_SETDELAYTIME, TTDT_INITIAL
+                SendMessage(tip, 0x0400 + 3, (IntPtr)1, (IntPtr)TipDelay);   // TTDT_RESHOW
+            };
             split.Panel1.Controls.Add(tree); split.Panel1.Controls.Add(filter);
             SetupGrid();
             split.Panel2.Controls.Add(grid);
@@ -525,12 +533,14 @@ namespace SwsSettings
             // the hover is the app's own tooltip, not the grid's: the grid cuts a cell's tooltip past 288 characters, and a
             // tip with the key and limits under it runs longer. It stays up long enough to read.
             grid.ShowCellToolTips = false;
-            var rowTip = new ToolTip { AutoPopDelay = 30000, InitialDelay = 400, ReshowDelay = 200 };
+            var rowTip = NewTip(); rowTip.AutoPopDelay = 30000;
             string shownTip = null;
             grid.CellMouseEnter += (s, e) =>
             {
                 string text = e.RowIndex >= 0 ? RowTip(e.RowIndex) : null;
                 if (text == shownTip) return;
+                // moving to another row takes the shown tip down, so the next one waits its half second too
+                rowTip.Hide(grid);
                 shownTip = text; rowTip.SetToolTip(grid, text);
             };
             grid.MouseLeave += (s, e) => { shownTip = null; rowTip.SetToolTip(grid, null); };
@@ -547,9 +557,14 @@ namespace SwsSettings
             return (tip != null ? tip + "\n\n" : "") + key + (l != null ? "\n" + l.Source : "\n(no limit known: the game won't apply a value here)");
         }
 
-        // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows the full name and the key
+        // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows its raw name, the one a profile
+        // file uses
         string ConfigName(string asset) { return Words.Config(asset, true, defaults.NameOf(asset)); }
-        string ConfigTip(string asset) { return Words.Config(asset, false, defaults.NameOf(asset)) + "\n" + asset; }
+        string ConfigTip(string asset) { return asset; }
+        // every tooltip waits half a second (the Windows default hover time) before showing, including when the mouse
+        // moves straight from one item to the next, so passing over a list doesn't flash a tip for each item
+        const int TipDelay = 500;
+        static ToolTip NewTip() { return new ToolTip { InitialDelay = TipDelay, ReshowDelay = TipDelay }; }
         IEnumerable<string> SelectedAssets()
         {
             var n = tree.SelectedNode; if (n == null) return Enumerable.Empty<string>();
