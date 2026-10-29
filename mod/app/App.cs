@@ -176,7 +176,7 @@ namespace SwsSettings
         readonly CheckBox changedOnly = Theme.Check("Changed only");
         readonly CheckBox showLocked = Theme.Check("Show locked values");
         readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None,
-            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22, ShowNodeToolTips = true };
+            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22 };
         readonly DataGridView grid = new DataGridView { Dock = DockStyle.Fill };
         readonly Label status = Theme.Label("", Theme.Small, Theme.Muted);
         readonly Label readOnlyNote = Theme.Label("", Theme.Small, Theme.Changed);
@@ -436,14 +436,18 @@ namespace SwsSettings
             showLocked.CheckedChanged += (s, e) => FillGrid();
             filter.Controls.Add(showVariants); filter.Controls.Add(changedOnly); filter.Controls.Add(showLocked);
             tree.AfterSelect += (s, e) => FillGrid();
-            // the tree's own tooltip waits the same half second, moving onto a node from outside or from another node
-            tree.HandleCreated += (s, e) =>
+            // the tree's hover is the app's own tooltip, as on the values grid: the tree's built-in one showed each node's tip
+            // at once when moving between nodes (setting its delays didn't change that). Moving to another node takes the
+            // shown tip down, so each waits its half second.
+            var nodeTip = NewTip(); TreeNode tipNode = null;
+            tree.MouseMove += (s, e) =>
             {
-                IntPtr tip = SendMessage(tree.Handle, 0x1100 + 25, IntPtr.Zero, IntPtr.Zero);   // TVM_GETTOOLTIPS
-                if (tip == IntPtr.Zero) return;
-                SendMessage(tip, 0x0400 + 3, (IntPtr)3, (IntPtr)TipDelay);   // TTM_SETDELAYTIME, TTDT_INITIAL
-                SendMessage(tip, 0x0400 + 3, (IntPtr)1, (IntPtr)TipDelay);   // TTDT_RESHOW
+                var node = tree.GetNodeAt(e.Location);
+                if (node == tipNode) return;
+                nodeTip.Hide(tree); tipNode = node;
+                nodeTip.SetToolTip(tree, node != null && !string.IsNullOrEmpty(node.ToolTipText) ? node.ToolTipText : null);
             };
+            tree.MouseLeave += (s, e) => { nodeTip.Hide(tree); tipNode = null; nodeTip.SetToolTip(tree, null); };
             split.Panel1.Controls.Add(tree); split.Panel1.Controls.Add(filter);
             SetupGrid();
             split.Panel2.Controls.Add(grid);
