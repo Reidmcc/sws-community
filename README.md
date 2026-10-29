@@ -183,9 +183,12 @@ how much players' hits, and the vs-AI bots', hurt capital ships: `player_capital
 that reaches a capital ship's hull, lasers, ion and ordnance alike, including the Star Destroyer's and MC75's
 subsystems, which are sections of the hull; and `player_capital_shields` (0 or 1) for their shield bubbles. Creep are
 scaled by their own setting (docs/creep.md). Turrets and weak points aren't covered: a destroyed weak point's damage to
-the hull is the value `capitalshipweakpointssettings.damagedealtondestructionattribute` (5000 as shipped). With hull
-damage at 0%, the shields off, that value at 0 and the capital ships' passive damage turned down, only bomber creep can
-sink a capital ship, and the players fight over them. Each is in the fingerprint when it isn't stock.
+the hull is the value `capitalshipweakpointssettings.damagedealtondestructionattribute` (5000 as shipped), and a
+destroyed turret takes about 200 off its ship's hull, whoever destroys it (measured in flight; it isn't a value). With
+hull damage at 0%, the shields off, that value at 0 and the capital ships' passive damage off
+(`damageovertimesettings.targethealthratiotostopattribute` at 1 stops it; at 1 on every config, the corvette's and
+Raider's attack stops too), the bomber creep do the capital ships' damage, apart from those turrets, and the players
+fight over them. Each setting is in the fingerprint when it isn't stock.
 
 **Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
 creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
