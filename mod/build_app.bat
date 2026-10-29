@@ -15,9 +15,9 @@ if not exist "%VSWHERE%" goto nocsc
 for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -find MSBuild\**\Bin\Roslyn\csc.exe`) do set "CSC=%%i"
 if not exist "%CSC%" goto nocsc
 :havecsc
-set "SRC=app\App.cs app\Core.cs app\Words.cs app\WordsLogic.cs"
+set "SRC=app\App.cs app\Core.cs app\Words.cs app\WordsLogic.cs app\Tips.cs app\TipsLogic.cs"
 "%CSC%" -nologo -optimize+ -target:winexe -out:build\sws_settings.new.exe -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll %SRC% || exit /b 1
-"%CSC%" -nologo -optimize+ -target:exe -out:build\sws_settings_test.exe app\SelfTest.cs app\Core.cs app\Words.cs app\WordsLogic.cs || exit /b 1
+"%CSC%" -nologo -optimize+ -target:exe -out:build\sws_settings_test.exe app\SelfTest.cs app\Core.cs app\Words.cs app\WordsLogic.cs app\Tips.cs app\TipsLogic.cs || exit /b 1
 move /y build\sws_settings.new.exe build\sws_settings.exe >nul 2>nul || goto inuse
 echo APP BUILD OK
 exit /b 0

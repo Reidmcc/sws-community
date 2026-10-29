@@ -176,7 +176,7 @@ namespace SwsSettings
         readonly CheckBox changedOnly = Theme.Check("Changed only");
         readonly CheckBox showLocked = Theme.Check("Show locked values");
         readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None,
-            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22, ShowNodeToolTips = true };
+            LineColor = Theme.Line, Font = Theme.Body, HideSelection = false, FullRowSelect = true, ShowLines = false, ItemHeight = 22 };
         readonly DataGridView grid = new DataGridView { Dock = DockStyle.Fill };
         readonly Label status = Theme.Label("", Theme.Small, Theme.Muted);
         readonly Label readOnlyNote = Theme.Label("", Theme.Small, Theme.Changed);
@@ -368,7 +368,7 @@ namespace SwsSettings
         TextBox DurabilityBox(Func<string> key, Func<double> def, int f, int k, string what)
         {
             var tb = new TextBox { Width = 58, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Body, Margin = new Padding(0, 3, 0, 0) };
-            new ToolTip().SetToolTip(tb, (f == 0 ? CreepShipNames[0][k] : CreepShipNames[1][k]).Replace(" (stock)", "") + " creep " + what + ": " + key());
+            NewTip().SetToolTip(tb, (f == 0 ? CreepShipNames[0][k] : CreepShipNames[1][k]).Replace(" (stock)", "") + " creep " + what + ": " + key());
             Action commit = () => {
                 if (loading || profile.BuiltIn) return;
                 string k2 = key(); string txt = tb.Text.Trim(); double v;
@@ -436,6 +436,18 @@ namespace SwsSettings
             showLocked.CheckedChanged += (s, e) => FillGrid();
             filter.Controls.Add(showVariants); filter.Controls.Add(changedOnly); filter.Controls.Add(showLocked);
             tree.AfterSelect += (s, e) => FillGrid();
+            // the tree's hover is the app's own tooltip, as on the values grid: the tree's built-in one showed each node's tip
+            // at once when moving between nodes (setting its delays didn't change that). Moving to another node takes the
+            // shown tip down, so each waits its half second.
+            var nodeTip = NewTip(); TreeNode tipNode = null;
+            tree.MouseMove += (s, e) =>
+            {
+                var node = tree.GetNodeAt(e.Location);
+                if (node == tipNode) return;
+                nodeTip.Hide(tree); tipNode = node;
+                nodeTip.SetToolTip(tree, node != null && !string.IsNullOrEmpty(node.ToolTipText) ? node.ToolTipText : null);
+            };
+            tree.MouseLeave += (s, e) => { nodeTip.Hide(tree); tipNode = null; nodeTip.SetToolTip(tree, null); };
             split.Panel1.Controls.Add(tree); split.Panel1.Controls.Add(filter);
             SetupGrid();
             split.Panel2.Controls.Add(grid);
@@ -522,19 +534,41 @@ namespace SwsSettings
             grid.CellEndEdit += GridEndEdit;
             grid.CellClick += (s, e) => { if (e.RowIndex >= 0 && grid.Columns[e.ColumnIndex].Name == "reset" && (string)grid.Rows[e.RowIndex].Cells["reset"].Value == "reset") ResetRow(e.RowIndex); };
             grid.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete && grid.CurrentCell != null && !grid.IsCurrentCellInEditMode) { ResetRow(grid.CurrentCell.RowIndex); e.Handled = true; } };
-            grid.CellToolTipTextNeeded += (s, e) =>
+            // the hover is the app's own tooltip, not the grid's: the grid cuts a cell's tooltip past 288 characters, and a
+            // tip with the key and limits under it runs longer. It stays up long enough to read.
+            grid.ShowCellToolTips = false;
+            var rowTip = NewTip(); rowTip.AutoPopDelay = 30000;
+            string shownTip = null;
+            grid.CellMouseEnter += (s, e) =>
             {
-                if (e.RowIndex < 0) return;
-                var key = grid.Rows[e.RowIndex].Tag as string; if (key == null) return;
-                int dot = key.IndexOf('.'); var l = limits.Find(key.Substring(0, dot), key.Substring(dot + 1));
-                e.ToolTipText = key + (l != null ? "\n" + l.Source : "\n(no limit known: the game won't apply a value here)");
+                string text = e.RowIndex >= 0 ? RowTip(e.RowIndex) : null;
+                if (text == shownTip) return;
+                // moving to another row takes the shown tip down, so the next one waits its half second too
+                rowTip.Hide(grid);
+                shownTip = text; rowTip.SetToolTip(grid, text);
             };
+            grid.MouseLeave += (s, e) => { shownTip = null; rowTip.SetToolTip(grid, null); };
             grid.DataError += (s, e) => { e.ThrowException = false; };
         }
 
-        // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows the full name and the key
+        // a value row's hover: what the value does first (tools/value_tips.tsv), then the key and where its limits come from
+        string RowTip(int row)
+        {
+            var key = row < grid.Rows.Count ? grid.Rows[row].Tag as string : null; if (key == null) return null;
+            int dot = key.IndexOf('.'); string asset = key.Substring(0, dot), field = key.Substring(dot + 1);
+            var l = limits.Find(asset, field);
+            string tip = Tips.Text(asset, field);
+            return (tip != null ? tip + "\n\n" : "") + key + (l != null ? "\n" + l.Source : "\n(no limit known: the game won't apply a value here)");
+        }
+
+        // a config's name in the tree: the short, distinctive part ("Agile"); hovering shows its raw name, the one a profile
+        // file uses
         string ConfigName(string asset) { return Words.Config(asset, true, defaults.NameOf(asset)); }
-        string ConfigTip(string asset) { return Words.Config(asset, false, defaults.NameOf(asset)) + "\n" + asset; }
+        string ConfigTip(string asset) { return asset; }
+        // every tooltip waits half a second (the Windows default hover time) before showing, including when the mouse
+        // moves straight from one item to the next, so passing over a list doesn't flash a tip for each item
+        const int TipDelay = 500;
+        static ToolTip NewTip() { return new ToolTip { InitialDelay = TipDelay, ReshowDelay = TipDelay }; }
         IEnumerable<string> SelectedAssets()
         {
             var n = tree.SelectedNode; if (n == null) return Enumerable.Empty<string>();
@@ -561,7 +595,7 @@ namespace SwsSettings
                 foreach (var f in keys)
                 {
                     string key = a + "." + f;
-                    string pretty = Words.Pretty(f);
+                    string pretty = Tips.Display(a, f);
                     if (q.Length > 0 && !f.Contains(q.Replace(" ", "")) && pretty.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     double v; bool changed = profile.Values.TryGetValue(key, out v);
                     if (changedOnly.Checked && !changed) continue;
