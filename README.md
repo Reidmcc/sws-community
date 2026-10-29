@@ -192,6 +192,9 @@ hull damage at 0%, the shields off, that value at 0 and the capital ships' passi
 (`damageovertimesettings.targethealthratiotostopattribute` at 1 stops it; at 1 on every config, the corvette's and
 Raider's attack stops too), the bomber creep do the capital ships' damage, apart from those turrets, and the players
 fight over them. Each setting is in the fingerprint when it isn't stock.
+The release ships this mode as the profile **Bomber Escort Fleet Battle** (`mod/release/profiles`): players at 0%
+and shields off, Y-wing and TIE bomber packs bombing capital ships only at 40% damage, passive and weak-point
+damage off, and sturdier bomber creep. It's a starting point for tuning, not a balanced final word.
 
 **Match rules** are the modes' own tuning, under **Match rules** in the app: Fleet Battles' morale per kill (players,
 creep, corvettes and frigates, each on offense and on defense; creep kills give 1 on offense and 3 on defense as shipped),
