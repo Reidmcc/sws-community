@@ -1947,6 +1947,12 @@ static void aux_apply() {
         a.done = true; pending--;
         uint64_t arr = rd<uint64_t>(t, 32); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
         if (!arr || n == 0 || n > 512) { status("aux: %s's hangar list isn't laid out as expected (%u items); left alone", a.target, n); continue; }
+        // The list's items live in partitions of their own, and the game fills in the pointers to them after the asset
+        // loads, into the original list. A copy made before then keeps the empty entries, and the game's walk over every
+        // kit's items (0x1415f3a83) reads a null one and crashes (flown 2026-10-30). So copy only once every entry is in.
+        uint32_t empty = 0;
+        for (uint32_t k = 0; k < n; k++) { uint64_t c = rd<uint64_t>(arr, k * 8); if (!c || !rd<uint64_t>(c, 8)) empty++; }
+        if (empty) { a.done = false; pending++; continue; }
         bool have = false;
         for (uint32_t k = 0; k < n; k++) if (rd<uint64_t>(arr, k * 8) == item) have = true;
         if (have) continue;
