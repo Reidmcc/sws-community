@@ -19,6 +19,7 @@ Each ship's hangar offers the items its customization data lists. As that data l
 - **The item is the other ship's own,** with that ship's values. To tune a borrowed item, change it under the ship it comes from.
 - **Where several ships carry an item,** the one used is the first of the same faction to carry it, in the order above. If none of that faction does, it's the first of the other faction. So the Defender's tractor beam is the Reaper's, not the U-wing's.
 - **An item the ship already carries** is left as it is.
+- **Ownership:** a borrowed item is owned through the unlock list, so it needs `all_unlocked=1` in `server.ini`, which release builds have. The list includes the countermeasures and auxiliaries that are free defaults on their own ships, like the laser mines or the resupply droid. Without them a borrowed default showed the unlock icon, and picking it sent a purchase request that the game's backend refused.
 - **Primary weapons aren't offered.** Lasers fire from the ship's own mount points. Countermeasures and auxiliaries fire forward, or downward for bombs, so they don't need mounts.
 
 ## What can't be given
@@ -27,12 +28,15 @@ Each ship's hangar offers the items its customization data lists. As that data l
 - **The two beams,** the B-wing's ion beam (`sec_ionbeam`) and the beam the Y-wing, TIE Bomber and B-wing carry (`beam`):
   their effects are drawn from their own ship's laser mounts. Flown on an X-wing, both worked, but the beam started in
   front of the cockpit, joined to nothing. They can be revisited if mount points are ever worked out for primary weapons.
+- **The Y-wing's laser turret:** it sits on the Y-wing's turret mount, on top of the ship. On a TIE Fighter it didn't work.
 - **The TIE Defender's advanced power system** on the TIE Fighter, Bomber or Interceptor: it needs shields, and those three have none.
 
 The grid shows these as a dash. The mod also leaves them out of a hand-edited profile, with a line in the log.
+
+**Clear the grid**, under it, takes every extra item out of the profile at once, after asking.
 
 ## Tested
 
 The Reaper's tractor beam on the Defender was flown on 2026-10-30. It showed in the hangar and the briefing room, and worked in flight.
 
-Also flown on an X-wing (2026-10-30): stealth and the missile corrupter countermeasure, which worked, and the two beams, which worked but looked wrong (above).
+Also flown on an X-wing (2026-10-30): stealth and the missile corrupter countermeasure, which worked, and the two beams, which worked but looked wrong (above). Later the same day: the Defender's power system on the A-wing, across factions, worked; the laser turret on a TIE Fighter didn't.

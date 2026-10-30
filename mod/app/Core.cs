@@ -220,7 +220,7 @@ namespace SwsSettings
         };
         // an item the ship can't take: the B-wing's wing rotation, and the two beams, anywhere but their own ships (the beams
         // are drawn from their ship's laser mounts), and the Defender's power system without shields
-        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
+        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || id == "laser_turret" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
         public static bool IsStock(int ship, Item it) { return it.Stock.Contains(Ships[ship]); }
         // the DLL's extra_normalize: lowercase, [a-z0-9_()] only, duplicates and impossible items dropped, sorted by byte
         public static string Normalize(int ship, string raw)

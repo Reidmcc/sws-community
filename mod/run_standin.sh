@@ -97,12 +97,15 @@ if [ -n "$LOG" ] && grep -q "capdmg: first hit on CapitalShipHealthSettings_Ligh
    && grep -q "capdmg: first hit on ShieldHealthSettings_Raider (shield bubble)" "$LOG"; then
     echo "PASS  capital_damage_log named the ships, judged the drop rule, summed the hits by attacker, at the profile's capital_damage 50%"
 else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
-# extra items ([extra_items] in StandIn.ini): the TIE fighter's power system is left out as the profile is read; the item
+# extra items ([extra_items] in StandIn.ini): the TIE fighter's power system and laser turret are left out as the profile is
+# read; the U-wing's power system comes from the Defender, which carries it stock, not from the A-wing, which gets it
+# first in the same pass; the item
 # no ship has is named
-if [ -n "$LOG" ] && grep -q "\[extra_items\] tiefighter: 1 item(s) left out" "$LOG" \
+if [ -n "$LOG" ] && grep -q "\[extra_items\] tiefighter: 2 item(s) left out" "$LOG" \
+   && grep -q "extra items: uwing's hangar also offers aux_advancedpowersystem (tiedefender's, auxiliary)" "$LOG" \
    && grep -q "extra items: no ship carries an item named nonexistent_item" "$LOG" \
    && grep -q "extra items: tiedefender's hangar also offers" "$LOG"; then
-    echo "PASS  extra items: the impossible item left out, the unknown one named, the Defender's additions logged"
+    echo "PASS  extra items: the impossible items left out, the unknown one named, sources from stock lists, the Defender's additions logged"
 else echo "FAIL  the extra items log lines are missing"; STATUS=1; fi
 # players against capital ships ([rules] in StandIn.ini): the profile summary names both settings
 if [ -n "$LOG" ] && grep -q "players: their hits (and the vs-AI bots') do 40% damage to capital ship hulls" "$LOG" \

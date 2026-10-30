@@ -149,6 +149,7 @@ namespace SwsSettings
         readonly CheckBox playerCapShields = Theme.Check("Players damage capital ship shields");
         static readonly int[] PlayerCapHulls = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
         readonly DataGridView extraGrid = new DataGridView();
+        Button extraClear;
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
@@ -285,10 +286,16 @@ namespace SwsSettings
             if (mode == "ship") { tree.SelectedNode = ship; foreach (TreeNode sys in ship.Nodes) if (sys.Text.StartsWith("Engine") || sys.Text.StartsWith("Primary")) sys.Expand(); return; }
             if (ship.Nodes.Count > 0) tree.SelectedNode = ship.Nodes[0];   // Movement: one config, shown directly
         }
-        public void ShowRulesForShot(bool end = false)
+        public void ShowRulesForShot(bool end = false, bool items = false)
         {
             ShowPage(PageRules);
-            if (end) { Height = 1500; Application.DoEvents(); }   // tall enough to show the whole page (render mode only)
+            if (end || items) { Height = 1500; Application.DoEvents(); }   // tall enough to show the whole page (render mode only)
+            if (items && extraClear != null)   // scrolled to the extra items grid and its button
+            {
+                Control p = extraClear.Parent;
+                while (p != null && !(p is ScrollableControl && ((ScrollableControl)p).AutoScroll)) p = p.Parent;
+                if (p != null) { ((ScrollableControl)p).ScrollControlIntoView(extraClear); Application.DoEvents(); }
+            }
         }
         void ShowPage(int page)
         {
@@ -693,6 +700,17 @@ namespace SwsSettings
             try { foreach (TreeNode n in tree.Nodes) if (!n.Text.StartsWith("Not in defaults.ini")) walk(n); }
             finally { tree.EndUpdate(); }
         }
+        // every ship back to its stock items: the profile's whole [extra_items] section goes
+        void ClearExtraItems()
+        {
+            if (profile == null || profile.BuiltIn) return;
+            int n = profile.ExtraItems.Sum(x => string.IsNullOrEmpty(x) ? 0 : x.Split(',').Length);
+            if (n == 0) return;
+            if (Theme.Ask(this, "Clear the grid", "Take all " + n + " extra item" + (n == 1 ? "" : "s") + " out of '" + profile.Name + "'? Every ship goes back to its stock items.", null, false) == null) return;
+            for (int s = 0; s < profile.ExtraItems.Length; s++) profile.ExtraItems[s] = "";
+            SaveProfile(); FillExtraGrid();
+        }
+
         void ResetAll()
         {
             if (profile.BuiltIn || profile.Values.Count == 0) return;
@@ -831,6 +849,7 @@ namespace SwsSettings
                 }
             }
             extraGrid.Enabled = profile == null || !profile.BuiltIn;
+            if (extraClear != null) extraClear.Enabled = profile != null && !profile.BuiltIn && profile.ExtraItems.Any(x => !string.IsNullOrEmpty(x));
         }
 
         void BuildRulesPage()
@@ -876,8 +895,9 @@ namespace SwsSettings
 
             section("Extra countermeasures and auxiliaries", "Let a ship carry another ship's countermeasure or auxiliary: tick it, and that ship's hangar and briefing room offer it. " +
                 "It's the other ship's own item, with that ship's values, from a ship of the same faction where one has it. \"stock\" is what the ship carries already. " +
-                "The B-wing's rotation needs its wings, the two beams are drawn from their own ships' laser mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
+                "The B-wing's rotation needs its wings, the two beams and the Y-wing's laser turret sit on their own ships' mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
             BuildExtraGrid(); extraGrid.Margin = new Padding(0, 10, 0, 0); col.Controls.Add(extraGrid);
+            extraClear = Theme.Button("Clear the grid", (s, e) => ClearExtraItems()); extraClear.Margin = new Padding(0, 8, 0, 0); col.Controls.Add(extraClear);
 
             section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
                 "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers, unless creep missiles are on below. " +
@@ -1382,6 +1402,7 @@ namespace SwsSettings
                     if (args.Length >= 3 && args[2].StartsWith("values")) form.ShowValuesForShot(args[2] == "values-ship" ? "ship" : args[2] == "values-match" ? "match" : "system");
                     if (args.Length >= 3 && args[2] == "rules") form.ShowRulesForShot();
                     if (args.Length >= 3 && args[2] == "rules-end") form.ShowRulesForShot(true);
+                    if (args.Length >= 3 && args[2] == "rules-items") form.ShowRulesForShot(false, true);
                     if (args.Length >= 3 && args[2] == "looking") { }   // the Play page as it first opens, before the copies are known
                     else form.CopiesNowForShot();
                     Application.DoEvents();

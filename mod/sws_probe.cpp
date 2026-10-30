@@ -185,7 +185,8 @@ static bool g_playerCapShields = true;
 // apply dropped (Pseudo, 2026-10-30): the B-wing's wing rotation, which other ships have no parts for; the two beams, the
 // B-wing's ion beam and the beam the Y-wing, TIE Bomber and B-wing carry, whose effects are drawn from their own ship's
 // laser mounts (both flown on an X-wing: the beam starts in front of the cockpit, joined to nothing; to revisit if mount
-// points are ever worked out); and the TIE Defender's power system on a ship without shields. In the fingerprint as "items.<ship>=<a>,<b>;", ships in kExtraShips order.
+// points are ever worked out); the Y-wing's laser turret, which sits on the Y-wing's own turret mount (it didn't work on a
+// TIE Fighter, flown 2026-10-30); and the TIE Defender's power system on a ship without shields. In the fingerprint as "items.<ship>=<a>,<b>;", ships in kExtraShips order.
 static const char* kExtraShips[10] = { "xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
 static const char* kExtraKits[10] = { "xwingt65", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
 static const bool kExtraNoShields[10] = { false, false, false, false, false, true, true, true, false, false };   // the 2-system TIEs
@@ -271,7 +272,8 @@ static int extra_normalize(int ship, const wchar_t* in, char* out, size_t cap) {
         if (!end) { wchar_t w = towlower(*c); if (k < 47 && ((w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9') || w == L'_' || w == L'(' || w == L')')) cur[k++] = (char)w; }
         else if (k) {
             cur[k] = 0; k = 0;
-            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
+            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || !strcmp(cur, "laser_turret") ||
+                        (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
             if (skip) dropped++;
             for (int i = 0; i < n && !skip; i++) if (!strcmp(items[i], cur)) skip = true;
             if (!skip && n < 64) strcpy_s(items[n++], cur);
@@ -1954,6 +1956,15 @@ static uint64_t creep_array(uint32_t n) {   // an array of pointers, its count a
 //   is changed until all ten kits are loaded and every entry of their lists is in; then each ship's list grows once.
 // - The item a ship gets is a source ship's own slot config, with that ship's values: the first ship of the same faction
 //   that carries it (kExtraShips order), else the first of the other faction. One a ship already carries isn't added.
+//   Every ship's additions are worked out before any list grows, so a source is always a ship that carries the item
+//   stock (before 2026-10-30 a later ship could find it in an earlier ship's grown list: the same slot config, but the
+//   log named the wrong ship).
+// - Ownership: an item free on its own ship is a DefaultConfig there, and the game's faction-default check
+//   (0x141744600) walks the faction's kits in order and answers at the first kit that lists the id: Default means free,
+//   Additional means "not a default". A borrowed item sits in another kit's AdditionalConfigs, so a borrowed default
+//   can read as not owned (the hangar shows the unlock icon, and picking it sends a purchase the backend refuses; seen
+//   2026-10-30), and so can the source ship's own default when the borrowing kit comes first. unlock_ids.txt therefore
+//   carries every countermeasure and auxiliary default as well (all_unlocked, on in release builds).
 static uint64_t g_extraKit[10];
 static volatile LONG g_extraState;   // 0 waiting for the kits, 1 done
 static SRWLOCK g_extraLock = SRWLOCK_INIT;
@@ -1984,10 +1995,11 @@ static uint64_t extra_kit_item(uint64_t asset, const char* item) {
 static void extra_apply() {
     for (int s = 0; s < 10; s++) if (!g_extraKit[s] || !extra_kit_ready(g_extraKit[s])) return;
     InterlockedExchange(&g_extraState, 1);
+    static uint64_t add[10][64]; static char added[10][1024]; int na[10] = {};
     for (int s = 0; s < 10; s++) {
+        added[s][0] = 0;
         if (!g_extraItems[s][0]) continue;
         uint64_t t = g_extraKit[s];
-        uint64_t add[64]; char added[1024] = ""; int na = 0;
         char list[1024]; strcpy_s(list, g_extraItems[s]);
         char* ctx = nullptr;
         for (char* item = strtok_s(list, ",", &ctx); item; item = strtok_s(nullptr, ",", &ctx)) {
@@ -1999,19 +2011,22 @@ static void extra_apply() {
                     if ((src = extra_kit_item(g_extraKit[o], item)) != 0) from = o;
                 }
             if (!src) { status("extra items: no ship carries an item named %s; %s doesn't get it", item, kExtraShips[s]); continue; }
-            if (na < 64) {
-                add[na++] = src;
-                char one[96]; sprintf_s(one, "%s%s (%s's, %s)", added[0] ? ", " : "", item, kExtraShips[from], rd<uint32_t>(src, 104) == 1 ? "countermeasure" : "auxiliary");
-                strcat_s(added, one);
+            if (na[s] < 64) {
+                add[s][na[s]++] = src;
+                char one[96]; sprintf_s(one, "%s%s (%s's, %s)", added[s][0] ? ", " : "", item, kExtraShips[from], rd<uint32_t>(src, 104) == 1 ? "countermeasure" : "auxiliary");
+                strcat_s(added[s], one);
             }
         }
-        if (!na) continue;
+    }
+    for (int s = 0; s < 10; s++) {
+        if (!na[s]) continue;
+        uint64_t t = g_extraKit[s];
         uint64_t arr = rd<uint64_t>(t, 32); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
-        uint64_t grown = creep_array(n + na);
+        uint64_t grown = creep_array(n + na[s]);
         if (!grown) { status("extra items: no memory for %s's hangar list", kExtraShips[s]); continue; }
-        __try { if (n) memcpy((void*)grown, (void*)arr, n * 8ull); for (int i = 0; i < na; i++) *(uint64_t*)(grown + (n + i) * 8ull) = add[i]; }
+        __try { if (n) memcpy((void*)grown, (void*)arr, n * 8ull); for (int i = 0; i < na[s]; i++) *(uint64_t*)(grown + (n + i) * 8ull) = add[s][i]; }
         __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
-        if (write_u64(t + 32, grown)) status("extra items: %s's hangar also offers %s; its list went from %u to %u items", kExtraShips[s], added, n, n + na);
+        if (write_u64(t + 32, grown)) status("extra items: %s's hangar also offers %s; its list went from %u to %u items", kExtraShips[s], added[s], n, n + na[s]);
     }
 }
 static void extra_items_partition(uint64_t part) {
