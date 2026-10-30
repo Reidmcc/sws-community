@@ -176,8 +176,13 @@ namespace SwsSettings
     }
 
     // The countermeasures and auxiliaries a ship's hangar can offer from other ships ([extra_items]; the DLL's
-    // extra_items_partition). Items by the game's own names (each slot config's TelemetryName), from the game data:
+    // extra_items_partition). Items by the game's internal names (each slot config's TelemetryName), from the game data:
     // every ship's default and unlockable weapon-slot configs whose slot type is 1 (countermeasure) or 2 (auxiliary).
+    // Names are the game's own, as the hangar shows them (2026-10-30: the text is in the game's English text database,
+    // Game/Localization/WSLocalization_English, but nothing in an item's data names its entry, so each item was matched
+    // from the game's descriptions and Pseudo's eye). The New Republic calls the anti-fighter missile Quick-Lock; the grid
+    // uses the Empire's name, as the community does (Pseudo, 2026-10-30).
+    // Rows: countermeasures, then auxiliaries, each sorted by name.
     static class ExtraItems
     {
         public static readonly string[] Ships = { "xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
@@ -185,55 +190,70 @@ namespace SwsSettings
         static readonly bool[] NoShields = { false, false, false, false, false, true, true, true, false, false };   // the 2-system TIEs
         public class Item { public string Id, Name; public bool Countermeasure; public string[] Stock; }
         static Item I(string id, string name, bool cm, params string[] stock) { return new Item { Id = id, Name = name, Countermeasure = cm, Stock = stock }; }
-        public static readonly Item[] All = {
-            I("chaff_particles", "Chaff", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
-            I("flare_warheads", "Flares", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
-            I("missile_corrupter", "Missile Corrupter", true, "awing", "tiedefender", "tieinterceptor"),
-            I("scramble_sensor", "Sensor Scrambler", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+        public static readonly Item[] All = new[] {
+            I("chaff_particles", "Chaff Particles", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+            I("flare_warheads", "Seeker Warheads", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+            I("missile_corrupter", "Sensor Inverter", true, "awing", "tiedefender", "tieinterceptor"),
+            I("scramble_sensor", "Sensor Jammer", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
             I("assault_shield", "Assault Shield", false, "bwing", "tiebomber", "tiefighter", "xwing", "ywing"),
-            I("aux_advancedpowersystem", "Advanced Power System", false, "tiedefender"),
-            I("aux_bwing_rotation", "B-wing Rotation", false, "bwing"),
-            I("beam", "Beam", false, "bwing", "tiebomber", "ywing"),
-            I("bomb_ion", "Ion Bombs", false, "bwing", "tiebomber", "ywing"),
-            I("bomb_standard", "Proton Bombs", false, "bwing", "tiebomber", "ywing"),
+            I("aux_advancedpowersystem", "APS", false, "tiedefender"),
+            I("aux_bwing_rotation", "Gyro/Aux Control Module", false, "bwing"),
+            I("beam", "Beam Cannon", false, "bwing", "tiebomber", "ywing"),
+            I("bomb_ion", "Ion Bomb", false, "bwing", "tiebomber", "ywing"),
+            I("bomb_standard", "Proton Bomb", false, "bwing", "tiebomber", "ywing"),
             I("droid_heal_standard", "Repair Droid", false, "xwing"),
-            I("homing_missile_standard", "Homing Missiles", false, "tiedefender", "tiefighter", "xwing"),
-            I("laser_turret", "Laser Turret", false, "ywing"),
-            I("mine_laser_mine", "Laser Mines", false, "tiereaper", "uwing"),
-            I("mine_magnetic", "Magnetic Mines", false, "awing", "bwing", "tiebomber", "tiedefender", "tieinterceptor", "tiereaper", "uwing", "ywing"),
-            I("missile_anti_fighter", "Anti-Fighter Missiles", false, "awing", "tiedefender", "tieinterceptor"),
-            I("missile_big_bang", "Big Bang Missiles", false, "tiebomber", "ywing"),
-            I("missile_ion_(homing)", "Ion Missiles", false, "tiedefender", "tiefighter", "tiereaper", "uwing", "xwing"),
-            I("missile_ion_torpedo", "Ion Torpedoes", false, "bwing", "tiefighter", "tiereaper", "uwing", "xwing"),
-            I("missile_multi_lock", "Multi-Lock Missiles", false, "tiebomber", "ywing"),
+            I("homing_missile_standard", "Concussion Missile", false, "tiedefender", "tiefighter", "xwing"),
+            I("laser_turret", "Automatic Ion Cannon", false, "ywing"),
+            I("mine_laser_mine", "Turret Mine", false, "tiereaper", "uwing"),
+            I("mine_magnetic", "Seeker Mine", false, "awing", "bwing", "tiebomber", "tiedefender", "tieinterceptor", "tiereaper", "uwing", "ywing"),
+            I("missile_anti_fighter", "Anti-Starfighter Missile", false, "awing", "tiedefender", "tieinterceptor"),
+            I("missile_big_bang", "Goliath Missile", false, "tiebomber", "ywing"),
+            I("missile_ion_(homing)", "Ion Missile", false, "tiedefender", "tiefighter", "tiereaper", "uwing", "xwing"),
+            I("missile_ion_torpedo", "Ion Torpedo", false, "bwing", "tiefighter", "tiereaper", "uwing", "xwing"),
+            I("missile_multi_lock", "Multi-Lock Missile", false, "tiebomber", "ywing"),
             I("missile_rocket", "Rockets", false, "awing", "bwing", "tiedefender", "tiefighter", "tieinterceptor", "xwing"),
-            I("missile_swarm", "Swarm Missiles", false, "awing", "tiedefender", "tieinterceptor"),
-            I("missile_torpedo", "Torpedoes", false, "bwing", "tiebomber", "tiefighter", "xwing", "ywing"),
-            I("radar_jamming", "Radar Jamming", false, "tiereaper", "uwing"),
+            I("missile_swarm", "Cluster Missile", false, "awing", "tiedefender", "tieinterceptor"),
+            I("missile_torpedo", "Proton Torpedo", false, "bwing", "tiebomber", "tiefighter", "xwing", "ywing"),
+            I("radar_jamming", "Squadron Mask", false, "tiereaper", "uwing"),
             I("repair_kit_standard", "Repair Kit", false, "awing", "tiefighter", "tieinterceptor"),
-            I("resupply", "Resupply Droid", false, "tiereaper", "uwing"),
+            I("resupply", "Supply Droid", false, "tiereaper", "uwing"),
             I("sec_ionbeam", "Ion Beam", false, "bwing"),
-            I("sensory_array", "Sensor Array", false, "tiereaper", "uwing"),
-            I("shield_buff", "Shield Buff", false, "tiereaper", "uwing"),
-            I("stealth", "Stealth", false, "awing", "tieinterceptor"),
+            I("sensory_array", "Targeting Beacons", false, "tiereaper", "uwing"),
+            I("shield_buff", "Tactical Shield", false, "tiereaper", "uwing"),
+            I("stealth", "Targeting Jammer", false, "awing", "tieinterceptor"),
             I("tractor_beam", "Tractor Beam", false, "tiereaper", "uwing"),
-        };
+        }.OrderBy(it => it.Countermeasure ? 0 : 1).ThenBy(it => it.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         // an item the ship can't take: the B-wing's wing rotation, and the two beams, anywhere but their own ships (the beams
         // are drawn from their ship's laser mounts), and the Defender's power system without shields
-        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
+        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || id == "laser_turret" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
         public static bool IsStock(int ship, Item it) { return it.Stock.Contains(Ships[ship]); }
-        // the DLL's extra_normalize: lowercase, [a-z0-9_()] only, duplicates and impossible items dropped, sorted by byte
+        // the DLL's extra_normalize: lowercase, [a-z0-9_()] only plus a leading '-' (a stock item taken away), duplicates and
+        // impossible additions dropped, sorted by byte
         public static string Normalize(int ship, string raw)
         {
             var items = new List<string>();
             foreach (var part in (raw ?? "").Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                string id = new string(part.ToLowerInvariant().Where(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '(' || c == ')').Take(47).ToArray());
-                if (id.Length == 0 || Impossible(ship, id) || items.Contains(id)) continue;
+                var sb = new StringBuilder();
+                foreach (char c0 in part.ToLowerInvariant())
+                {
+                    char c = c0;
+                    if (sb.Length >= 47) break;
+                    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '(' || c == ')' || (c == '-' && sb.Length == 0)) sb.Append(c);
+                }
+                string id = sb.ToString();
+                if (id.Length == 0 || id == "-" || (id[0] != '-' && Impossible(ship, id)) || items.Contains(id)) continue;
                 if (items.Count < 64) items.Add(id);
             }
             items.Sort(StringComparer.Ordinal);
             return string.Join(",", items);
+        }
+        // the stock items of one kind (countermeasures or auxiliaries) a ship keeps; it must keep MinStock of them, so the
+        // game can always fill its countermeasure slot and both aux slots
+        public static int MinStock(bool countermeasure) { return countermeasure ? 1 : 2; }
+        public static int StockLeft(int ship, string list, bool countermeasure)
+        {
+            return All.Count(it => it.Countermeasure == countermeasure && IsStock(ship, it) && !Has(list, "-" + it.Id));
         }
         public static bool Has(string list, string id) { return !string.IsNullOrEmpty(list) && list.Split(',').Contains(id); }
         public static string Toggle(int ship, string list, string id, bool on)

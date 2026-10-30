@@ -43,6 +43,8 @@ static void put(uint64_t at, const uint8_t* b, size_t n) { memcpy((void*)at, b, 
 // (+0x20 instances, +0x28 count) -> config instances (+0x08 class, +0x18 name). Class ids live at ClassInfo +0x48/+0x4a.
 struct FakeAttr { uint8_t pad[24]; uint64_t idObj; float value; float pad2; };
 static uint8_t* fake_alloc(size_t n) { return (uint8_t*)VirtualAlloc(nullptr, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
+static uint32_t g_resolveSeen;   // the id the stand-in's loadout resolver was handed for its first slot
+static uint64_t g_whitelist;     // what the stand-in's FUN_14170c300 (the mission customization whitelist) returns
 static uint8_t* fake_class(uint16_t id) { uint8_t* c = fake_alloc(0x100); *(uint16_t*)(c + 0x48) = id; return c; }
 static uint8_t* fake_idobj(uint32_t ident) { uint8_t* o = fake_alloc(0x40); *(uint32_t*)(o + 32) = ident; return o; }
 static FakeAttr* fake_attr(uint32_t ident, float v) { FakeAttr* a = (FakeAttr*)fake_alloc(sizeof(FakeAttr)); a->idObj = (uint64_t)fake_idobj(ident); a->value = v; return a; }
@@ -230,6 +232,20 @@ int main() {
     { const uint8_t fire[] = {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff,
                               0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5d,0xc3};
       put(0x14182a310, fire, sizeof fire); }
+    // the loadout resolver FUN_14170d9e0(presetValue, kitAsset, outVec): its real prologue (16 bytes, the DLL's hook takes
+    // them), then it records the id of the preset's first slot entry ({type, idx, id} vector at +0x10) and returns true
+    if (map(0x141700000, 0x10000) != (void*)0x141700000) { printf("FAIL  could not map the loadout-resolver region\n"); return 1; }
+    { uint8_t code[64]; size_t at = 0;
+      const uint8_t head[] = {0x40,0x55,0x53,0x56,0x41,0x57,0x48,0x8b,0xec,0x48,0x83,0xec,0x48,0x49,0x8b,0xf0,
+                              0x48,0x8b,0x41,0x10, 0x8b,0x40,0x08, 0xa3};
+      memcpy(code, head, sizeof head); at = sizeof head;
+      uint64_t seen = (uint64_t)&g_resolveSeen; memcpy(code + at, &seen, 8); at += 8;
+      const uint8_t tail[] = {0xb0,0x01, 0x48,0x83,0xc4,0x48, 0x41,0x5f, 0x5e, 0x5b, 0x5d, 0xc3};
+      memcpy(code + at, tail, sizeof tail); at += sizeof tail;
+      put(0x14170d9e0, code, at);
+      // FUN_14170c300: mov rax, [g_whitelist]; ret
+      uint8_t wl[11] = {0x48,0xa1}; uint64_t wla = (uint64_t)&g_whitelist; memcpy(wl + 2, &wla, 8); wl[10] = 0xc3;
+      put(0x14170c300, wl, sizeof wl); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
                                  0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
@@ -607,7 +623,8 @@ int main() {
         // fighter (left out when the profile is read).
         typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
         auto slot = [](const char* item, uint32_t type) {
-            uint8_t* c = fake_alloc(0x80); *(uint64_t*)(c + 8) = 0x143999100; *(const char**)(c + 0x18) = item;
+            static uint32_t nextId = 0x7000;
+            uint8_t* c = fake_alloc(0x80); *(uint64_t*)(c + 8) = 0x1449fc3f0; *(const char**)(c + 0x18) = item; *(uint32_t*)(c + 0x20) = ++nextId;
             *(const char**)(c + 48) = item; *(uint64_t*)(c + 96) = (uint64_t)fake_alloc(0x40); *(uint32_t*)(c + 104) = type; return c; };
         auto list = [](std::initializer_list<uint8_t*> items) {
             uint8_t* a = fake_alloc(16 + 8 * items.size() + 8) + 16; *(uint32_t*)(a - 4) = (uint32_t)items.size();
@@ -618,6 +635,8 @@ int main() {
             uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = asset;
             uint8_t* p = fake_alloc(0x40); *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
         uint8_t* reaperTractor = slot("tractor_beam", 2); uint8_t* uwingTractor = slot("tractor_beam", 2);
+        uint8_t* uRadar = slot("radar_jamming", 2); uint8_t* uShield = slot("shield_buff", 2);
+        uint8_t* uMine = slot("mine_laser_mine", 2); uint8_t* uResupply = slot("resupply", 2); uint8_t* uScramble = slot("scramble_sensor", 1);
         uint8_t* xwingTorp = slot("missile_torpedo", 2); uint8_t* tieTorp = slot("missile_torpedo", 2);
         uint8_t* aps = slot("aux_advancedpowersystem", 2); uint8_t* defChaff = slot("chaff_particles", 1);
         uint8_t* defAdd = list({ defChaff, nullptr });   // the second entry not filled in yet
@@ -626,7 +645,7 @@ int main() {
             { "Game/Gameplay/Starships/XWingT65/Config/StarshipCustomization_XWingT65", xwingAdd, list({ slot("chaff_particles", 1) }) },
             { "Game/Gameplay/Starships/YWing/Config/StarshipCustomization_YWing", list({ slot("bomb_standard", 2) }), list({}) },
             { "Game/Gameplay/Starships/AWing/Config/StarshipCustomization_AWing", awingAdd, list({}) },
-            { "Game/Gameplay/Starships/UWing/Config/StarshipCustomization_UWing", list({ uwingTractor }), list({}) },
+            { "Game/Gameplay/Starships/UWing/Config/StarshipCustomization_UWing", list({ uwingTractor, uRadar, uShield }), list({ uMine, uResupply, uScramble }) },
             { "Game/Gameplay/Starships/BWing/Config/StarshipCustomization_BWing", list({ slot("aux_bwing_rotation", 2) }), list({}) },
             { "Game/Gameplay/Starships/TieFighter/Config/StarshipCustomization_TieFighter", list({ tieTorp }), list({}) },
             { "Game/Gameplay/Starships/TieBomber/Config/StarshipCustomization_TieBomber", list({ slot("bomb_standard", 2) }), list({}) },
@@ -649,6 +668,42 @@ int main() {
         printf("      (extra items: waited %d, Defender %u items, A-wing %u items)\n", (int)waited, dn, an);
         check(waited && defender && awing && others,
               "extra items: once every kit's list is filled in, the Defender gets the Reaper's tractor beam and the TIE fighter's torpedoes, the A-wing the Defender's power system; nothing else changes");
+        // taken away (StandIn.ini uwing=-mine_laser_mine,-radar_jamming): the default laser mines are replaced in place by
+        // the first stock auxiliary still allowed in the unlockable list (the tractor beam, which moves over); the radar
+        // jamming leaves; the shield buff stays; the power system is added. The Interceptor's only stock auxiliary stays.
+        uint8_t* ud = *(uint8_t**)(assetOf(3) + 40); uint8_t* ua = *(uint8_t**)(assetOf(3) + 32);
+        uint32_t udn = *(uint32_t*)(ud - 4), uan = *(uint32_t*)(ua - 4);
+        bool uwingOk = udn == 3 && ((uint8_t**)ud)[0] == uwingTractor && ((uint8_t**)ud)[1] == uResupply && ((uint8_t**)ud)[2] == uScramble &&
+                       uan == 2 && has(ua, uan, uShield) && has(ua, uan, aps) && !has(ua, uan, uRadar) && !has(ua, uan, uwingTractor);
+        bool interceptorOk = *(uint32_t*)(*(uint8_t**)(assetOf(7) + 32) - 4) == 1;
+        printf("      (taken away: U-wing defaults %u, unlockables %u)\n", udn, uan);
+        check(uwingOk && interceptorOk,
+              "extra items: a taken-away default is replaced in place by an allowed stock item, a taken-away unlockable leaves, and a ship keeps its minimum");
+        // the resolver (h_resolve): a U-wing loadout holding the laser mines, no longer offered, has aux 1 resolved as its
+        // first aux default (now the tractor beam), from a copy, the stored id untouched; with the tractor beam already in
+        // aux 2, aux 1 gets the other default (the resupply droid) instead, so no slot is left empty (PR #44's review); the
+        // resupply droid, still offered, and an id no kit ever listed are left alone; and with a mission whitelist the
+        // resolver runs as it is
+        typedef uint64_t(__fastcall* resolve_t)(uint64_t, uint64_t, uint64_t);
+        uint8_t* kitA = fake_alloc(0x100); *(uint8_t**)(kitA + 0xa8) = assetOf(3);
+        uint8_t* pv = fake_alloc(0x40); uint8_t* vec = fake_alloc(64); uint8_t* outv = fake_alloc(64);
+        *(uint8_t**)(pv + 0x10) = vec; *(uint8_t**)(pv + 0x18) = vec + 12;
+        uint32_t* ent = (uint32_t*)vec; ent[0] = 2; ent[1] = 0;
+        ent[2] = *(uint32_t*)(uMine + 0x20); g_resolveSeen = 0xffffffff; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
+        bool r1 = g_resolveSeen == *(uint32_t*)(uwingTractor + 0x20) && ent[2] == *(uint32_t*)(uMine + 0x20);
+        ent[3] = 2; ent[4] = 1; ent[5] = *(uint32_t*)(uwingTractor + 0x20); *(uint8_t**)(pv + 0x18) = vec + 24;
+        ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
+        bool r4 = g_resolveSeen == *(uint32_t*)(uResupply + 0x20) && ent[2] == *(uint32_t*)(uMine + 0x20);
+        g_whitelist = 1; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv); g_whitelist = 0;
+        bool r5 = g_resolveSeen == *(uint32_t*)(uMine + 0x20);
+        *(uint8_t**)(pv + 0x18) = vec + 12;
+        printf("      (resolver: aux 1 alone %d, beside the tractor beam %d, whitelist %d)\n", (int)r1, (int)r4, (int)r5);
+        ent[2] = *(uint32_t*)(uResupply + 0x20); ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
+        bool r2 = g_resolveSeen == *(uint32_t*)(uResupply + 0x20);
+        ent[2] = 0x6ffff; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
+        bool r3 = g_resolveSeen == 0x6ffff;
+        check(*(uint8_t*)0x14170d9e0 != 0x40 && r1 && r2 && r3 && r4 && r5,
+              "loadout resolver: an item the ship no longer offers resolves as a default the loadout doesn't already hold, from a copy; offered, never-listed and whitelisted ids are left alone");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
@@ -1231,7 +1286,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;players.capital_hull_damage=40;players.capital_shields=0;items.xwing=chaff_particles;items.ywing=nonexistent_item;items.awing=aux_advancedpowersystem;items.tiedefender=missile_torpedo,tractor_beam;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;players.capital_hull_damage=40;players.capital_shields=0;items.xwing=chaff_particles;items.ywing=nonexistent_item;items.awing=aux_advancedpowersystem;items.uwing=-mine_laser_mine,-radar_jamming,aux_advancedpowersystem;items.tieinterceptor=-stealth;items.tiedefender=missile_torpedo,tractor_beam;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",
