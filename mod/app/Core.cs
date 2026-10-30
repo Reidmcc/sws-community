@@ -180,7 +180,8 @@ namespace SwsSettings
     // every ship's default and unlockable weapon-slot configs whose slot type is 1 (countermeasure) or 2 (auxiliary).
     // Names are the game's own, as the hangar shows them (2026-10-30: the text is in the game's English text database,
     // Game/Localization/WSLocalization_English, but nothing in an item's data names its entry, so each item was matched
-    // from the game's descriptions and Pseudo's eye). Where the factions name an item differently, both names show.
+    // from the game's descriptions and Pseudo's eye). The New Republic calls the anti-fighter missile Quick-Lock; the grid
+    // uses the Empire's name, as the community does (Pseudo, 2026-10-30).
     // Rows: countermeasures, then auxiliaries, each sorted by name.
     static class ExtraItems
     {
@@ -205,7 +206,7 @@ namespace SwsSettings
             I("laser_turret", "Automatic Ion Cannon", false, "ywing"),
             I("mine_laser_mine", "Turret Mine", false, "tiereaper", "uwing"),
             I("mine_magnetic", "Seeker Mine", false, "awing", "bwing", "tiebomber", "tiedefender", "tieinterceptor", "tiereaper", "uwing", "ywing"),
-            I("missile_anti_fighter", "Quick-Lock / Anti-Starfighter Missile", false, "awing", "tiedefender", "tieinterceptor"),
+            I("missile_anti_fighter", "Anti-Starfighter Missile", false, "awing", "tiedefender", "tieinterceptor"),
             I("missile_big_bang", "Goliath Missile", false, "tiebomber", "ywing"),
             I("missile_ion_(homing)", "Ion Missile", false, "tiedefender", "tiefighter", "tiereaper", "uwing", "xwing"),
             I("missile_ion_torpedo", "Ion Torpedo", false, "bwing", "tiefighter", "tiereaper", "uwing", "xwing"),

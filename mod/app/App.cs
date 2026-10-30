@@ -798,7 +798,7 @@ namespace SwsSettings
             g.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Panel, ForeColor = Theme.Text, SelectionBackColor = Theme.Panel, SelectionForeColor = Theme.Text, Alignment = DataGridViewContentAlignment.MiddleCenter };
             g.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Back, ForeColor = Theme.Muted, Font = Theme.Small, Alignment = DataGridViewContentAlignment.MiddleCenter, WrapMode = DataGridViewTriState.True };
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing; g.ColumnHeadersHeight = 44;
-            g.Columns.Add(new DataGridViewTextBoxColumn { Name = "item", HeaderText = "", Width = 250, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) } });
+            g.Columns.Add(new DataGridViewTextBoxColumn { Name = "item", HeaderText = "", Width = 190, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) } });
             for (int s = 0; s < ExtraItems.Ships.Length; s++)
                 g.Columns.Add(new DataGridViewTextBoxColumn { Name = ExtraItems.Ships[s], HeaderText = ExtraItems.ShipNames[s], Width = 72, SortMode = DataGridViewColumnSortMode.NotSortable });
             g.Columns[0].SortMode = DataGridViewColumnSortMode.NotSortable;

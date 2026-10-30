@@ -12,7 +12,7 @@ tiedefender=tractor_beam,missile_torpedo
 awing=aux_advancedpowersystem,-stealth
 ```
 
-The grid shows each item by its in-game name, with both names where the factions differ (Quick-Lock / Anti-Starfighter Missile). The profile file uses the game's internal names, which the grid shows on hover. The ships are `xwing`, `ywing`, `awing`, `uwing`, `bwing`, `tiefighter`, `tiebomber`, `tieinterceptor`, `tiereaper` and `tiedefender`. Hovering an item's name in the grid shows its name for the profile file. The setting is part of the fingerprint, so everyone in a match offers the same items.
+The grid shows each item by its in-game name. The anti-fighter missile is the Empire's Anti-Starfighter Missile; the New Republic calls it the Quick-Lock Missile. The profile file uses the game's internal names, which the grid shows on hover. The ships are `xwing`, `ywing`, `awing`, `uwing`, `bwing`, `tiefighter`, `tiebomber`, `tieinterceptor`, `tiereaper` and `tiedefender`. Hovering an item's name in the grid shows its name for the profile file. The setting is part of the fingerprint, so everyone in a match offers the same items.
 
 ## How it works
 
