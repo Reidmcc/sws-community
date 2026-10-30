@@ -2100,7 +2100,7 @@ static void extra_apply() {
         if (!grown || (defChange[s] && !d2)) { status("extra items: no memory for %s's hangar lists", kExtraShips[s]); continue; }
         for (int i = 0; i < nn[s]; i++) *(uint64_t*)(grown + i * 8ull) = newAdd[s][i];
         for (int i = 0; i < na[s]; i++) *(uint64_t*)(grown + (nn[s] + i) * 8ull) = add[s][i];
-        for (int i = 0; i < nd[s]; i++) *(uint64_t*)(d2 + i * 8ull) = newDef[s][i];
+        if (d2) for (int i = 0; i < nd[s]; i++) *(uint64_t*)(d2 + i * 8ull) = newDef[s][i];
         // the unlockable list first: if the second write ever failed, a moved item would be missing, not listed twice
         bool ok = write_u64(t + 32, grown) && (!d2 || write_u64(t + 40, d2));
         if (!ok) continue;
