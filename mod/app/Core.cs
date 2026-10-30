@@ -222,18 +222,33 @@ namespace SwsSettings
         // are drawn from their ship's laser mounts), and the Defender's power system without shields
         public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || id == "laser_turret" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
         public static bool IsStock(int ship, Item it) { return it.Stock.Contains(Ships[ship]); }
-        // the DLL's extra_normalize: lowercase, [a-z0-9_()] only, duplicates and impossible items dropped, sorted by byte
+        // the DLL's extra_normalize: lowercase, [a-z0-9_()] only plus a leading '-' (a stock item taken away), duplicates and
+        // impossible additions dropped, sorted by byte
         public static string Normalize(int ship, string raw)
         {
             var items = new List<string>();
             foreach (var part in (raw ?? "").Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                string id = new string(part.ToLowerInvariant().Where(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '(' || c == ')').Take(47).ToArray());
-                if (id.Length == 0 || Impossible(ship, id) || items.Contains(id)) continue;
+                var sb = new StringBuilder();
+                foreach (char c0 in part.ToLowerInvariant())
+                {
+                    char c = c0;
+                    if (sb.Length >= 47) break;
+                    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '(' || c == ')' || (c == '-' && sb.Length == 0)) sb.Append(c);
+                }
+                string id = sb.ToString();
+                if (id.Length == 0 || id == "-" || (id[0] != '-' && Impossible(ship, id)) || items.Contains(id)) continue;
                 if (items.Count < 64) items.Add(id);
             }
             items.Sort(StringComparer.Ordinal);
             return string.Join(",", items);
+        }
+        // the stock items of one kind (countermeasures or auxiliaries) a ship keeps; it must keep MinStock of them, so the
+        // game can always fill its countermeasure slot and both aux slots
+        public static int MinStock(bool countermeasure) { return countermeasure ? 1 : 2; }
+        public static int StockLeft(int ship, string list, bool countermeasure)
+        {
+            return All.Count(it => it.Countermeasure == countermeasure && IsStock(ship, it) && !Has(list, "-" + it.Id));
         }
         public static bool Has(string list, string id) { return !string.IsNullOrEmpty(list) && list.Split(',').Contains(id); }
         public static string Toggle(int ship, string list, string id, bool on)

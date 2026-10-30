@@ -700,13 +700,13 @@ namespace SwsSettings
             try { foreach (TreeNode n in tree.Nodes) if (!n.Text.StartsWith("Not in defaults.ini")) walk(n); }
             finally { tree.EndUpdate(); }
         }
-        // every ship back to its stock items: the profile's whole [extra_items] section goes
+        // every ship back to its stock items: the profile's whole [extra_items] section goes, additions and removals
         void ClearExtraItems()
         {
             if (profile == null || profile.BuiltIn) return;
             int n = profile.ExtraItems.Sum(x => string.IsNullOrEmpty(x) ? 0 : x.Split(',').Length);
             if (n == 0) return;
-            if (Theme.Ask(this, "Clear the grid", "Take all " + n + " extra item" + (n == 1 ? "" : "s") + " out of '" + profile.Name + "'? Every ship goes back to its stock items.", null, false) == null) return;
+            if (Theme.Ask(this, "Clear the grid", "Undo all " + n + " change" + (n == 1 ? "" : "s") + " in '" + profile.Name + "'? Every ship goes back to its stock items.", null, false) == null) return;
             for (int s = 0; s < profile.ExtraItems.Length; s++) profile.ExtraItems[s] = "";
             SaveProfile(); FillExtraGrid();
         }
@@ -824,9 +824,24 @@ namespace SwsSettings
                 if (loading || profile == null || profile.BuiltIn || e.RowIndex < 0 || e.ColumnIndex < 1) return;
                 var it = g.Rows[e.RowIndex].Tag as ExtraItems.Item; if (it == null) return;
                 int ship = e.ColumnIndex - 1;
-                if (ExtraItems.IsStock(ship, it) || ExtraItems.Impossible(ship, it.Id)) return;
-                bool on = !ExtraItems.Has(profile.ExtraItems[ship], it.Id);
-                profile.ExtraItems[ship] = ExtraItems.Toggle(ship, profile.ExtraItems[ship], it.Id, on);
+                string list = profile.ExtraItems[ship];
+                if (ExtraItems.IsStock(ship, it))   // a stock item: take it away, or give it back
+                {
+                    bool off = ExtraItems.Has(list, "-" + it.Id);
+                    if (!off && ExtraItems.StockLeft(ship, list, it.Countermeasure) <= ExtraItems.MinStock(it.Countermeasure))
+                    {
+                        Theme.Tell(this, "Can't take it away", "Every ship has to keep at least two of its stock auxiliaries and one of its stock countermeasures, " +
+                            "so the game can always fill its countermeasure slot and both aux slots. To take this one away from the " + ExtraItems.ShipNames[ship] +
+                            ", give it back one of its other stock " + (it.Countermeasure ? "countermeasures" : "auxiliaries") + " first.");
+                        return;
+                    }
+                    profile.ExtraItems[ship] = ExtraItems.Toggle(ship, list, "-" + it.Id, !off);
+                }
+                else
+                {
+                    if (ExtraItems.Impossible(ship, it.Id)) return;
+                    profile.ExtraItems[ship] = ExtraItems.Toggle(ship, list, it.Id, !ExtraItems.Has(list, it.Id));
+                }
                 SaveProfile(); FillExtraGrid();
             };
             g.SelectionChanged += (s, e) => g.ClearSelection();
@@ -839,13 +854,20 @@ namespace SwsSettings
                 for (int s = 0; s < ExtraItems.Ships.Length; s++)
                 {
                     var cell = row.Cells[s + 1];
-                    bool stock = ExtraItems.IsStock(s, it), no = ExtraItems.Impossible(s, it.Id);
-                    bool given = profile != null && ExtraItems.Has(profile.ExtraItems[s], it.Id);
-                    cell.Value = stock ? "stock" : no ? "\u2014" : given ? "\u2713" : "";
-                    cell.Style.ForeColor = stock || no ? Theme.Muted : Theme.Changed;
+                    string list = profile != null ? profile.ExtraItems[s] : "";
+                    bool stock = ExtraItems.IsStock(s, it), no = !stock && ExtraItems.Impossible(s, it.Id);
+                    bool given = !stock && ExtraItems.Has(list, it.Id), off = stock && ExtraItems.Has(list, "-" + it.Id);
+                    // a stock item the ship must keep (the last two auxiliaries, the last countermeasure) is greyed
+                    bool kept = stock && !off && ExtraItems.StockLeft(s, list, it.Countermeasure) <= ExtraItems.MinStock(it.Countermeasure);
+                    cell.Value = off ? "removed" : stock ? "stock" : no ? "\u2014" : given ? "\u2713" : "";
+                    cell.Style.ForeColor = off || given ? Theme.Changed : stock && !kept ? Theme.Text : Theme.Muted;
                     cell.Style.SelectionForeColor = cell.Style.ForeColor;
-                    cell.ToolTipText = stock ? ExtraItems.ShipNames[s] + " carries it already" : no ? "Can't apply to the " + ExtraItems.ShipNames[s]
-                        : (given ? "Given to the " : "Click to give it to the ") + ExtraItems.ShipNames[s];
+                    string ship = ExtraItems.ShipNames[s];
+                    cell.ToolTipText = off ? "Taken away from the " + ship + "; click to give it back"
+                        : kept ? "The " + ship + " has to keep at least " + (it.Countermeasure ? "one stock countermeasure" : "two stock auxiliaries")
+                        : stock ? "The " + ship + " carries it; click to take it away"
+                        : no ? "Can't apply to the " + ship
+                        : (given ? "Given to the " : "Click to give it to the ") + ship;
                 }
             }
             extraGrid.Enabled = profile == null || !profile.BuiltIn;
@@ -894,6 +916,7 @@ namespace SwsSettings
             rule(playerCapShields, "Players' and bots' hits take down capital ships' shield bubbles, as in stock. Off, the shields ignore their hits.");
 
             section("Extra countermeasures and auxiliaries", "Let a ship carry another ship's countermeasure or auxiliary: tick it, and that ship's hangar and briefing room offer it. " +
+                "Click a \"stock\" cell to take that item away from the ship: it leaves the hangar, and loadouts that carry it get a stock item instead. A ship keeps at least two stock auxiliaries and one stock countermeasure. " +
                 "It's the other ship's own item, with that ship's values, from a ship of the same faction where one has it. \"stock\" is what the ship carries already. " +
                 "The B-wing's rotation needs its wings, the two beams and the Y-wing's laser turret sit on their own ships' mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
             BuildExtraGrid(); extraGrid.Margin = new Padding(0, 10, 0, 0); col.Controls.Add(extraGrid);

@@ -181,7 +181,9 @@ static int g_playerCapHull = 100;
 static bool g_playerCapShields = true;
 // [extra_items] <ship>=<item>,<item>: auxiliaries and countermeasures from other ships that this ship's hangar also offers
 // (extra_items_partition). Ships by the app's names; items by the game's own (each slot config's TelemetryName, like
-// tractor_beam). Normalized as read (extra_normalize): lowercase, sorted, duplicates dropped, and the items that can't
+// tractor_beam). An item with a leading '-' is one of the ship's own stock items taken away (Pseudo, 2026-10-30): it leaves
+// the hangar, and a loadout that carries it gets a stock item instead. Normalized as read (extra_normalize): lowercase,
+// sorted, duplicates dropped, and the additions that can't
 // apply dropped (Pseudo, 2026-10-30): the B-wing's wing rotation, which other ships have no parts for; the two beams, the
 // B-wing's ion beam and the beam the Y-wing, TIE Bomber and B-wing carry, whose effects are drawn from their own ship's
 // laser mounts (both flown on an X-wing: the beam starts in front of the cockpit, joined to nothing; to revisit if mount
@@ -269,11 +271,12 @@ static int extra_normalize(int ship, const wchar_t* in, char* out, size_t cap) {
     char items[64][48]; int n = 0, dropped = 0; char cur[48]; int k = 0;
     for (const wchar_t* c = in;; c++) {
         bool end = !*c || *c == L',' || iswspace(*c);
-        if (!end) { wchar_t w = towlower(*c); if (k < 47 && ((w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9') || w == L'_' || w == L'(' || w == L')')) cur[k++] = (char)w; }
+        if (!end) { wchar_t w = towlower(*c); if (k < 47 && ((w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9') || w == L'_' || w == L'(' || w == L')' || (w == L'-' && !k))) cur[k++] = (char)w; }
         else if (k) {
             cur[k] = 0; k = 0;
-            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || !strcmp(cur, "laser_turret") ||
-                        (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
+            if (!strcmp(cur, "-")) { if (!*c) break; continue; }
+            bool skip = cur[0] != '-' && (!strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || !strcmp(cur, "laser_turret") ||
+                        (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]));
             if (skip) dropped++;
             for (int i = 0; i < n && !skip; i++) if (!strcmp(items[i], cur)) skip = true;
             if (!skip && n < 64) strcpy_s(items[n++], cur);
@@ -530,7 +533,7 @@ static void load_profile(const wchar_t* dir) {
                 wchar_t key[24], v[1024] = L""; swprintf_s(key, L"%hs", kExtraShips[s]);
                 GetPrivateProfileStringW(L"extra_items", key, L"", v, 1024, pf);
                 int dropped = extra_normalize(s, v, g_extraItems[s], sizeof g_extraItems[s]);
-                if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation; the beams; the Defender's power system without shields)", kExtraShips[s], dropped);
+                if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation; the beams; the laser turret; the Defender's power system without shields)", kExtraShips[s], dropped);
                 if (g_extraItems[s][0]) g_extraOn = true;
             }
             if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling || g_extraOn) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -567,7 +570,7 @@ static void load_profile(const wchar_t* dir) {
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
     if (g_playerCapHull != 100) status("  players: their hits (and the vs-AI bots') do %d%% damage to capital ship hulls and the subsystems in them", g_playerCapHull);
     if (!g_playerCapShields) status("  players: their hits (and the vs-AI bots') do no damage to capital ship shields");
-    for (int s = 0; s < 10; s++) if (g_extraItems[s][0]) status("  extra items: %s may also carry %s", kExtraShips[s], g_extraItems[s]);
+    for (int s = 0; s < 10; s++) if (g_extraItems[s][0]) status("  extra items: %s, given (or taken away, with a '-'): %s", kExtraShips[s], g_extraItems[s]);
     if (g_creepAggressive && g_creepCapDamage > 0) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
     if (g_creepAggressive && g_creepCapDamage == 0) status("  creep: aggressive within %d m, with targets by phase; their hits do no damage to capital ships, as in stock", g_creepRadius);
     if (g_creepAggressive) status("  creep: bombers attack %s", g_creepBomberCapOnly ? "capital ships only" : "capital ships first, starfighters when none is in reach");
@@ -1992,17 +1995,88 @@ static uint64_t extra_kit_item(uint64_t asset, const char* item) {
     }
     return 0;
 }
+// one of a kit's lists (0 AdditionalConfigs +32, 1 DefaultConfigs +40) as the kit had it before any change
+static uint64_t g_extraOrig[10][2];
+static uint32_t list_n(uint64_t arr) { return arr ? rd<uint32_t>(arr - 4, 0) : 0; }
+// a countermeasure (1) or auxiliary (2) slot config's slot type, else 0
+static uint32_t ws_type(uint64_t c) {
+    if (!c || rd<uint64_t>(c, 8) != G(0x1449fc3f0) || !rd<uint64_t>(c, 96)) return 0;
+    uint32_t ty = rd<uint32_t>(c, 104); return ty == 1 || ty == 2 ? ty : 0;
+}
+static bool in_names(const char* names, const char* item) {   // item in a ",a,b," list
+    char key[64]; sprintf_s(key, ",%s,", item); return strstr(names, key) != nullptr;
+}
+// Taking stock items away ('-' entries, Pseudo 2026-10-30): the item leaves the kit's lists, so the hangar no longer
+// offers it, and a loadout that holds it gets a stock item instead (h_resolve). Read from the game (notes in the
+// findings of 2026-10-30): every kit's DefaultConfigs holds exactly one countermeasure and two auxiliaries, and an empty
+// slot takes the first type-1 default, aux 1 the first type-2 default and aux 2 the second (FUN_14170d9e0, and the
+// kit-assign fill 0x1415a0940). So DefaultConfigs keeps its shape: a default taken away is replaced IN PLACE by the
+// first stock item of the same kind still allowed in AdditionalConfigs, which moves over (an item in both lists would
+// resolve twice). A ship keeps at least two stock auxiliaries and one stock countermeasure, which the settings app
+// enforces and which guarantees a replacement; a hand-edited profile that asks for more has that kind's removals
+// ignored here, with a log line.
 static void extra_apply() {
     for (int s = 0; s < 10; s++) if (!g_extraKit[s] || !extra_kit_ready(g_extraKit[s])) return;
     InterlockedExchange(&g_extraState, 1);
-    static uint64_t add[10][64]; static char added[10][1024]; int na[10] = {};
+    for (int s = 0; s < 10; s++) for (int l = 0; l < 2; l++) g_extraOrig[s][l] = rd<uint64_t>(g_extraKit[s], 32 + l * 8);
+    static uint64_t add[10][64]; static char added[10][1024], gone[10][1024];
+    static uint64_t newDef[10][64]; static uint64_t newAdd[10][600];
+    int na[10] = {}, nd[10] = {}, nn[10] = {}; bool change[10] = {};
     for (int s = 0; s < 10; s++) {
-        added[s][0] = 0;
+        added[s][0] = gone[s][0] = 0;
         if (!g_extraItems[s][0]) continue;
         uint64_t t = g_extraKit[s];
         char list[1024]; strcpy_s(list, g_extraItems[s]);
+        // the removals first: which stock items go, if the ship keeps enough of each kind
+        char removed[1100] = ","; int stock[3] = {}, out[3] = {};
+        for (int l = 0; l < 2; l++) { uint64_t arr = g_extraOrig[s][l]; for (uint32_t k = 0; k < list_n(arr) && k < 512; k++) stock[ws_type(rd<uint64_t>(arr, k * 8))]++; }
         char* ctx = nullptr;
         for (char* item = strtok_s(list, ",", &ctx); item; item = strtok_s(nullptr, ",", &ctx)) {
+            if (item[0] != '-') continue;
+            uint64_t c = extra_kit_item(t, item + 1);
+            if (!c) { status("extra items: %s has no stock item named %s to take away", kExtraShips[s], item + 1); continue; }
+            out[ws_type(c)]++; strcat_s(removed, item + 1); strcat_s(removed, ",");
+        }
+        for (int ty = 1; ty <= 2; ty++)
+            if (out[ty] && stock[ty] - out[ty] < (ty == 1 ? 1 : 2)) {   // the minimum: that kind's removals are ignored
+                status("extra items: %s keeps all its stock %s: taking %d away would leave fewer than %d", kExtraShips[s],
+                       ty == 1 ? "countermeasures" : "auxiliaries", out[ty], ty == 1 ? 1 : 2);
+                char keep[1100] = ","; char tmp[1100]; strcpy_s(tmp, removed + 1); char* c2 = nullptr;
+                for (char* it = strtok_s(tmp, ",", &c2); it; it = strtok_s(nullptr, ",", &c2))
+                    if (ws_type(extra_kit_item(t, it)) != (uint32_t)ty) { strcat_s(keep, it); strcat_s(keep, ","); }
+                strcpy_s(removed, keep);
+            }
+        // DefaultConfigs: same shape, a removed default replaced by the first allowed stock item of its kind
+        uint64_t def = g_extraOrig[s][1], adl = g_extraOrig[s][0]; char moved[1100] = ",";
+        nd[s] = list_n(def) < 64 ? (int)list_n(def) : 64;
+        for (int k = 0; k < nd[s]; k++) {
+            uint64_t c = rd<uint64_t>(def, k * 8); newDef[s][k] = c;
+            uint32_t ty = ws_type(c); char nm[64]; strcpy_s(nm, ty ? safe_str(rd<uint64_t>(c, 48)) : "");   // safe_str's buffer is shared
+            if (!ty || !in_names(removed, nm)) continue;
+            uint64_t rep = 0;
+            for (uint32_t j = 0; j < list_n(adl) && j < 512 && !rep; j++) {
+                uint64_t a2 = rd<uint64_t>(adl, j * 8); const char* an = safe_str(rd<uint64_t>(a2, 48));
+                if (ws_type(a2) == ty && !in_names(removed, an) && !in_names(moved, an)) rep = a2;
+            }
+            if (!rep) { status("extra items: %s has no stock %s left to replace its default %s; it stays", kExtraShips[s], ty == 1 ? "countermeasure" : "auxiliary", nm); continue; }
+            newDef[s][k] = rep; strcat_s(moved, safe_str(rep ? rd<uint64_t>(rep, 48) : 0)); strcat_s(moved, ",");
+            char one[160]; sprintf_s(one, "%s%s (its default %s now %s)", gone[s][0] ? ", " : "", nm, ty == 1 ? "countermeasure" : "auxiliary", safe_str(rd<uint64_t>(rep, 48)));
+            strcat_s(gone[s], one); change[s] = true;
+        }
+        // AdditionalConfigs without the removed and the moved items
+        for (uint32_t j = 0; j < list_n(adl) && j < 512; j++) {
+            uint64_t c = rd<uint64_t>(adl, j * 8); uint32_t ty = ws_type(c);
+            const char* nm = ty ? safe_str(rd<uint64_t>(c, 48)) : "";
+            if (ty && (in_names(removed, nm) || in_names(moved, nm))) {
+                if (in_names(removed, nm)) { char one[96]; sprintf_s(one, "%s%s", gone[s][0] ? ", " : "", nm); strcat_s(gone[s], one); }
+                change[s] = true; continue;
+            }
+            if (nn[s] < 600) newAdd[s][nn[s]++] = c;
+        }
+        // then the additions, each from a ship that carries it stock
+        strcpy_s(list, g_extraItems[s]); ctx = nullptr;
+        for (char* item = strtok_s(list, ",", &ctx); item; item = strtok_s(nullptr, ",", &ctx)) {
+            if (item[0] == '-') continue;
             if (extra_kit_item(t, item)) { status("extra items: %s already carries %s", kExtraShips[s], item); continue; }
             uint64_t src = 0; int from = -1;
             for (int pass = 0; pass < 2 && !src; pass++)   // the same faction first
@@ -2012,22 +2086,69 @@ static void extra_apply() {
                 }
             if (!src) { status("extra items: no ship carries an item named %s; %s doesn't get it", item, kExtraShips[s]); continue; }
             if (na[s] < 64) {
-                add[s][na[s]++] = src;
+                add[s][na[s]++] = src; change[s] = true;
                 char one[96]; sprintf_s(one, "%s%s (%s's, %s)", added[s][0] ? ", " : "", item, kExtraShips[from], rd<uint32_t>(src, 104) == 1 ? "countermeasure" : "auxiliary");
                 strcat_s(added[s], one);
             }
         }
     }
-    for (int s = 0; s < 10; s++) {
-        if (!na[s]) continue;
+    for (int s = 0; s < 10; s++) {   // nothing changes before every ship's lists are worked out
+        if (!change[s]) continue;
         uint64_t t = g_extraKit[s];
-        uint64_t arr = rd<uint64_t>(t, 32); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
-        uint64_t grown = creep_array(n + na[s]);
-        if (!grown) { status("extra items: no memory for %s's hangar list", kExtraShips[s]); continue; }
-        __try { if (n) memcpy((void*)grown, (void*)arr, n * 8ull); for (int i = 0; i < na[s]; i++) *(uint64_t*)(grown + (n + i) * 8ull) = add[s][i]; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
-        if (write_u64(t + 32, grown)) status("extra items: %s's hangar also offers %s; its list went from %u to %u items", kExtraShips[s], added[s], n, n + na[s]);
+        uint32_t n = (uint32_t)(nn[s] + na[s]);
+        uint64_t grown = creep_array(n), d2 = nd[s] ? creep_array((uint32_t)nd[s]) : 0;
+        if (!grown || (nd[s] && !d2)) { status("extra items: no memory for %s's hangar lists", kExtraShips[s]); continue; }
+        for (int i = 0; i < nn[s]; i++) *(uint64_t*)(grown + i * 8ull) = newAdd[s][i];
+        for (int i = 0; i < na[s]; i++) *(uint64_t*)(grown + (nn[s] + i) * 8ull) = add[s][i];
+        for (int i = 0; i < nd[s]; i++) *(uint64_t*)(d2 + i * 8ull) = newDef[s][i];
+        bool ok = (!d2 || write_u64(t + 40, d2)) && write_u64(t + 32, grown);
+        if (!ok) continue;
+        if (gone[s][0]) status("extra items: %s's hangar no longer offers %s", kExtraShips[s], gone[s]);
+        if (added[s][0]) status("extra items: %s's hangar also offers %s", kExtraShips[s], added[s]);
+        status("extra items: %s's unlockable list went from %u to %u items", kExtraShips[s], list_n(g_extraOrig[s][0]), n);
     }
+}
+// FUN_14170d9e0(presetValue, kitAsset, outVec): turns a loadout's stored item ids back into slot configs, for the hangar,
+// the briefing room and the spawn alike (read 2026-10-30; its only caller is FUN_14170d080). The preset value holds a
+// vector (+0x10 begin, +0x18 end) of 12-byte {u32 slot type, u32 slot index, u32 config Identifier}. An id found in
+// none of the kit's lists resolves to NOTHING, an empty slot (an id of 0 means the kit's default for that slot). So a
+// loadout made where a ship could carry another ship's item, or before one of its own was taken away, would fly with an
+// empty slot. h_resolve hands the resolver a 0 instead, for that call only, so the slot takes the default: for a
+// countermeasure or auxiliary whose id the kit no longer lists but some kit listed at load (any profile; extra items or
+// not). Ids no kit ever listed (a mission's own items) are left alone.
+typedef uint64_t(__fastcall* resolve_t)(uint64_t, uint64_t, uint64_t);
+static resolve_t o_resolve;
+static volatile LONG g_resolveLogs;
+static bool kit_lists_id(uint64_t cust, uint32_t id, bool orig, int s) {
+    for (int l = 0; l < 4; l++) {
+        uint64_t arr = orig ? (l < 2 ? g_extraOrig[s][l] : 0) : rd<uint64_t>(cust, 32 + l * 8);
+        for (uint32_t k = 0; k < list_n(arr) && k < 512; k++) { uint64_t c = rd<uint64_t>(arr, k * 8); if (c && rd<uint32_t>(c, 0x20) == id) return true; }
+    }
+    return false;
+}
+static uint64_t __fastcall h_resolve(uint64_t pv, uint64_t kit, uint64_t outVec) {
+    struct Fix { uint64_t at; uint32_t was; } fx[16]; int nf = 0;
+    __try {
+        uint64_t cust = (pv && kit && g_extraState) ? rd<uint64_t>(kit, 0xa8) : 0;
+        uint64_t b = cust ? rd<uint64_t>(pv, 0x10) : 0, e = cust ? rd<uint64_t>(pv, 0x18) : 0;
+        for (uint64_t at = b; at && at < e && nf < 16 && (at - b) < 12 * 64; at += 12) {
+            uint32_t ty = *(uint32_t*)at, id = *(uint32_t*)(at + 8);
+            if ((ty != 1 && ty != 2) || !id || kit_lists_id(cust, id, false, 0)) continue;
+            bool known = false; int from = -1;
+            for (int s = 0; s < 10 && !known; s++) if (g_extraKit[s] && kit_lists_id(g_extraKit[s], id, true, s)) { known = true; from = s; }
+            if (!known) continue;
+            fx[nf++] = { at + 8, id }; *(uint32_t*)(at + 8) = 0;
+            if (InterlockedIncrement(&g_resolveLogs) <= 40) {
+                int ship = -1; for (int s = 0; s < 10; s++) if (g_extraKit[s] == cust) ship = s;
+                status("loadouts: a %s loadout holds an item %s doesn't offer (id %u, %s's at load); its %s slot takes the default",
+                       ship >= 0 ? kExtraShips[ship] : "?", ship >= 0 ? kExtraShips[ship] : "the ship", id, kExtraShips[from],
+                       ty == 1 ? "countermeasure" : *(uint32_t*)(at + 4) ? "aux 2" : "aux 1");
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    uint64_t r = o_resolve(pv, kit, outVec);
+    __try { for (int i = 0; i < nf; i++) *(uint32_t*)fx[i].at = fx[i].was; } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return r;
 }
 static void extra_items_partition(uint64_t part) {
     if (g_extraState) return;
@@ -2355,7 +2476,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
-    if (part && g_extraOn) extra_items_partition(part);
+    if (part) extra_items_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
@@ -4401,6 +4522,9 @@ static Site g_sites[] = {
     {"creep-scorer 0x14182ade0", 0x14182ade0, 14,
      {0x48,0x8b,0xc4,0x44,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55},
      (void*)h_scorer, (void**)&o_scorer},
+    {"loadout-resolve 0x14170d9e0", 0x14170d9e0, 16,
+     {0x40,0x55,0x53,0x56,0x41,0x57,0x48,0x8b,0xec,0x48,0x83,0xec,0x48,0x49,0x8b,0xf0},
+     (void*)h_resolve, (void**)&o_resolve},
     {"creep-fire-check 0x14182a310", 0x14182a310, 19,
      {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff},
      (void*)h_fire, (void**)&o_fire},

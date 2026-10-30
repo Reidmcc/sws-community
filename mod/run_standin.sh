@@ -104,8 +104,11 @@ else echo "FAIL  capital_damage_log lines missing or wrong"; STATUS=1; fi
 if [ -n "$LOG" ] && grep -q "\[extra_items\] tiefighter: 2 item(s) left out" "$LOG" \
    && grep -q "extra items: uwing's hangar also offers aux_advancedpowersystem (tiedefender's, auxiliary)" "$LOG" \
    && grep -q "extra items: no ship carries an item named nonexistent_item" "$LOG" \
-   && grep -q "extra items: tiedefender's hangar also offers" "$LOG"; then
-    echo "PASS  extra items: the impossible items left out, the unknown one named, sources from stock lists, the Defender's additions logged"
+   && grep -q "extra items: tiedefender's hangar also offers" "$LOG" \
+   && grep -q "extra items: uwing's hangar no longer offers mine_laser_mine (its default auxiliary now tractor_beam), radar_jamming" "$LOG" \
+   && grep -q "extra items: tieinterceptor keeps all its stock auxiliaries" "$LOG" \
+   && grep -q "loadouts: a uwing loadout holds an item uwing doesn't offer" "$LOG"; then
+    echo "PASS  extra items: the impossible items left out, the unknown one named, sources from stock lists, the Defender's additions, the U-wing's removals, the Interceptor's minimum and the resolver's default logged"
 else echo "FAIL  the extra items log lines are missing"; STATUS=1; fi
 # players against capital ships ([rules] in StandIn.ini): the profile summary names both settings
 if [ -n "$LOG" ] && grep -q "players: their hits (and the vs-AI bots') do 40% damage to capital ship hulls" "$LOG" \

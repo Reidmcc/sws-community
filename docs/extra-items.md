@@ -2,12 +2,14 @@
 
 A profile can let a ship carry another ship's countermeasures and auxiliaries, for example a tractor beam on the TIE Defender. Pick them in the settings app's **Extra countermeasures and auxiliaries** grid on Rules and fixes: one row per item, one column per ship. Click an open cell to give that item to that ship, and click again to take it back. The ship's hangar and briefing room then offer it like any of its own.
 
-In the profile it's an `[extra_items]` section, one line per ship, with items by the game's own names:
+The grid also takes a ship's own items away: click a "stock" cell and it reads "removed". The ship's hangar no longer offers that item.
+
+In the profile it's an `[extra_items]` section, one line per ship, with items by the game's own names. An item taken away has a `-` in front:
 
 ```ini
 [extra_items]
 tiedefender=tractor_beam,missile_torpedo
-awing=aux_advancedpowersystem
+awing=aux_advancedpowersystem,-stealth
 ```
 
 The ships are `xwing`, `ywing`, `awing`, `uwing`, `bwing`, `tiefighter`, `tiebomber`, `tieinterceptor`, `tiereaper` and `tiedefender`. Hovering an item's name in the grid shows its name for the profile file. The setting is part of the fingerprint, so everyone in a match offers the same items.
@@ -21,6 +23,15 @@ Each ship's hangar offers the items its customization data lists. As that data l
 - **An item the ship already carries** is left as it is.
 - **Ownership:** a borrowed item is owned through the unlock list, so it needs `all_unlocked=1` in `server.ini`, which release builds have. The list includes the countermeasures and auxiliaries that are free defaults on their own ships, like the laser mines or the resupply droid. Without them a borrowed default showed the unlock icon, and picking it sent a purchase request that the game's backend refused.
 - **Primary weapons aren't offered.** Lasers fire from the ship's own mount points. Countermeasures and auxiliaries fire forward, or downward for bombs, so they don't need mounts.
+
+## Taking items away
+
+- **Every ship keeps at least two of its stock auxiliaries and one of its stock countermeasures,** so the game can always fill its countermeasure slot and both aux slots. In the grid, the last ones a ship keeps are greyed, and clicking one says why. The mod ignores a hand-edited profile that asks for more, with a line in the log.
+- **A default taken away** (each ship has one default countermeasure and two default auxiliaries, which fill empty slots) is replaced by the first stock item of the same kind the ship still has. That item becomes the default.
+
+## Loadouts that hold an item the ship doesn't offer
+
+A loadout keeps each item by its id. A loadout made where a ship could carry another ship's item, or before one of its own items was taken away, can hold an item that this match's profile doesn't offer that ship. The game would leave that slot empty. The mod gives the slot the ship's default instead, for every player and with any profile. The loadout itself keeps the item, so it comes back in a match that allows it.
 
 ## What can't be given
 
