@@ -64,6 +64,8 @@ HAND = {
     0x1412df8a0: (0x1412e1ce0, "entry only: rebuilt; identity from its only caller (a verified pair, both at +0xa7)"),
     0x1418259d0: (0x14182a170, "same code (strict check, 12/12 targets agree); a small leaf the unwind tables don't list; "
                                "its only caller is a verified pair, both calling it at +0x1beb"),
+    0x14170c300: (0x14170e470, "same code (strict check, 15 of 16 targets agree, none disagree); the mission whitelist "
+                               "lookup the loadout resolver (a verified pair) calls at +0x55, +0x220 and +0x391 in both"),
 }
 
 # Slots of the game's own import table (the protection wrappers fill it at start, so the PE import directory doesn't

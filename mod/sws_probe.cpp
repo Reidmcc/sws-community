@@ -2021,7 +2021,7 @@ static void extra_apply() {
     for (int s = 0; s < 10; s++) for (int l = 0; l < 2; l++) g_extraOrig[s][l] = rd<uint64_t>(g_extraKit[s], 32 + l * 8);
     static uint64_t add[10][64]; static char added[10][1024], gone[10][1024];
     static uint64_t newDef[10][64]; static uint64_t newAdd[10][600];
-    int na[10] = {}, nd[10] = {}, nn[10] = {}; bool change[10] = {};
+    int na[10] = {}, nd[10] = {}, nn[10] = {}; bool change[10] = {}, defChange[10] = {};
     for (int s = 0; s < 10; s++) {
         added[s][0] = gone[s][0] = 0;
         if (!g_extraItems[s][0]) continue;
@@ -2061,7 +2061,7 @@ static void extra_apply() {
             if (!rep) { status("extra items: %s has no stock %s left to replace its default %s; it stays", kExtraShips[s], ty == 1 ? "countermeasure" : "auxiliary", nm); continue; }
             newDef[s][k] = rep; strcat_s(moved, safe_str(rep ? rd<uint64_t>(rep, 48) : 0)); strcat_s(moved, ",");
             char one[160]; sprintf_s(one, "%s%s (its default %s now %s)", gone[s][0] ? ", " : "", nm, ty == 1 ? "countermeasure" : "auxiliary", safe_str(rd<uint64_t>(rep, 48)));
-            strcat_s(gone[s], one); change[s] = true;
+            strcat_s(gone[s], one); change[s] = defChange[s] = true;
         }
         // AdditionalConfigs without the removed and the moved items
         for (uint32_t j = 0; j < list_n(adl) && j < 512; j++) {
@@ -2096,12 +2096,13 @@ static void extra_apply() {
         if (!change[s]) continue;
         uint64_t t = g_extraKit[s];
         uint32_t n = (uint32_t)(nn[s] + na[s]);
-        uint64_t grown = creep_array(n), d2 = nd[s] ? creep_array((uint32_t)nd[s]) : 0;
-        if (!grown || (nd[s] && !d2)) { status("extra items: no memory for %s's hangar lists", kExtraShips[s]); continue; }
+        uint64_t grown = creep_array(n), d2 = defChange[s] ? creep_array((uint32_t)nd[s]) : 0;
+        if (!grown || (defChange[s] && !d2)) { status("extra items: no memory for %s's hangar lists", kExtraShips[s]); continue; }
         for (int i = 0; i < nn[s]; i++) *(uint64_t*)(grown + i * 8ull) = newAdd[s][i];
         for (int i = 0; i < na[s]; i++) *(uint64_t*)(grown + (nn[s] + i) * 8ull) = add[s][i];
         for (int i = 0; i < nd[s]; i++) *(uint64_t*)(d2 + i * 8ull) = newDef[s][i];
-        bool ok = (!d2 || write_u64(t + 40, d2)) && write_u64(t + 32, grown);
+        // the unlockable list first: if the second write ever failed, a moved item would be missing, not listed twice
+        bool ok = write_u64(t + 32, grown) && (!d2 || write_u64(t + 40, d2));
         if (!ok) continue;
         if (gone[s][0]) status("extra items: %s's hangar no longer offers %s", kExtraShips[s], gone[s]);
         if (added[s][0]) status("extra items: %s's hangar also offers %s", kExtraShips[s], added[s]);
@@ -2110,13 +2111,20 @@ static void extra_apply() {
 }
 // FUN_14170d9e0(presetValue, kitAsset, outVec): turns a loadout's stored item ids back into slot configs, for the hangar,
 // the briefing room and the spawn alike (read 2026-10-30; its only caller is FUN_14170d080). The preset value holds a
-// vector (+0x10 begin, +0x18 end) of 12-byte {u32 slot type, u32 slot index, u32 config Identifier}. An id found in
-// none of the kit's lists resolves to NOTHING, an empty slot (an id of 0 means the kit's default for that slot). So a
-// loadout made where a ship could carry another ship's item, or before one of its own was taken away, would fly with an
-// empty slot. h_resolve hands the resolver a 0 instead, for that call only, so the slot takes the default: for a
-// countermeasure or auxiliary whose id the kit no longer lists but some kit listed at load (any profile; extra items or
-// not). Ids no kit ever listed (a mission's own items) are left alone.
+// vector (+0x10 begin, +0x18 end, +0x20 capacity) of 12-byte {u32 slot type, u32 slot index, u32 config Identifier}.
+// An id found in none of the kit's lists resolves to NOTHING, an empty slot. So a loadout made where a ship could carry
+// another ship's item, or before one of its own was taken away, would fly with an empty slot. h_resolve, for a
+// countermeasure or auxiliary whose id the kit no longer lists but some kit listed at load (any profile, extra items or
+// not), names one of the kit's defaults instead. Read in the resolver (PR #44's review, 0x14170dd6a..dfc4): each default
+// is emitted at most once, at the slot whose entry is absent or 0 for its ordinal (the countermeasure default, the
+// first and second aux defaults), or else at the slot of the first entry that stores its id. A 0 would therefore move
+// the empty slot to the other aux when that one already stores the ordinal default; so the slot gets its own ordinal
+// default, or the other default when another entry stores that one. The resolver is handed a copy of the preset value
+// and its entries, on the stack: nothing the game shares is written. Ids no kit ever listed (a mission's own items) are
+// left alone, and with a mission's customization whitelist (FUN_14170c300 non-null: the resolver reads the whitelist's
+// lists, not the kit's) the resolver runs as it is.
 typedef uint64_t(__fastcall* resolve_t)(uint64_t, uint64_t, uint64_t);
+typedef uint64_t(__fastcall* whitelist_t)();
 static resolve_t o_resolve;
 static volatile LONG g_resolveLogs;
 static bool kit_lists_id(uint64_t cust, uint32_t id, bool orig, int s) {
@@ -2127,28 +2135,43 @@ static bool kit_lists_id(uint64_t cust, uint32_t id, bool orig, int s) {
     return false;
 }
 static uint64_t __fastcall h_resolve(uint64_t pv, uint64_t kit, uint64_t outVec) {
-    struct Fix { uint64_t at; uint32_t was; } fx[16]; int nf = 0;
-    __try {
+    alignas(16) uint8_t copy[0x60]; uint32_t ents[64][3]; int ne = 0, nf = 0; bool use = false;
+    __try {   // decides only; the game's resolver is always called outside this guard
         uint64_t cust = (pv && kit && g_extraState) ? rd<uint64_t>(kit, 0xa8) : 0;
         uint64_t b = cust ? rd<uint64_t>(pv, 0x10) : 0, e = cust ? rd<uint64_t>(pv, 0x18) : 0;
-        for (uint64_t at = b; at && at < e && nf < 16 && (at - b) < 12 * 64; at += 12) {
-            uint32_t ty = *(uint32_t*)at, id = *(uint32_t*)(at + 8);
+        if (!b || e <= b || (e - b) % 12 || (e - b) / 12 > 64 || ((whitelist_t)G(0x14170c300))()) ne = 0;
+        else { ne = (int)((e - b) / 12); memcpy(ents, (void*)b, ne * 12ull); }
+        uint64_t def = rd<uint64_t>(cust, 40);
+        for (int i = 0; i < ne; i++) {
+            uint32_t ty = ents[i][0], idx = ents[i][1], id = ents[i][2];
             if ((ty != 1 && ty != 2) || !id || kit_lists_id(cust, id, false, 0)) continue;
-            bool known = false; int from = -1;
-            for (int s = 0; s < 10 && !known; s++) if (g_extraKit[s] && kit_lists_id(g_extraKit[s], id, true, s)) { known = true; from = s; }
-            if (!known) continue;
-            fx[nf++] = { at + 8, id }; *(uint32_t*)(at + 8) = 0;
+            int from = -1;
+            for (int s = 0; s < 10 && from < 0; s++) if (g_extraKit[s] && kit_lists_id(g_extraKit[s], id, true, s)) from = s;
+            if (from < 0) continue;
+            // the kit's defaults of this kind, in order; the slot's own (its ordinal), unless another entry stores it
+            uint32_t ds[8]; int nd = 0;
+            for (uint32_t k = 0; k < list_n(def) && k < 512 && nd < 8; k++) { uint64_t c = rd<uint64_t>(def, k * 8); if (ws_type(c) == ty) ds[nd++] = rd<uint32_t>(c, 0x20); }
+            uint32_t pick = 0;
+            for (int pass = 0; pass < 2 && !pick; pass++)
+                for (int d = 0; d < nd && !pick; d++) {
+                    if (pass == 0 && d != (int)(ty == 2 ? idx : 0)) continue;
+                    bool taken = false; for (int j = 0; j < ne; j++) if (j != i && ents[j][2] == ds[d]) taken = true;
+                    if (!taken) pick = ds[d];
+                }
+            ents[i][2] = pick; nf++;
             if (InterlockedIncrement(&g_resolveLogs) <= 40) {
                 int ship = -1; for (int s = 0; s < 10; s++) if (g_extraKit[s] == cust) ship = s;
-                status("loadouts: a %s loadout holds an item %s doesn't offer (id %u, %s's at load); its %s slot takes the default",
+                status("loadouts: a %s loadout holds an item %s doesn't offer (id %u, %s's at load); its %s slot takes the default %u",
                        ship >= 0 ? kExtraShips[ship] : "?", ship >= 0 ? kExtraShips[ship] : "the ship", id, kExtraShips[from],
-                       ty == 1 ? "countermeasure" : *(uint32_t*)(at + 4) ? "aux 2" : "aux 1");
+                       ty == 1 ? "countermeasure" : idx ? "aux 2" : "aux 1", pick);
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    uint64_t r = o_resolve(pv, kit, outVec);
-    __try { for (int i = 0; i < nf; i++) *(uint32_t*)fx[i].at = fx[i].was; } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return r;
+        if (nf) { memcpy(copy, (void*)pv, sizeof copy); use = true; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { use = false; }
+    if (!use) return o_resolve(pv, kit, outVec);
+    *(uint64_t*)(copy + 0x10) = (uint64_t)ents; *(uint64_t*)(copy + 0x18) = (uint64_t)ents + ne * 12ull;
+    *(uint64_t*)(copy + 0x20) = (uint64_t)ents + sizeof ents;
+    return o_resolve((uint64_t)copy, kit, outVec);
 }
 static void extra_items_partition(uint64_t part) {
     if (g_extraState) return;

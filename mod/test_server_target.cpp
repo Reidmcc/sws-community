@@ -44,6 +44,7 @@ static void put(uint64_t at, const uint8_t* b, size_t n) { memcpy((void*)at, b, 
 struct FakeAttr { uint8_t pad[24]; uint64_t idObj; float value; float pad2; };
 static uint8_t* fake_alloc(size_t n) { return (uint8_t*)VirtualAlloc(nullptr, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
 static uint32_t g_resolveSeen;   // the id the stand-in's loadout resolver was handed for its first slot
+static uint64_t g_whitelist;     // what the stand-in's FUN_14170c300 (the mission customization whitelist) returns
 static uint8_t* fake_class(uint16_t id) { uint8_t* c = fake_alloc(0x100); *(uint16_t*)(c + 0x48) = id; return c; }
 static uint8_t* fake_idobj(uint32_t ident) { uint8_t* o = fake_alloc(0x40); *(uint32_t*)(o + 32) = ident; return o; }
 static FakeAttr* fake_attr(uint32_t ident, float v) { FakeAttr* a = (FakeAttr*)fake_alloc(sizeof(FakeAttr)); a->idObj = (uint64_t)fake_idobj(ident); a->value = v; return a; }
@@ -241,7 +242,10 @@ int main() {
       uint64_t seen = (uint64_t)&g_resolveSeen; memcpy(code + at, &seen, 8); at += 8;
       const uint8_t tail[] = {0xb0,0x01, 0x48,0x83,0xc4,0x48, 0x41,0x5f, 0x5e, 0x5b, 0x5d, 0xc3};
       memcpy(code + at, tail, sizeof tail); at += sizeof tail;
-      put(0x14170d9e0, code, at); }
+      put(0x14170d9e0, code, at);
+      // FUN_14170c300: mov rax, [g_whitelist]; ret
+      uint8_t wl[11] = {0x48,0xa1}; uint64_t wla = (uint64_t)&g_whitelist; memcpy(wl + 2, &wla, 8); wl[10] = 0xc3;
+      put(0x14170c300, wl, sizeof wl); }
     const uint8_t ctrlfield[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa,
                                  0x48,0x8b,0x42,0x08, 0x8b,0x10, 0x89,0x91,0xb4,0x00,0x00,0x00,
                                  0x48,0x8b,0x5c,0x24,0x08, 0x48,0x8b,0x7c,0x24,0x10, 0xc3};
@@ -675,22 +679,31 @@ int main() {
         printf("      (taken away: U-wing defaults %u, unlockables %u)\n", udn, uan);
         check(uwingOk && interceptorOk,
               "extra items: a taken-away default is replaced in place by an allowed stock item, a taken-away unlockable leaves, and a ship keeps its minimum");
-        // the resolver (h_resolve): a U-wing loadout holding the laser mines, no longer offered, is resolved as the default
-        // (id 0) and keeps its stored id; one holding the resupply droid, still offered, and one holding an id no kit ever
-        // listed, are left alone
+        // the resolver (h_resolve): a U-wing loadout holding the laser mines, no longer offered, has aux 1 resolved as its
+        // first aux default (now the tractor beam), from a copy, the stored id untouched; with the tractor beam already in
+        // aux 2, aux 1 gets the other default (the resupply droid) instead, so no slot is left empty (PR #44's review); the
+        // resupply droid, still offered, and an id no kit ever listed are left alone; and with a mission whitelist the
+        // resolver runs as it is
         typedef uint64_t(__fastcall* resolve_t)(uint64_t, uint64_t, uint64_t);
         uint8_t* kitA = fake_alloc(0x100); *(uint8_t**)(kitA + 0xa8) = assetOf(3);
         uint8_t* pv = fake_alloc(0x40); uint8_t* vec = fake_alloc(64); uint8_t* outv = fake_alloc(64);
         *(uint8_t**)(pv + 0x10) = vec; *(uint8_t**)(pv + 0x18) = vec + 12;
         uint32_t* ent = (uint32_t*)vec; ent[0] = 2; ent[1] = 0;
         ent[2] = *(uint32_t*)(uMine + 0x20); g_resolveSeen = 0xffffffff; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
-        bool r1 = g_resolveSeen == 0 && ent[2] == *(uint32_t*)(uMine + 0x20);
+        bool r1 = g_resolveSeen == *(uint32_t*)(uwingTractor + 0x20) && ent[2] == *(uint32_t*)(uMine + 0x20);
+        ent[3] = 2; ent[4] = 1; ent[5] = *(uint32_t*)(uwingTractor + 0x20); *(uint8_t**)(pv + 0x18) = vec + 24;
+        ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
+        bool r4 = g_resolveSeen == *(uint32_t*)(uResupply + 0x20) && ent[2] == *(uint32_t*)(uMine + 0x20);
+        g_whitelist = 1; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv); g_whitelist = 0;
+        bool r5 = g_resolveSeen == *(uint32_t*)(uMine + 0x20);
+        *(uint8_t**)(pv + 0x18) = vec + 12;
+        printf("      (resolver: aux 1 alone %d, beside the tractor beam %d, whitelist %d)\n", (int)r1, (int)r4, (int)r5);
         ent[2] = *(uint32_t*)(uResupply + 0x20); ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
         bool r2 = g_resolveSeen == *(uint32_t*)(uResupply + 0x20);
         ent[2] = 0x6ffff; ((resolve_t)0x14170d9e0)((uint64_t)pv, (uint64_t)kitA, (uint64_t)outv);
         bool r3 = g_resolveSeen == 0x6ffff;
-        check(*(uint8_t*)0x14170d9e0 != 0x40 && r1 && r2 && r3,
-              "loadout resolver: an item the ship no longer offers resolves as its default, for that call only; offered and never-listed ids are left alone");
+        check(*(uint8_t*)0x14170d9e0 != 0x40 && r1 && r2 && r3 && r4 && r5,
+              "loadout resolver: an item the ship no longer offers resolves as a default the loadout doesn't already hold, from a copy; offered, never-listed and whitelisted ids are left alone");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
