@@ -175,6 +175,75 @@ namespace SwsSettings
         }
     }
 
+    // The countermeasures and auxiliaries a ship's hangar can offer from other ships ([extra_items]; the DLL's
+    // extra_items_partition). Items by the game's own names (each slot config's TelemetryName), from the game data:
+    // every ship's default and unlockable weapon-slot configs whose slot type is 1 (countermeasure) or 2 (auxiliary).
+    static class ExtraItems
+    {
+        public static readonly string[] Ships = { "xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
+        public static readonly string[] ShipNames = { "X-wing", "Y-wing", "A-wing", "U-wing", "B-wing", "TIE Fighter", "TIE Bomber", "TIE Interceptor", "TIE Reaper", "TIE Defender" };
+        static readonly bool[] NoShields = { false, false, false, false, false, true, true, true, false, false };   // the 2-system TIEs
+        public class Item { public string Id, Name; public bool Countermeasure; public string[] Stock; }
+        static Item I(string id, string name, bool cm, params string[] stock) { return new Item { Id = id, Name = name, Countermeasure = cm, Stock = stock }; }
+        public static readonly Item[] All = {
+            I("chaff_particles", "Chaff", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+            I("flare_warheads", "Flares", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+            I("missile_corrupter", "Missile Corrupter", true, "awing", "tiedefender", "tieinterceptor"),
+            I("scramble_sensor", "Sensor Scrambler", true, "awing", "bwing", "tiebomber", "tiedefender", "tiefighter", "tieinterceptor", "tiereaper", "uwing", "xwing", "ywing"),
+            I("assault_shield", "Assault Shield", false, "bwing", "tiebomber", "tiefighter", "xwing", "ywing"),
+            I("aux_advancedpowersystem", "Advanced Power System", false, "tiedefender"),
+            I("aux_bwing_rotation", "B-wing Rotation", false, "bwing"),
+            I("beam", "Beam", false, "bwing", "tiebomber", "ywing"),
+            I("bomb_ion", "Ion Bombs", false, "bwing", "tiebomber", "ywing"),
+            I("bomb_standard", "Proton Bombs", false, "bwing", "tiebomber", "ywing"),
+            I("droid_heal_standard", "Repair Droid", false, "xwing"),
+            I("homing_missile_standard", "Homing Missiles", false, "tiedefender", "tiefighter", "xwing"),
+            I("laser_turret", "Laser Turret", false, "ywing"),
+            I("mine_laser_mine", "Laser Mines", false, "tiereaper", "uwing"),
+            I("mine_magnetic", "Magnetic Mines", false, "awing", "bwing", "tiebomber", "tiedefender", "tieinterceptor", "tiereaper", "uwing", "ywing"),
+            I("missile_anti_fighter", "Anti-Fighter Missiles", false, "awing", "tiedefender", "tieinterceptor"),
+            I("missile_big_bang", "Big Bang Missiles", false, "tiebomber", "ywing"),
+            I("missile_ion_(homing)", "Ion Missiles", false, "tiedefender", "tiefighter", "tiereaper", "uwing", "xwing"),
+            I("missile_ion_torpedo", "Ion Torpedoes", false, "bwing", "tiefighter", "tiereaper", "uwing", "xwing"),
+            I("missile_multi_lock", "Multi-Lock Missiles", false, "tiebomber", "ywing"),
+            I("missile_rocket", "Rockets", false, "awing", "bwing", "tiedefender", "tiefighter", "tieinterceptor", "xwing"),
+            I("missile_swarm", "Swarm Missiles", false, "awing", "tiedefender", "tieinterceptor"),
+            I("missile_torpedo", "Torpedoes", false, "bwing", "tiebomber", "tiefighter", "xwing", "ywing"),
+            I("radar_jamming", "Radar Jamming", false, "tiereaper", "uwing"),
+            I("repair_kit_standard", "Repair Kit", false, "awing", "tiefighter", "tieinterceptor"),
+            I("resupply", "Resupply Droid", false, "tiereaper", "uwing"),
+            I("sec_ionbeam", "Ion Beam", false, "bwing"),
+            I("sensory_array", "Sensor Array", false, "tiereaper", "uwing"),
+            I("shield_buff", "Shield Buff", false, "tiereaper", "uwing"),
+            I("stealth", "Stealth", false, "awing", "tieinterceptor"),
+            I("tractor_beam", "Tractor Beam", false, "tiereaper", "uwing"),
+        };
+        // an item the ship can't take: the B-wing's wing rotation, and the two beams, anywhere but their own ships (the beams
+        // are drawn from their ship's laser mounts), and the Defender's power system without shields
+        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || id == "beam" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
+        public static bool IsStock(int ship, Item it) { return it.Stock.Contains(Ships[ship]); }
+        // the DLL's extra_normalize: lowercase, [a-z0-9_()] only, duplicates and impossible items dropped, sorted by byte
+        public static string Normalize(int ship, string raw)
+        {
+            var items = new List<string>();
+            foreach (var part in (raw ?? "").Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string id = new string(part.ToLowerInvariant().Where(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '(' || c == ')').Take(47).ToArray());
+                if (id.Length == 0 || Impossible(ship, id) || items.Contains(id)) continue;
+                if (items.Count < 64) items.Add(id);
+            }
+            items.Sort(StringComparer.Ordinal);
+            return string.Join(",", items);
+        }
+        public static bool Has(string list, string id) { return !string.IsNullOrEmpty(list) && list.Split(',').Contains(id); }
+        public static string Toggle(int ship, string list, string id, bool on)
+        {
+            var items = string.IsNullOrEmpty(list) ? new List<string>() : list.Split(',').ToList();
+            items.Remove(id); if (on) items.Add(id);
+            return Normalize(ship, string.Join(",", items));
+        }
+    }
+
     class Profile
     {
         public string Name;                 // "Default" is built in
@@ -182,6 +251,9 @@ namespace SwsSettings
         public bool FixZavianCreep;         // in the fingerprint only when on, so profiles without it keep theirs
         public int PlayerCapHull = 100;     // [rules] player_capital_hull_damage: percent of players' (and bots') damage to capital hulls, 0..100
         public bool PlayerCapShields = true;   // [rules] player_capital_shields: players' (and bots') hits damage capital shields
+        // [extra_items] <ship>=<item>,<item>: countermeasures and auxiliaries from other ships this ship's hangar also offers,
+        // one normalized list per ship in ExtraItems.Ships order ("" = none); normalized as the DLL's extra_normalize does
+        public string[] ExtraItems = new string[SwsSettings.ExtraItems.Ships.Length];
         // [creep] <faction>_pack<1-3>: each creep pack's ship, an index into CreepShips; 0 = the stock ship (the DLL's creep_scan)
         public static readonly string[][] CreepShips = { new[] { "xwing", "ywing", "awing", "uwing" }, new[] { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
         // Creep hull and shields by ship type (the DLL's kCreepDurability): profile values on the configs that ship's creep
@@ -230,6 +302,7 @@ namespace SwsSettings
             p.FixZavianCreep = Ini.GetInt(file, "rules", "fix_zavian_creep_pack", 0) != 0;
             p.PlayerCapHull = Math.Max(0, Math.Min(100, Ini.GetInt(file, "rules", "player_capital_hull_damage", 100)));
             p.PlayerCapShields = Ini.GetInt(file, "rules", "player_capital_shields", 1) != 0;
+            for (int s = 0; s < SwsSettings.ExtraItems.Ships.Length; s++) p.ExtraItems[s] = SwsSettings.ExtraItems.Normalize(s, Ini.Get(file, "extra_items", SwsSettings.ExtraItems.Ships[s], ""));
             for (int f = 0; f < 2; f++)
                 for (int k = 0; k < 3; k++)
                 {
@@ -270,6 +343,11 @@ namespace SwsSettings
             sb.Append("fix_zavian_creep_pack=" + (FixZavianCreep ? 1 : 0) + "\r\n");
             if (PlayerCapHull != 100) sb.Append("player_capital_hull_damage=" + PlayerCapHull + "\r\n");
             if (!PlayerCapShields) sb.Append("player_capital_shields=0\r\n");
+            if (ExtraItems.Any(x => !string.IsNullOrEmpty(x)))
+            {
+                sb.Append("\r\n[extra_items]\r\n");
+                for (int s = 0; s < ExtraItems.Length; s++) if (!string.IsNullOrEmpty(ExtraItems[s])) sb.Append(SwsSettings.ExtraItems.Ships[s] + "=" + ExtraItems[s] + "\r\n");
+            }
             sb.Append("\r\n[creep]\r\n");
             for (int f = 0; f < 2; f++)
                 for (int k = 0; k < 3; k++)
@@ -319,23 +397,26 @@ namespace SwsSettings
                 }
                 else e.Values[kv.Key] = kv.Value;
             }
-            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen, p.CreepCapDamage, p.CreepTorpMinLock, p.CreepBomberCapOnly, p.PlayerCapHull, p.PlayerCapShields);
+            e.Fingerprint = Hash(p.NoPinball, p.NoMultidrift, p.FixZavianCreep, e.Values, p.Creep, p.CreepAggressive, p.CreepMissiles, p.CreepRadius, p.CreepTorpedoes, p.CreepBotHandling, p.CreepWingmen, p.CreepCapDamage, p.CreepTorpMinLock, p.CreepBomberCapOnly, p.PlayerCapHull, p.PlayerCapShields, p.ExtraItems);
             return e;
         }
         // the DLL's profile_fingerprint: FNV-1a over the rules and the sorted values; 0 = the stock protocol
         static uint Fnv(uint h, string t) { foreach (byte b in Encoding.ASCII.GetBytes(t)) { h ^= b; h *= 16777619u; } return h; }
         public static uint Hash(bool pinball, bool multidrift, bool zavianCreep, SortedDictionary<string, double> values, int[,] creep = null,
                                 bool creepAggressive = false, bool creepMissiles = false, int creepRadius = 2000, bool creepTorpedoes = false, bool creepBotHandling = false, bool creepWingmen = false, int creepCapDamage = 30, int creepTorpMinLock = 500, bool creepBomberCapOnly = false,
-                                int playerCapHull = 100, bool playerCapShields = true)
+                                int playerCapHull = 100, bool playerCapShields = true, string[] extraItems = null)
         {
+            bool anyExtra = extraItems != null && extraItems.Any(x => !string.IsNullOrEmpty(x));
             bool anyCreep = creepAggressive || creepMissiles || creepTorpedoes || creepWingmen || creepBotHandling;
             if (creep != null) foreach (int t in creep) if (t != 0) anyCreep = true;
-            if (!pinball && !multidrift && !zavianCreep && playerCapHull == 100 && playerCapShields && values.Count == 0 && !anyCreep) return 0;
+            if (!pinball && !multidrift && !zavianCreep && playerCapHull == 100 && playerCapShields && !anyExtra && values.Count == 0 && !anyCreep) return 0;
             uint h = 2166136261u;
             h = Fnv(h, "pinball=" + (pinball ? 1 : 0) + ";multidrift=" + (multidrift ? 1 : 0) + ";");
             if (zavianCreep) h = Fnv(h, "zaviancreep=1;");
             if (playerCapHull != 100) h = Fnv(h, "players.capital_hull_damage=" + playerCapHull + ";");
             if (!playerCapShields) h = Fnv(h, "players.capital_shields=0;");
+            for (int s = 0; anyExtra && s < extraItems.Length; s++)
+                if (!string.IsNullOrEmpty(extraItems[s])) h = Fnv(h, "items." + ExtraItems.Ships[s] + "=" + extraItems[s] + ";");
             for (int f = 0; f < 2 && creep != null; f++)   // creep packs: only the ones changed from the stock ship
                 for (int k = 0; k < 3; k++)
                     if (creep[f, k] != 0) h = Fnv(h, "creep." + Profile.CreepFaction[f] + "_pack" + (k + 1) + "=" + Profile.CreepShips[f][creep[f, k]] + ";");

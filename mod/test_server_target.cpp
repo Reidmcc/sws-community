@@ -598,6 +598,58 @@ int main() {
         check(!raiderSec[296] && !raiderSec[297] && sides && frigate,
               "creep: the Raider's and a frigate's damage sections load untouched");
     }
+    {   // [extra_items] (StandIn.ini): the ten ships' customization assets ("starshipcustomization_<kit>": AdditionalConfigs
+        // +32, DefaultConfigs +40) load through the partition creator. Slot configs: TelemetryName +48, Config +96, slot type
+        // +104 (1 countermeasure, 2 auxiliary). The Defender's list has an entry not yet filled in, so nothing may change
+        // until it is; then the Defender gets the Reaper's tractor beam and the TIE fighter's torpedoes (its own faction
+        // first, not the U-wing's or the X-wing's), the A-wing the Defender's power system (no Rebel ship has it), the
+        // X-wing nothing for the chaff it carries, and nothing comes of an item no ship has or of the power system on a TIE
+        // fighter (left out when the profile is read).
+        typedef uint64_t(__fastcall* partnew_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        auto slot = [](const char* item, uint32_t type) {
+            uint8_t* c = fake_alloc(0x80); *(uint64_t*)(c + 8) = 0x143999100; *(const char**)(c + 0x18) = item;
+            *(const char**)(c + 48) = item; *(uint64_t*)(c + 96) = (uint64_t)fake_alloc(0x40); *(uint32_t*)(c + 104) = type; return c; };
+        auto list = [](std::initializer_list<uint8_t*> items) {
+            uint8_t* a = fake_alloc(16 + 8 * items.size() + 8) + 16; *(uint32_t*)(a - 4) = (uint32_t)items.size();
+            int k = 0; for (uint8_t* it : items) ((uint8_t**)a)[k++] = it; return a; };
+        auto kitPart = [](const char* name, uint8_t* add, uint8_t* def) {
+            uint8_t* asset = fake_alloc(0x80); *(uint64_t*)(asset + 8) = 0x143999200; *(const char**)(asset + 0x18) = name;
+            *(uint8_t**)(asset + 32) = add; *(uint8_t**)(asset + 40) = def;
+            uint8_t** in = (uint8_t**)fake_alloc(16); in[0] = asset;
+            uint8_t* p = fake_alloc(0x40); *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = 1; return p; };
+        uint8_t* reaperTractor = slot("tractor_beam", 2); uint8_t* uwingTractor = slot("tractor_beam", 2);
+        uint8_t* xwingTorp = slot("missile_torpedo", 2); uint8_t* tieTorp = slot("missile_torpedo", 2);
+        uint8_t* aps = slot("aux_advancedpowersystem", 2); uint8_t* defChaff = slot("chaff_particles", 1);
+        uint8_t* defAdd = list({ defChaff, nullptr });   // the second entry not filled in yet
+        uint8_t* awingAdd = list({ slot("stealth", 2) }); uint8_t* xwingAdd = list({ xwingTorp });
+        struct K { const char* name; uint8_t* add; uint8_t* def; } kits[10] = {
+            { "Game/Gameplay/Starships/XWingT65/Config/StarshipCustomization_XWingT65", xwingAdd, list({ slot("chaff_particles", 1) }) },
+            { "Game/Gameplay/Starships/YWing/Config/StarshipCustomization_YWing", list({ slot("bomb_standard", 2) }), list({}) },
+            { "Game/Gameplay/Starships/AWing/Config/StarshipCustomization_AWing", awingAdd, list({}) },
+            { "Game/Gameplay/Starships/UWing/Config/StarshipCustomization_UWing", list({ uwingTractor }), list({}) },
+            { "Game/Gameplay/Starships/BWing/Config/StarshipCustomization_BWing", list({ slot("aux_bwing_rotation", 2) }), list({}) },
+            { "Game/Gameplay/Starships/TieFighter/Config/StarshipCustomization_TieFighter", list({ tieTorp }), list({}) },
+            { "Game/Gameplay/Starships/TieBomber/Config/StarshipCustomization_TieBomber", list({ slot("bomb_standard", 2) }), list({}) },
+            { "Game/Gameplay/Starships/TieInterceptor/Config/StarshipCustomization_TieInterceptor", list({ slot("stealth", 2) }), list({}) },
+            { "Game/Gameplay/Starships/TieReaper/Config/StarshipCustomization_TieReaper", list({ reaperTractor }), list({}) },
+            { "LiveService/Gameplay/Starships/TieDefender/Config/StarshipCustomization_TieDefender", defAdd, list({ aps }) } };
+        uint8_t* parts[10];
+        for (int k = 0; k < 10; k++) { parts[k] = kitPart(kits[k].name, kits[k].add, kits[k].def); ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)parts[k], 0); }
+        auto assetOf = [&](int k) { return (*(uint8_t***)(parts[k] + 0x20))[0]; };
+        bool waited = *(uint8_t**)(assetOf(9) + 32) == defAdd && *(uint8_t**)(assetOf(2) + 32) == awingAdd;
+        ((uint8_t**)defAdd)[1] = slot("ion_cannon_standard", 0);   // the game fills the entry in; the next partition load goes ahead
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)kitPart("Game/Levels/Somewhere/Else", list({}), list({})), 0);
+        uint8_t* d = *(uint8_t**)(assetOf(9) + 32); uint32_t dn = *(uint32_t*)(d - 4);
+        uint8_t* a = *(uint8_t**)(assetOf(2) + 32); uint32_t an = *(uint32_t*)(a - 4);
+        auto has = [](uint8_t* arr, uint32_t n, uint8_t* it) { for (uint32_t k = 0; k < n; k++) if (((uint8_t**)arr)[k] == it) return true; return false; };
+        bool defender = d != defAdd && dn == 4 && ((uint8_t**)d)[0] == defChaff && has(d, dn, reaperTractor) && has(d, dn, tieTorp) &&
+                        !has(d, dn, uwingTractor) && !has(d, dn, xwingTorp);
+        bool awing = a != awingAdd && an == 2 && has(a, an, aps);
+        bool others = *(uint8_t**)(assetOf(0) + 32) == xwingAdd && *(uint32_t*)(*(uint8_t**)(assetOf(5) + 32) - 4) == 1;
+        printf("      (extra items: waited %d, Defender %u items, A-wing %u items)\n", (int)waited, dn, an);
+        check(waited && defender && awing && others,
+              "extra items: once every kit's list is filled in, the Defender gets the Reaper's tractor beam and the TIE fighter's torpedoes, the A-wing the Defender's power system; nothing else changes");
+    }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check
     {   // aggressive creep ([creep] aggressive=1): PF_PvP_CreepLogic_Exploit_TieFighters arrives through the partition
@@ -1179,7 +1231,7 @@ int main() {
         // multidrift on, pinball off, two overrides written with mixed case, spacing and a duplicate. Expected fingerprint:
         // FNV-1a over the canonical text, keys lowercased and sorted, values %.9g, the duplicate's last value kept.
         // limits (issue #11): blastdamage enters clamped (3000 -> 2500); nosuchfield has no limit and is left out.
-        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;players.capital_hull_damage=40;players.capital_shields=0;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
+        const char* canon[] = { "pinball=0;multidrift=1;zaviancreep=1;players.capital_hull_damage=40;players.capital_shields=0;items.xwing=chaff_particles;items.ywing=nonexistent_item;items.awing=aux_advancedpowersystem;items.tiedefender=missile_torpedo,tractor_beam;", "creep.rebel_pack1=ywing;creep.rebel_pack3=awing;creep.aggressive=1;creep.radius=1200;creep.capital_damage=50;creep.missiles=1;creep.torpedo_runs=1;creep.torpedo_lock_min=150;creep.wingmen=1;creep.bothandling=1;", "damageovertimesettings_flagship.splitdamagebetweenstarshipsattribute=0;",
                                 "damageovertimesettings_medcap.targethealthratiotostopattribute=0.5;",
                                 "explosionconfigls_missile_piercingtorpedo.blastdamage=2500;",
                                 "hullcustom_heavy_xwing.afterburnerchargerate[1]=-0.2;", "hullcustom_heavy_xwing.axisturnratesfactor=-0.9;",

@@ -179,6 +179,18 @@ static bool g_ruleZavianCreep;   // fix_zavian_creep_pack (see map_fix_partition
 // and keep the stock rule; a weak point's damage on destruction is a profile value. Each in the fingerprint when not stock.
 static int g_playerCapHull = 100;
 static bool g_playerCapShields = true;
+// [extra_items] <ship>=<item>,<item>: auxiliaries and countermeasures from other ships that this ship's hangar also offers
+// (extra_items_partition). Ships by the app's names; items by the game's own (each slot config's TelemetryName, like
+// tractor_beam). Normalized as read (extra_normalize): lowercase, sorted, duplicates dropped, and the items that can't
+// apply dropped (Pseudo, 2026-10-30): the B-wing's wing rotation, which other ships have no parts for; the two beams, the
+// B-wing's ion beam and the beam the Y-wing, TIE Bomber and B-wing carry, whose effects are drawn from their own ship's
+// laser mounts (both flown on an X-wing: the beam starts in front of the cockpit, joined to nothing; to revisit if mount
+// points are ever worked out); and the TIE Defender's power system on a ship without shields. In the fingerprint as "items.<ship>=<a>,<b>;", ships in kExtraShips order.
+static const char* kExtraShips[10] = { "xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
+static const char* kExtraKits[10] = { "xwingt65", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
+static const bool kExtraNoShields[10] = { false, false, false, false, false, true, true, true, false, false };   // the 2-system TIEs
+static char g_extraItems[10][1024];
+static bool g_extraOn;
 // [creep] <faction>_pack<1-3> = <ship> (creep_scan): each creep pack's ship, an index into kCreepShips; 0 = the stock ship
 static const char* kCreepShips[2][4] = { { "xwing", "ywing", "awing", "uwing" }, { "tiefighter", "tiebomber", "tieinterceptor", "tiereaper" } };
 static const char* kCreepFaction[2] = { "rebel", "imperial" };
@@ -251,8 +263,29 @@ static ValueOverride* g_overrides; static int g_overrideCount;
 static char g_profileName[64] = "(rules.ini)";
 static uint32_t g_profileFp;
 static uint32_t fnv1a(uint32_t h, const char* t) { for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; } return h; }
+// one ship's [extra_items] list, normalized into out; returns how many items it dropped as impossible for that ship
+static int extra_normalize(int ship, const wchar_t* in, char* out, size_t cap) {
+    char items[64][48]; int n = 0, dropped = 0; char cur[48]; int k = 0;
+    for (const wchar_t* c = in;; c++) {
+        bool end = !*c || *c == L',' || iswspace(*c);
+        if (!end) { wchar_t w = towlower(*c); if (k < 47 && ((w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9') || w == L'_' || w == L'(' || w == L')')) cur[k++] = (char)w; }
+        else if (k) {
+            cur[k] = 0; k = 0;
+            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
+            if (skip) dropped++;
+            for (int i = 0; i < n && !skip; i++) if (!strcmp(items[i], cur)) skip = true;
+            if (!skip && n < 64) strcpy_s(items[n++], cur);
+        }
+        if (!*c) break;
+    }
+    for (int i = 1; i < n; i++)   // sorted by byte, as the settings app sorts them (ordinal)
+        for (int j = i; j > 0 && strcmp(items[j - 1], items[j]) > 0; j--) { char t[48]; strcpy_s(t, items[j]); strcpy_s(items[j], items[j - 1]); strcpy_s(items[j - 1], t); }
+    out[0] = 0;
+    for (int i = 0; i < n; i++) { if (i) strcat_s(out, cap, ","); strcat_s(out, cap, items[i]); }
+    return dropped;
+}
 static uint32_t profile_fingerprint() {
-    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && g_playerCapHull == 100 && g_playerCapShields && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes && !g_creepWingmen && !g_creepBotHandling) return 0;
+    if (!g_rulePinball && !g_ruleMultidrift && !g_ruleZavianCreep && g_playerCapHull == 100 && g_playerCapShields && !g_extraOn && !g_overrideCount && !g_creepOn && !g_creepAggressive && !g_creepMissiles && !g_creepTorpedoes && !g_creepWingmen && !g_creepBotHandling) return 0;
     int* order = (int*)_alloca(sizeof(int) * (g_overrideCount + 1));
     for (int i = 0; i < g_overrideCount; i++) order[i] = i;
     for (int i = 1; i < g_overrideCount; i++)   // insertion sort by key (lists are small)
@@ -263,6 +296,8 @@ static uint32_t profile_fingerprint() {
     if (g_ruleZavianCreep) h = fnv1a(h, "zaviancreep=1;");   // only when on, so profiles without it keep their fingerprint
     if (g_playerCapHull != 100) { sprintf_s(b, "players.capital_hull_damage=%d;", g_playerCapHull); h = fnv1a(h, b); }
     if (!g_playerCapShields) h = fnv1a(h, "players.capital_shields=0;");
+    for (int s = 0; s < 10; s++)
+        if (g_extraItems[s][0]) { h = fnv1a(h, "items."); h = fnv1a(h, kExtraShips[s]); h = fnv1a(h, "="); h = fnv1a(h, g_extraItems[s]); h = fnv1a(h, ";"); }
     for (int f = 0; f < 2; f++)   // creep packs: only the ones changed from the stock ship
         for (int p = 0; p < 3; p++)
             if (g_creepPack[f][p]) { sprintf_s(b, "creep.%s_pack%d=%s;", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]); h = fnv1a(h, b); }
@@ -489,7 +524,14 @@ static void load_profile(const wchar_t* dir) {
                 int was = g_creepTorpMinLock; g_creepTorpMinLock = g_creepTorpMinLock < 0 ? 0 : 1000;
                 status("profile: [creep] torpedo_lock_min = %d is outside 0..1000; clamped to %d", was, g_creepTorpMinLock);
             }
-            if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            for (int s = 0; s < 10; s++) {
+                wchar_t key[24], v[1024] = L""; swprintf_s(key, L"%hs", kExtraShips[s]);
+                GetPrivateProfileStringW(L"extra_items", key, L"", v, 1024, pf);
+                int dropped = extra_normalize(s, v, g_extraItems[s], sizeof g_extraItems[s]);
+                if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation; the beams; the Defender's power system without shields)", kExtraShips[s], dropped);
+                if (g_extraItems[s][0]) g_extraOn = true;
+            }
+            if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling || g_extraOn) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
             g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
@@ -523,6 +565,7 @@ static void load_profile(const wchar_t* dir) {
             if (g_creepPack[f][p]) status("  creep: %s pack %d flies %s", kCreepFaction[f], p + 1, kCreepShips[f][g_creepPack[f][p]]);
     if (g_playerCapHull != 100) status("  players: their hits (and the vs-AI bots') do %d%% damage to capital ship hulls and the subsystems in them", g_playerCapHull);
     if (!g_playerCapShields) status("  players: their hits (and the vs-AI bots') do no damage to capital ship shields");
+    for (int s = 0; s < 10; s++) if (g_extraItems[s][0]) status("  extra items: %s may also carry %s", kExtraShips[s], g_extraItems[s]);
     if (g_creepAggressive && g_creepCapDamage > 0) status("  creep: aggressive within %d m, with targets by phase; their hits do %d%% damage to capital ships", g_creepRadius, g_creepCapDamage);
     if (g_creepAggressive && g_creepCapDamage == 0) status("  creep: aggressive within %d m, with targets by phase; their hits do no damage to capital ships, as in stock", g_creepRadius);
     if (g_creepAggressive) status("  creep: bombers attack %s", g_creepBomberCapOnly ? "capital ships only" : "capital ships first, starfighters when none is in reach");
@@ -1894,6 +1937,99 @@ static uint64_t creep_array(uint32_t n) {   // an array of pointers, its count a
     uint64_t m = creep_alloc(16 + n * 8ull); if (!m) return 0;
     *(uint32_t*)(m + 12) = n; return m + 16;
 }
+
+// Extra items ([extra_items] in the profile): auxiliaries and countermeasures from other ships, offered in a ship's
+// hangar. A ship's hangar offers the slot configs listed in its kit's StarshipCustomizationAsset (one per ship,
+// "starshipcustomization_<kit>": AdditionalConfigs +32, DefaultConfigs +40, arrays of pointers, count at -4). A slot
+// config (StarshipWeaponSlotConfig; an Asset, name +0x18) has its item name at +48 (BaseConfig.TelemetryName, the
+// game's own name for the item, like tractor_beam), its weapon config at +96 and its slot type at +104: 0 primary,
+// 1 countermeasure, 2 auxiliary (read from the game data; both aux slots are 2). The server stores the slot config a
+// player picks with no ownership check (notes/inventory-unlocks.md 4.1), so adding another ship's slot config to a
+// ship's AdditionalConfigs, on every player's game as the assets load, lets that ship carry it (flown 2026-10-30: the
+// Reaper's tractor beam on the Defender, in the hangar and the briefing room, and it worked in flight).
+// - The list is replaced by a longer copy, in memory kept for the process's life (creep_alloc), as the creep's lists are.
+// - The items a list points at live in partitions of their own, and the game fills those pointers in after the asset
+//   loads, into the original list. A copy made before then keeps empty entries, and the game's walk over every kit's
+//   items (0x1415f3a83 -> 0x1415f3c90, which reads the item's id at +0x20) crashes on one (flown 2026-10-30). So nothing
+//   is changed until all ten kits are loaded and every entry of their lists is in; then each ship's list grows once.
+// - The item a ship gets is a source ship's own slot config, with that ship's values: the first ship of the same faction
+//   that carries it (kExtraShips order), else the first of the other faction. One a ship already carries isn't added.
+static uint64_t g_extraKit[10];
+static volatile LONG g_extraState;   // 0 waiting for the kits, 1 done
+static SRWLOCK g_extraLock = SRWLOCK_INIT;
+static const char* name_leaf(uint64_t obj) {
+    const char* n = safe_str(rd<uint64_t>(obj, 0x18)); const char* l = strrchr(n, '/'); return l ? l + 1 : n;
+}
+// the kit's default and additional lists, every entry filled in
+static bool extra_kit_ready(uint64_t asset) {
+    for (int list = 0; list < 2; list++) {
+        uint64_t arr = rd<uint64_t>(asset, 32 + list * 8); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        if (n > 512) return false;
+        for (uint32_t k = 0; k < n; k++) { uint64_t c = rd<uint64_t>(arr, k * 8); if (!c || !rd<uint64_t>(c, 8)) return false; }
+    }
+    return true;
+}
+// a countermeasure or auxiliary slot config the kit offers, by item name
+static uint64_t extra_kit_item(uint64_t asset, const char* item) {
+    for (int list = 0; list < 2; list++) {
+        uint64_t arr = rd<uint64_t>(asset, 32 + list * 8); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        for (uint32_t k = 0; k < n && k < 512; k++) {
+            uint64_t c = rd<uint64_t>(arr, k * 8); if (!c) continue;
+            uint32_t slot = rd<uint32_t>(c, 104);
+            if ((slot == 1 || slot == 2) && rd<uint64_t>(c, 96) && !strcmp(safe_str(rd<uint64_t>(c, 48)), item)) return c;
+        }
+    }
+    return 0;
+}
+static void extra_apply() {
+    for (int s = 0; s < 10; s++) if (!g_extraKit[s] || !extra_kit_ready(g_extraKit[s])) return;
+    InterlockedExchange(&g_extraState, 1);
+    for (int s = 0; s < 10; s++) {
+        if (!g_extraItems[s][0]) continue;
+        uint64_t t = g_extraKit[s];
+        uint64_t add[64]; char added[1024] = ""; int na = 0;
+        char list[1024]; strcpy_s(list, g_extraItems[s]);
+        char* ctx = nullptr;
+        for (char* item = strtok_s(list, ",", &ctx); item; item = strtok_s(nullptr, ",", &ctx)) {
+            if (extra_kit_item(t, item)) { status("extra items: %s already carries %s", kExtraShips[s], item); continue; }
+            uint64_t src = 0; int from = -1;
+            for (int pass = 0; pass < 2 && !src; pass++)   // the same faction first
+                for (int o = 0; o < 10 && !src; o++) {
+                    if (o == s || ((o < 5) == (s < 5)) != (pass == 0)) continue;
+                    if ((src = extra_kit_item(g_extraKit[o], item)) != 0) from = o;
+                }
+            if (!src) { status("extra items: no ship carries an item named %s; %s doesn't get it", item, kExtraShips[s]); continue; }
+            if (na < 64) {
+                add[na++] = src;
+                char one[96]; sprintf_s(one, "%s%s (%s's, %s)", added[0] ? ", " : "", item, kExtraShips[from], rd<uint32_t>(src, 104) == 1 ? "countermeasure" : "auxiliary");
+                strcat_s(added, one);
+            }
+        }
+        if (!na) continue;
+        uint64_t arr = rd<uint64_t>(t, 32); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        uint64_t grown = creep_array(n + na);
+        if (!grown) { status("extra items: no memory for %s's hangar list", kExtraShips[s]); continue; }
+        __try { if (n) memcpy((void*)grown, (void*)arr, n * 8ull); for (int i = 0; i < na; i++) *(uint64_t*)(grown + (n + i) * 8ull) = add[i]; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (write_u64(t + 32, grown)) status("extra items: %s's hangar also offers %s; its list went from %u to %u items", kExtraShips[s], added, n, n + na);
+    }
+}
+static void extra_items_partition(uint64_t part) {
+    if (g_extraState) return;
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
+    const char* leaf = name_leaf(root);
+    AcquireSRWLockExclusive(&g_extraLock);
+    if (!g_extraState) {
+        if (!_strnicmp(leaf, "starshipcustomization_", 22)) {
+            bool shaped = true;   // its four lists must read as pointer arrays
+            for (int list = 0; list < 4; list++) { uint64_t arr = rd<uint64_t>(root, 32 + list * 8); if (arr && rd<uint32_t>(arr - 4, 0) > 512) shaped = false; }
+            for (int s = 0; s < 10 && shaped; s++) if (!_stricmp(leaf + 22, kExtraKits[s]) && !g_extraKit[s]) g_extraKit[s] = root;
+        }
+        extra_apply();
+    }
+    ReleaseSRWLockExclusive(&g_extraLock);
+}
 static void creep_ai_partition(uint64_t part) {
     uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
     uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
@@ -2204,6 +2340,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
+    if (part && g_extraOn) extra_items_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);

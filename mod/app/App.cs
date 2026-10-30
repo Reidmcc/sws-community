@@ -148,6 +148,7 @@ namespace SwsSettings
         readonly ComboBox playerCapHull = Theme.Combo();
         readonly CheckBox playerCapShields = Theme.Check("Players damage capital ship shields");
         static readonly int[] PlayerCapHulls = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+        readonly DataGridView extraGrid = new DataGridView();
         readonly ComboBox[,] creepBoxes = new ComboBox[2, 3];
         readonly CheckBox creepAggressive = Theme.Check("Aggressive creep that keep to the phases");
         readonly ComboBox creepRadius = Theme.Combo();
@@ -326,6 +327,7 @@ namespace SwsSettings
             if (!playerCapHull.Items.Contains(phull)) playerCapHull.Items.Add(phull);
             playerCapHull.SelectedItem = phull; playerCapHull.Enabled = !profile.BuiltIn;
             playerCapShields.Checked = profile.PlayerCapShields; playerCapShields.Enabled = !profile.BuiltIn;
+            FillExtraGrid();
             for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) { creepBoxes[f, k].SelectedIndex = profile.Creep[f, k]; creepBoxes[f, k].Enabled = !profile.BuiltIn; }
             creepAggressive.Checked = profile.CreepAggressive; creepMissiles.Checked = profile.CreepMissiles; creepTorpedoes.Checked = profile.CreepTorpedoes; creepWingmen.Checked = profile.CreepWingmen; creepBotHandling.Checked = profile.CreepBotHandling;
             creepAggressive.Enabled = creepMissiles.Enabled = creepTorpedoes.Enabled = creepWingmen.Enabled = creepBotHandling.Enabled = !profile.BuiltIn;
@@ -718,6 +720,7 @@ namespace SwsSettings
             {
                 p.NoPinball = profile.NoPinball; p.NoMultidrift = profile.NoMultidrift; p.FixZavianCreep = profile.FixZavianCreep;
                 p.PlayerCapHull = profile.PlayerCapHull; p.PlayerCapShields = profile.PlayerCapShields;
+                p.ExtraItems = (string[])profile.ExtraItems.Clone();
                 for (int f = 0; f < 2; f++) for (int k = 0; k < 3; k++) p.Creep[f, k] = profile.Creep[f, k];
                 p.CreepAggressive = profile.CreepAggressive; p.CreepMissiles = profile.CreepMissiles; p.CreepTorpedoes = profile.CreepTorpedoes; p.CreepWingmen = profile.CreepWingmen; p.CreepBotHandling = profile.CreepBotHandling;
                 p.CreepRadius = profile.CreepRadius; p.CreepCapDamage = profile.CreepCapDamage; p.CreepTorpMinLock = profile.CreepTorpMinLock; p.CreepBomberCapOnly = profile.CreepBomberCapOnly;
@@ -764,6 +767,72 @@ namespace SwsSettings
         // ---------------------------------------------------------------------------------------------- rules page
         // The profile's yes/no rules: fixes for the game's exploits and for mistakes in its maps. Each is off by default, which
         // keeps the game as it shipped: players are used to its flaws, and keeping one is their choice.
+        // Extra countermeasures and auxiliaries ([extra_items]): items as rows, ships as columns. A cell shows "stock" (the ship
+        // carries it), a tick (the profile gives it), nothing (it can be given), or a dash (it can't apply to that ship); a
+        // click on an open cell toggles it. Text cells, not checkboxes, so they draw in the dark theme like the rest.
+        void BuildExtraGrid()
+        {
+            var g = extraGrid;
+            g.AllowUserToAddRows = g.AllowUserToDeleteRows = g.AllowUserToResizeRows = g.AllowUserToResizeColumns = false;
+            g.RowHeadersVisible = false; g.ReadOnly = true; g.MultiSelect = false; g.ScrollBars = ScrollBars.None;
+            g.SelectionMode = DataGridViewSelectionMode.CellSelect; g.BorderStyle = BorderStyle.None; g.EnableHeadersVisualStyles = false;
+            g.BackgroundColor = Theme.Back; g.GridColor = Theme.Line; g.Font = Theme.Small;
+            g.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Panel, ForeColor = Theme.Text, SelectionBackColor = Theme.Panel, SelectionForeColor = Theme.Text, Alignment = DataGridViewContentAlignment.MiddleCenter };
+            g.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Back, ForeColor = Theme.Muted, Font = Theme.Small, Alignment = DataGridViewContentAlignment.MiddleCenter, WrapMode = DataGridViewTriState.True };
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing; g.ColumnHeadersHeight = 44;
+            g.Columns.Add(new DataGridViewTextBoxColumn { Name = "item", HeaderText = "", Width = 190, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) } });
+            for (int s = 0; s < ExtraItems.Ships.Length; s++)
+                g.Columns.Add(new DataGridViewTextBoxColumn { Name = ExtraItems.Ships[s], HeaderText = ExtraItems.ShipNames[s], Width = 72, SortMode = DataGridViewColumnSortMode.NotSortable });
+            g.Columns[0].SortMode = DataGridViewColumnSortMode.NotSortable;
+            bool? cm = null;
+            foreach (var it in ExtraItems.All)
+            {
+                if (cm != it.Countermeasure)   // a heading row for each kind
+                {
+                    cm = it.Countermeasure;
+                    int h = g.Rows.Add(it.Countermeasure ? "Countermeasures" : "Auxiliaries");
+                    g.Rows[h].DefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Back, ForeColor = Theme.Muted, Font = Theme.Bold, SelectionBackColor = Theme.Back, SelectionForeColor = Theme.Muted };
+                }
+                int r = g.Rows.Add(it.Name); g.Rows[r].Tag = it;
+                g.Rows[r].Cells[0].ToolTipText = it.Name + "\n" + it.Id + " in the profile file\nCarried by: " +
+                    string.Join(", ", ExtraItems.Ships.Select((sh, i) => it.Stock.Contains(sh) ? ExtraItems.ShipNames[i] : null).Where(x => x != null));
+            }
+            g.RowTemplate.Height = 22;
+            foreach (DataGridViewRow row in g.Rows) row.Height = 22;
+            g.Width = g.Columns.Cast<DataGridViewColumn>().Sum(c => c.Width) + 2;
+            g.Height = g.ColumnHeadersHeight + g.Rows.Cast<DataGridViewRow>().Sum(rw => rw.Height) + 2;
+            g.CellClick += (s, e) =>
+            {
+                if (loading || profile == null || profile.BuiltIn || e.RowIndex < 0 || e.ColumnIndex < 1) return;
+                var it = g.Rows[e.RowIndex].Tag as ExtraItems.Item; if (it == null) return;
+                int ship = e.ColumnIndex - 1;
+                if (ExtraItems.IsStock(ship, it) || ExtraItems.Impossible(ship, it.Id)) return;
+                bool on = !ExtraItems.Has(profile.ExtraItems[ship], it.Id);
+                profile.ExtraItems[ship] = ExtraItems.Toggle(ship, profile.ExtraItems[ship], it.Id, on);
+                SaveProfile(); FillExtraGrid();
+            };
+            g.SelectionChanged += (s, e) => g.ClearSelection();
+        }
+        void FillExtraGrid()
+        {
+            foreach (DataGridViewRow row in extraGrid.Rows)
+            {
+                var it = row.Tag as ExtraItems.Item; if (it == null) continue;
+                for (int s = 0; s < ExtraItems.Ships.Length; s++)
+                {
+                    var cell = row.Cells[s + 1];
+                    bool stock = ExtraItems.IsStock(s, it), no = ExtraItems.Impossible(s, it.Id);
+                    bool given = profile != null && ExtraItems.Has(profile.ExtraItems[s], it.Id);
+                    cell.Value = stock ? "stock" : no ? "\u2014" : given ? "\u2713" : "";
+                    cell.Style.ForeColor = stock || no ? Theme.Muted : Theme.Changed;
+                    cell.Style.SelectionForeColor = cell.Style.ForeColor;
+                    cell.ToolTipText = stock ? ExtraItems.ShipNames[s] + " carries it already" : no ? "Can't apply to the " + ExtraItems.ShipNames[s]
+                        : (given ? "Given to the " : "Click to give it to the ") + ExtraItems.ShipNames[s];
+                }
+            }
+            extraGrid.Enabled = profile == null || !profile.BuiltIn;
+        }
+
         void BuildRulesPage()
         {
             var col = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, BackColor = Theme.Back };
@@ -804,6 +873,11 @@ namespace SwsSettings
                 d2.Margin = new Padding(0, 2, 0, 0); d2.MaximumSize = new Size(820, 0); col.Controls.Add(d2);
             }
             rule(playerCapShields, "Players' and bots' hits take down capital ships' shield bubbles, as in stock. Off, the shields ignore their hits.");
+
+            section("Extra countermeasures and auxiliaries", "Let a ship carry another ship's countermeasure or auxiliary: tick it, and that ship's hangar and briefing room offer it. " +
+                "It's the other ship's own item, with that ship's values, from a ship of the same faction where one has it. \"stock\" is what the ship carries already. " +
+                "The B-wing's rotation needs its wings, the two beams are drawn from their own ships' laser mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
+            BuildExtraGrid(); extraGrid.Margin = new Padding(0, 10, 0, 0); col.Controls.Add(extraGrid);
 
             section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
                 "Changed packs get creep durability (about a quarter of the player ship's hull, half its shields) and fly lasers only, plus bombs on the bombers, unless creep missiles are on below. " +

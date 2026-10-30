@@ -162,6 +162,8 @@ the AI "creep" ships are left alone.
   to capital ships.
 - [Players against capital ships](docs/players-vs-capital-ships.md): how much players' hits hurt capital ships, and the
   Bomber Escort Fleet Battle mode where only the bomber creep sink them.
+- [Extra countermeasures and auxiliaries](docs/extra-items.md): let a ship carry another ship's countermeasures and
+  auxiliaries, like a tractor beam on the TIE Defender.
 - [Match rules](docs/match-rules.md): morale, timers and scores for Fleet Battles and Dogfight.
 - [Limits](docs/limits.md): the range each value may take, and what happens outside it.
 - [Profiles and the fingerprint](docs/profiles.md): why everyone needs the same profile, and the ones a release ships.

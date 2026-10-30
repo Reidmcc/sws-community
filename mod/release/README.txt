@@ -57,6 +57,7 @@ Double-click sws_settings.exe for everything below without editing files:
 - Rules and fixes: turn the profile's exploit rules (zero-throttle pinballing, multidrifting) and map fixes (Zavian
   Abyss's middle X-wing creep pack spawning 3 ships instead of 5) on or off. Each is off unless you turn it on.
   Players against capital ships: how much players' hits hurt capital ship hulls, and whether they hurt their shields.
+  Extra countermeasures and auxiliaries: let a ship carry another ship's, like a tractor beam on the TIE Defender.
   Creep packs: what each Fleet Battles creep pack flies, and whether creep engage aggressively (following the
   phases), fire missiles, carry torpedoes on the bombers and fly with the vs-AI bots' handling; and creep hull and
   shields by ship type. docs/creep.md on the project page explains each.
