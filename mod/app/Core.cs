@@ -218,8 +218,9 @@ namespace SwsSettings
             I("stealth", "Stealth", false, "awing", "tieinterceptor"),
             I("tractor_beam", "Tractor Beam", false, "tiereaper", "uwing"),
         };
-        // an item the ship can't take: the B-wing's wing rotation anywhere else, the Defender's power system without shields
-        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
+        // an item the ship can't take: the B-wing's wing rotation and ion beam anywhere else (the beam is drawn from the
+        // B-wing's laser mounts), the Defender's power system without shields
+        public static bool Impossible(int ship, string id) { return id == "aux_bwing_rotation" || id == "sec_ionbeam" || (id == "aux_advancedpowersystem" && NoShields[ship]); }
         public static bool IsStock(int ship, Item it) { return it.Stock.Contains(Ships[ship]); }
         // the DLL's extra_normalize: lowercase, [a-z0-9_()] only, duplicates and impossible items dropped, sorted by byte
         public static string Normalize(int ship, string raw)

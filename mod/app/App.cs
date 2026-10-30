@@ -876,7 +876,7 @@ namespace SwsSettings
 
             section("Extra countermeasures and auxiliaries", "Let a ship carry another ship's countermeasure or auxiliary: tick it, and that ship's hangar and briefing room offer it. " +
                 "It's the other ship's own item, with that ship's values, from a ship of the same faction where one has it. \"stock\" is what the ship carries already. " +
-                "The B-wing's rotation needs the B-wing's wings, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
+                "The B-wing's rotation needs its wings, its ion beam is drawn from its laser mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
             BuildExtraGrid(); extraGrid.Margin = new Padding(0, 10, 0, 0); col.Controls.Add(extraGrid);
 
             section("Creep packs", "Each faction has three AI creep packs of 5 ships. Pick each pack's ship: Y-wings and TIE bombers bomb capital ships when the phase brings them close. " +
