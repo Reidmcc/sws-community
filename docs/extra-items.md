@@ -12,7 +12,7 @@ tiedefender=tractor_beam,missile_torpedo
 awing=aux_advancedpowersystem,-stealth
 ```
 
-The ships are `xwing`, `ywing`, `awing`, `uwing`, `bwing`, `tiefighter`, `tiebomber`, `tieinterceptor`, `tiereaper` and `tiedefender`. Hovering an item's name in the grid shows its name for the profile file. The setting is part of the fingerprint, so everyone in a match offers the same items.
+The grid shows each item by its in-game name, with both names where the factions differ (Quick-Lock / Anti-Starfighter Missile). The profile file uses the game's internal names, which the grid shows on hover. The ships are `xwing`, `ywing`, `awing`, `uwing`, `bwing`, `tiefighter`, `tiebomber`, `tieinterceptor`, `tiereaper` and `tiedefender`. Hovering an item's name in the grid shows its name for the profile file. The setting is part of the fingerprint, so everyone in a match offers the same items.
 
 ## How it works
 
@@ -35,12 +35,12 @@ A loadout keeps each item by its id. A loadout made where a ship could carry ano
 
 ## What can't be given
 
-- **The B-wing's wing rotation:** no other ship has the parts it turns.
-- **The two beams,** the B-wing's ion beam (`sec_ionbeam`) and the beam the Y-wing, TIE Bomber and B-wing carry (`beam`):
+- **The B-wing's Gyro/Aux Control Module** (`aux_bwing_rotation`): no other ship has the parts it turns.
+- **The two beams,** the B-wing's Ion Beam (`sec_ionbeam`) and the Beam Cannon the Y-wing, TIE Bomber and B-wing carry (`beam`):
   their effects are drawn from their own ship's laser mounts. Flown on an X-wing, both worked, but the beam started in
   front of the cockpit, joined to nothing. They can be revisited if mount points are ever worked out for primary weapons.
-- **The Y-wing's laser turret:** it sits on the Y-wing's turret mount, on top of the ship. On a TIE Fighter it didn't work.
-- **The TIE Defender's advanced power system** on the TIE Fighter, Bomber or Interceptor: it needs shields, and those three have none.
+- **The Y-wing's Automatic Ion Cannon** (`laser_turret`): it sits on the Y-wing's turret mount, on top of the ship. On a TIE Fighter it didn't work.
+- **The TIE Defender's APS** (`aux_advancedpowersystem`) on the TIE Fighter, Bomber or Interceptor: it needs shields, and those three have none.
 
 The grid shows these as a dash. The mod also leaves them out of a hand-edited profile, with a line in the log.
 

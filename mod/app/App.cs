@@ -798,7 +798,7 @@ namespace SwsSettings
             g.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Panel, ForeColor = Theme.Text, SelectionBackColor = Theme.Panel, SelectionForeColor = Theme.Text, Alignment = DataGridViewContentAlignment.MiddleCenter };
             g.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Theme.Back, ForeColor = Theme.Muted, Font = Theme.Small, Alignment = DataGridViewContentAlignment.MiddleCenter, WrapMode = DataGridViewTriState.True };
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing; g.ColumnHeadersHeight = 44;
-            g.Columns.Add(new DataGridViewTextBoxColumn { Name = "item", HeaderText = "", Width = 190, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) } });
+            g.Columns.Add(new DataGridViewTextBoxColumn { Name = "item", HeaderText = "", Width = 250, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) } });
             for (int s = 0; s < ExtraItems.Ships.Length; s++)
                 g.Columns.Add(new DataGridViewTextBoxColumn { Name = ExtraItems.Ships[s], HeaderText = ExtraItems.ShipNames[s], Width = 72, SortMode = DataGridViewColumnSortMode.NotSortable });
             g.Columns[0].SortMode = DataGridViewColumnSortMode.NotSortable;
@@ -917,7 +917,7 @@ namespace SwsSettings
             section("Extra countermeasures and auxiliaries", "Let a ship carry another ship's countermeasure or auxiliary: tick it, and that ship's hangar and briefing room offer it. " +
                 "Click a \"stock\" cell to take that item away from the ship: it leaves the hangar, and loadouts that carry it get a stock item instead. A ship keeps at least two stock auxiliaries and one stock countermeasure. " +
                 "It's the other ship's own item, with that ship's values, from a ship of the same faction where one has it. \"stock\" is what the ship carries already. " +
-                "The B-wing's rotation needs its wings, the two beams and the Y-wing's laser turret sit on their own ships' mounts, and the Defender's power system needs shields, so those can't be given. Part of the fingerprint.");
+                "The B-wing's Gyro/Aux Control Module needs its wings, the Beam Cannon, the Ion Beam and the Y-wing's Automatic Ion Cannon sit on their own ships' mounts, and the Defender's APS needs shields, so those can't be given. Part of the fingerprint.");
             BuildExtraGrid(); extraGrid.Margin = new Padding(0, 10, 0, 0); col.Controls.Add(extraGrid);
             extraClear = Theme.Button("Clear the grid", (s, e) => ClearExtraItems()); extraClear.Margin = new Padding(0, 8, 0, 0); col.Controls.Add(extraClear);
 
