@@ -711,6 +711,7 @@ static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every sta
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what reaches capital ships' hulls and shields, and from whom
+static bool g_auxProto = false;    // [server] aux_prototype: 1 = the TIE Defender may also carry the TIE Reaper's tractor beam (a test)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -764,6 +765,11 @@ static void read_server_ini() {
       g_hitLog = GetPrivateProfileIntW(L"server", L"hit_log", 0, ini) != 0;
       g_capDmgLog = GetPrivateProfileIntW(L"server", L"capital_damage_log", 0, ini) != 0;
       if (g_capDmgLog) status("server: capital_damage_log=1: what reaches capital ships' hulls and shields is logged, by attacker");
+      g_auxProto = GetPrivateProfileIntW(L"server", L"aux_prototype", 0, ini) != 0;
+      if (g_auxProto) {
+          status("server: aux_prototype=1: the TIE Defender's hangar also offers the TIE Reaper's tractor beam (a test)");
+          if (!g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+      }
       g_stackSample = GetPrivateProfileIntW(L"server", L"stack_sample", 0, ini) != 0;
       { wchar_t mw[16]; GetPrivateProfileStringW(L"server", L"match_mode", L"", mw, 16, ini);
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
@@ -1894,6 +1900,88 @@ static uint64_t creep_array(uint32_t n) {   // an array of pointers, its count a
     uint64_t m = creep_alloc(16 + n * 8ull); if (!m) return 0;
     *(uint32_t*)(m + 12) = n; return m + 16;
 }
+
+// Auxiliaries on other ships ([server] aux_prototype, a test). A ship's hangar offers the slot configs listed in its kit's
+// StarshipCustomizationAsset (one per ship, "starshipcustomization_<ship>": AdditionalConfigs +32, DefaultConfigs +40, arrays
+// of pointers, count at -4). A slot config (StarshipWeaponSlotConfig, an Asset: name +0x18) holds its weapon config at +96
+// and its slot type at +104: 0 primary, 1 countermeasure, 2 auxiliary (read from the game data). The server stores the
+// slot config a player picks with no ownership check (notes/inventory-unlocks.md 4.1), so adding another ship's aux slot
+// config to a ship's AdditionalConfigs, on every player's game as the assets load, should let that ship carry it. The
+// list is replaced by a copy one longer, in memory kept for the process's life (creep_alloc), as the creep's lists are.
+struct AuxKit { char ship[32]; uint64_t asset; };
+static AuxKit g_auxKits[24]; static int g_auxKitN; static SRWLOCK g_auxLock = SRWLOCK_INIT;
+struct AuxAdd { const char* target; const char* source; const char* item; bool done, missed; };
+static AuxAdd g_auxAdds[] = { { "tiedefender", "tiereaper", "slotconfig_tiereaper_tractorbeam", false, false } };
+static volatile LONG g_auxPending = 1;
+static const char* name_leaf(uint64_t obj) {
+    const char* n = safe_str(rd<uint64_t>(obj, 0x18)); const char* l = strrchr(n, '/'); return l ? l + 1 : n;
+}
+static uint64_t aux_kit(const char* ship) {
+    for (int i = 0; i < g_auxKitN; i++) if (!strcmp(g_auxKits[i].ship, ship)) return g_auxKits[i].asset;
+    return 0;
+}
+// an aux slot config the asset lists (its additional or default configs), by name
+static uint64_t aux_item(uint64_t asset, const char* name) {
+    for (int list = 0; list < 2; list++) {
+        uint64_t arr = rd<uint64_t>(asset, 32 + list * 8); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        for (uint32_t k = 0; k < n && k < 512; k++) {
+            uint64_t c = rd<uint64_t>(arr, k * 8);
+            if (c && !_stricmp(name_leaf(c), name) && rd<uint32_t>(c, 104) == 2 && rd<uint64_t>(c, 96)) return c;
+        }
+    }
+    return 0;
+}
+// tried as each kit's asset loads, and after that on every partition load until done: the source's slot configs live in
+// partitions of their own, which may load after the asset that lists them
+static void aux_apply() {
+    LONG pending = 0;
+    for (auto& a : g_auxAdds) {
+        if (a.done) continue;
+        pending++;
+        uint64_t t = aux_kit(a.target), s = aux_kit(a.source); if (!t || !s) continue;
+        uint64_t item = aux_item(s, a.item);
+        if (!item) {
+            if (!a.missed) status("aux: %s isn't among %s's loaded auxiliaries yet; %s will get it when it loads", a.item, a.source, a.target);
+            a.missed = true; continue;
+        }
+        a.done = true; pending--;
+        uint64_t arr = rd<uint64_t>(t, 32); uint32_t n = arr ? rd<uint32_t>(arr - 4, 0) : 0;
+        if (!arr || n == 0 || n > 512) { status("aux: %s's hangar list isn't laid out as expected (%u items); left alone", a.target, n); continue; }
+        bool have = false;
+        for (uint32_t k = 0; k < n; k++) if (rd<uint64_t>(arr, k * 8) == item) have = true;
+        if (have) continue;
+        uint64_t grown = creep_array(n + 1);
+        if (!grown) { status("aux: no memory for %s's hangar list", a.target); continue; }
+        __try { memcpy((void*)grown, (void*)arr, n * 8ull); *(uint64_t*)(grown + n * 8ull) = item; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (write_u64(t + 32, grown))
+            status("aux: %s's hangar now also offers %s (%s, slot type %u); its list went from %u to %u items", a.target,
+                   a.item, a.source, rd<uint32_t>(item, 104), n, n + 1);
+    }
+    InterlockedExchange(&g_auxPending, pending);
+}
+static void aux_partition(uint64_t part) {
+    if (!g_auxPending) return;
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
+    const char* leaf = name_leaf(root);
+    if (_strnicmp(leaf, "starshipcustomization_", 22)) {
+        if (g_auxKitN) { AcquireSRWLockExclusive(&g_auxLock); aux_apply(); ReleaseSRWLockExclusive(&g_auxLock); }
+        return;
+    }
+    char ship[32] = ""; int k = 0;
+    for (const char* c = leaf + 22; *c && k < 31; c++) ship[k++] = (char)tolower((unsigned char)*c);
+    ship[k] = 0;
+    // the asset's four lists must read as pointer arrays before anything is changed
+    for (int list = 0; list < 4; list++) {
+        uint64_t arr = rd<uint64_t>(root, 32 + list * 8);
+        if (arr && rd<uint32_t>(arr - 4, 0) > 512) return;
+    }
+    AcquireSRWLockExclusive(&g_auxLock);
+    if (!aux_kit(ship) && g_auxKitN < 24) { strcpy_s(g_auxKits[g_auxKitN].ship, ship); g_auxKits[g_auxKitN++].asset = root; }
+    aux_apply();
+    ReleaseSRWLockExclusive(&g_auxLock);
+}
 static void creep_ai_partition(uint64_t part) {
     uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
     uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
@@ -2204,6 +2292,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_ruleZavianCreep) map_fix_partition(part);
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
+    if (part && g_auxProto) aux_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);
