@@ -182,9 +182,10 @@ static bool g_playerCapShields = true;
 // [extra_items] <ship>=<item>,<item>: auxiliaries and countermeasures from other ships that this ship's hangar also offers
 // (extra_items_partition). Ships by the app's names; items by the game's own (each slot config's TelemetryName, like
 // tractor_beam). Normalized as read (extra_normalize): lowercase, sorted, duplicates dropped, and the items that can't
-// apply dropped (Pseudo, 2026-10-30): the B-wing's wing rotation, which other ships have no parts for; its ion beam, whose
-// effect is drawn from the B-wing's laser mounts (flown on an X-wing: the beam starts in front of the cockpit, joined to
-// nothing); and the TIE Defender's power system on a ship without shields. In the fingerprint as "items.<ship>=<a>,<b>;", ships in kExtraShips order.
+// apply dropped (Pseudo, 2026-10-30): the B-wing's wing rotation, which other ships have no parts for; the two beams, the
+// B-wing's ion beam and the beam the Y-wing, TIE Bomber and B-wing carry, whose effects are drawn from their own ship's
+// laser mounts (both flown on an X-wing: the beam starts in front of the cockpit, joined to nothing; to revisit if mount
+// points are ever worked out); and the TIE Defender's power system on a ship without shields. In the fingerprint as "items.<ship>=<a>,<b>;", ships in kExtraShips order.
 static const char* kExtraShips[10] = { "xwing", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
 static const char* kExtraKits[10] = { "xwingt65", "ywing", "awing", "uwing", "bwing", "tiefighter", "tiebomber", "tieinterceptor", "tiereaper", "tiedefender" };
 static const bool kExtraNoShields[10] = { false, false, false, false, false, true, true, true, false, false };   // the 2-system TIEs
@@ -270,7 +271,7 @@ static int extra_normalize(int ship, const wchar_t* in, char* out, size_t cap) {
         if (!end) { wchar_t w = towlower(*c); if (k < 47 && ((w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9') || w == L'_' || w == L'(' || w == L')')) cur[k++] = (char)w; }
         else if (k) {
             cur[k] = 0; k = 0;
-            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
+            bool skip = !strcmp(cur, "aux_bwing_rotation") || !strcmp(cur, "sec_ionbeam") || !strcmp(cur, "beam") || (!strcmp(cur, "aux_advancedpowersystem") && kExtraNoShields[ship]);
             if (skip) dropped++;
             for (int i = 0; i < n && !skip; i++) if (!strcmp(items[i], cur)) skip = true;
             if (!skip && n < 64) strcpy_s(items[n++], cur);
@@ -527,7 +528,7 @@ static void load_profile(const wchar_t* dir) {
                 wchar_t key[24], v[1024] = L""; swprintf_s(key, L"%hs", kExtraShips[s]);
                 GetPrivateProfileStringW(L"extra_items", key, L"", v, 1024, pf);
                 int dropped = extra_normalize(s, v, g_extraItems[s], sizeof g_extraItems[s]);
-                if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation and ion beam; the Defender's power system without shields)", kExtraShips[s], dropped);
+                if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation; the beams; the Defender's power system without shields)", kExtraShips[s], dropped);
                 if (g_extraItems[s][0]) g_extraOn = true;
             }
             if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling || g_extraOn) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);

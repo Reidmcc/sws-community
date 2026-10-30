@@ -24,8 +24,9 @@ Each ship's hangar offers the items its customization data lists. As that data l
 ## What can't be given
 
 - **The B-wing's wing rotation:** no other ship has the parts it turns.
-- **The B-wing's ion beam** (`sec_ionbeam`): its effect is drawn from the B-wing's laser mounts. Flown on an X-wing, it
-  worked, but the beam started in front of the cockpit, joined to nothing.
+- **The two beams,** the B-wing's ion beam (`sec_ionbeam`) and the beam the Y-wing, TIE Bomber and B-wing carry (`beam`):
+  their effects are drawn from their own ship's laser mounts. Flown on an X-wing, both worked, but the beam started in
+  front of the cockpit, joined to nothing. They can be revisited if mount points are ever worked out for primary weapons.
 - **The TIE Defender's advanced power system** on the TIE Fighter, Bomber or Interceptor: it needs shields, and those three have none.
 
 The grid shows these as a dash. The mod also leaves them out of a hand-edited profile, with a line in the log.
@@ -34,4 +35,4 @@ The grid shows these as a dash. The mod also leaves them out of a hand-edited pr
 
 The Reaper's tractor beam on the Defender was flown on 2026-10-30. It showed in the hangar and the briefing room, and worked in flight.
 
-Also flown on an X-wing (2026-10-30): stealth, the missile corrupter countermeasure, and the beam (`beam`, the Y-wing's). All three worked. The beam's effect looked wrong, starting in front of the cockpit and joined to nothing, as the ion beam's did.
+Also flown on an X-wing (2026-10-30): stealth and the missile corrupter countermeasure, which worked, and the two beams, which worked but looked wrong (above).
