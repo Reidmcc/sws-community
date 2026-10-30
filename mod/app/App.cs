@@ -831,8 +831,7 @@ namespace SwsSettings
                     if (!off && ExtraItems.StockLeft(ship, list, it.Countermeasure) <= ExtraItems.MinStock(it.Countermeasure))
                     {
                         Theme.Tell(this, "Can't take it away", "Every ship has to keep at least two of its stock auxiliaries and one of its stock countermeasures, " +
-                            "so the game can always fill its countermeasure slot and both aux slots. To take this one away from the " + ExtraItems.ShipNames[ship] +
-                            ", give it back one of its other stock " + (it.Countermeasure ? "countermeasures" : "auxiliaries") + " first.");
+                            "so the game can always fill its countermeasure slot and both aux slots.");
                         return;
                     }
                     profile.ExtraItems[ship] = ExtraItems.Toggle(ship, list, "-" + it.Id, !off);
