@@ -537,7 +537,7 @@ static void load_profile(const wchar_t* dir) {
                 if (dropped) status("profile: [extra_items] %s: %d item(s) left out that can't apply to it (the B-wing's wing rotation; the beams; the laser turret; the Defender's power system without shields)", kExtraShips[s], dropped);
                 if (g_extraItems[s][0]) g_extraOn = true;
             }
-            if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling || g_extraOn) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if ((g_creepAggressive || g_creepTorpedoes || g_creepBotHandling || g_extraOn || g_mapArtProto) && !g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             const DWORD cap = 65536; wchar_t* sec = (wchar_t*)calloc(cap, sizeof(wchar_t));
             DWORD n = sec ? GetPrivateProfileSectionW(L"values", sec, cap, pf) : 0;
             g_overrides = (ValueOverride*)calloc(1024, sizeof(ValueOverride));
@@ -2183,9 +2183,15 @@ static uint64_t __fastcall h_resolve(uint64_t pv, uint64_t kit, uint64_t outVec)
 // every mode). Mission 10's (Terisa's Vengeance, C4_M10Dockyards) asteroid field is a sub-level of pure art with
 // collision and no network registry: C4_M10Dockyards2 (also AutoLoad in its mission). So as Yavin's root partition is
 // created, before its parts load, its LevelArt reference is pointed at that sub-level. Positions stay Yavin's.
-// Unknown, and what the flight tests: whether a PvP root can load a sub-level from a single-player superbundle.
+// First flight (2026-10-31): the sub-level's bundle loaded from the single-player superbundle, then the engine stopped
+// itself (0x14027fc9e, mov [0], 0xdeaddead) resolving an import: every art sub-level of the mission imports a rock
+// cluster (arc_reb_nadirispacerockcluster_01, mesh and blueprint) that lives only in the mission root's own bundle,
+// which the campaign loads first. So the reference also lists that bundle in PreloadedBundleNames (+224, a CString
+// array, count at -4; empty on every PvP reference), to be loaded before the sub-level. Loading a bundle doesn't
+// instantiate the mission's world.
 static const char kMapArtFrom[] = "Game/Levels/PvP/PVP_Yavin/LevelArt";
 static const char kMapArtTo[] = "Game/Levels/SP/C4_M10Dockyards/C4_M10Dockyards2";
+static const char kMapArtPre[] = "Game/Levels/SP/C4_M10Dockyards/C4_M10Dockyards";
 static void map_art_partition(uint64_t part) {
     uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
     uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
@@ -2195,7 +2201,12 @@ static void map_art_partition(uint64_t part) {
         uint64_t o = rd<uint64_t>(insts, k * 8ull);
         if (!o || rd<uint64_t>(o, 8) != G(0x1449fc5f0)) continue;
         if (_stricmp(safe_str(rd<uint64_t>(o, 264)), kMapArtFrom)) continue;
-        if (write_u64(o + 264, (uint64_t)kMapArtTo)) { found++; status("maps: Yavin's scenery reference now loads %s (was %s)", kMapArtTo, kMapArtFrom); }
+        if (!g_creepPool) g_creepPool = (uint8_t*)VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);   // the switch is read after the profile
+        uint64_t pre = creep_array(1);
+        if (pre) { *(uint64_t*)pre = (uint64_t)kMapArtPre; write_u64(o + 224, pre); }
+        if (write_u64(o + 264, (uint64_t)kMapArtTo)) {
+            found++; status("maps: Yavin's scenery reference now loads %s (was %s), with %s preloaded", kMapArtTo, kMapArtFrom, pre ? kMapArtPre : "nothing (no memory)");
+        }
     }
     if (!found) status("maps: Yavin's root loaded, but no LevelArt reference was found to repoint (%u instances)", n);
 }
