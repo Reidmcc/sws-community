@@ -242,6 +242,7 @@ struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 static bool g_fireLog;    // [server] fire_log: log, per bomber creep, how often the AI let it fire at its target and why not (h_fire)
+static bool g_mapArtProto;   // [server] map_art_prototype: Yavin's scenery becomes Terisa's Vengeance's (issue #46, map_art_partition)
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
@@ -804,6 +805,8 @@ static void read_server_ini() {
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
       g_fireLog = GetPrivateProfileIntW(L"server", L"fire_log", 0, ini) != 0;
+      g_mapArtProto = GetPrivateProfileIntW(L"server", L"map_art_prototype", 0, ini) != 0;
+      if (g_mapArtProto) status("server: map_art_prototype=1: Yavin's scenery (LevelArt) is Terisa's Vengeance's asteroid field (a test)");
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -2173,6 +2176,29 @@ static uint64_t __fastcall h_resolve(uint64_t pv, uint64_t kit, uint64_t outVec)
     *(uint64_t*)(copy + 0x20) = (uint64_t)ents + sizeof ents;
     return o_resolve((uint64_t)copy, kit, outVec);
 }
+// Campaign maps as PvP maps (issue #46), the first prototype: [server] map_art_prototype=1, a test switch outside the
+// fingerprint. A PvP map's root (a DetachedSubWorldData, e.g. Game/Levels/PvP/PVP_Yavin/PVP_Yavin) loads its parts
+// through SubWorldReferenceObjectData (ClassInfo 0x1449fc5f0; BundleName +264, a CString; Blueprint +192 is empty in
+// the data, so a part is found by its bundle name alone). Its scenery part is LevelArt (AutoLoad, no inclusion setting:
+// every mode). Mission 10's (Terisa's Vengeance, C4_M10Dockyards) asteroid field is a sub-level of pure art with
+// collision and no network registry: C4_M10Dockyards2 (also AutoLoad in its mission). So as Yavin's root partition is
+// created, before its parts load, its LevelArt reference is pointed at that sub-level. Positions stay Yavin's.
+// Unknown, and what the flight tests: whether a PvP root can load a sub-level from a single-player superbundle.
+static const char kMapArtFrom[] = "Game/Levels/PvP/PVP_Yavin/LevelArt";
+static const char kMapArtTo[] = "Game/Levels/SP/C4_M10Dockyards/C4_M10Dockyards2";
+static void map_art_partition(uint64_t part) {
+    uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
+    uint64_t root = insts && n ? rd<uint64_t>(insts, 0) : 0; if (!root) return;
+    if (_stricmp(safe_str(rd<uint64_t>(root, 0x18)), "Game/Levels/PvP/PVP_Yavin/PVP_Yavin")) return;
+    int found = 0;
+    for (uint16_t k = 0; k < n; k++) {
+        uint64_t o = rd<uint64_t>(insts, k * 8ull);
+        if (!o || rd<uint64_t>(o, 8) != G(0x1449fc5f0)) continue;
+        if (_stricmp(safe_str(rd<uint64_t>(o, 264)), kMapArtFrom)) continue;
+        if (write_u64(o + 264, (uint64_t)kMapArtTo)) { found++; status("maps: Yavin's scenery reference now loads %s (was %s)", kMapArtTo, kMapArtFrom); }
+    }
+    if (!found) status("maps: Yavin's root loaded, but no LevelArt reference was found to repoint (%u instances)", n);
+}
 static void extra_items_partition(uint64_t part) {
     if (g_extraState) return;
     uint64_t insts = rd<uint64_t>(part, 0x20); uint16_t n = rd<uint16_t>(part, 0x28);
@@ -2500,6 +2526,7 @@ static uint64_t __fastcall h_partnew(uint64_t store, uint64_t a2, uint64_t loade
     if (part && g_shipScaleOn) model_scale_partition(part);
     if (part && g_creepAggressive) creep_ai_partition(part);
     if (part) extra_items_partition(part);
+    if (part && g_mapArtProto) map_art_partition(part);
     if (part && g_valuesOn) {
         uint16_t lo[kVeMaxRoots], hi[kVeMaxRoots]; ve_root_ranges(lo, hi);
         long inspected = 0, matched = ve_scan_partition(part, lo, hi, &inspected);

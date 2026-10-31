@@ -704,6 +704,25 @@ int main() {
         bool r3 = g_resolveSeen == 0x6ffff;
         check(*(uint8_t*)0x14170d9e0 != 0x40 && r1 && r2 && r3 && r4 && r5,
               "loadout resolver: an item the ship no longer offers resolves as a default the loadout doesn't already hold, from a copy; offered, never-listed and whitelisted ids are left alone");
+        // map_art_prototype (server_standin.ini): as Yavin's root partition is created, its LevelArt sub-world reference
+        // (SubWorldReferenceObjectData, ClassInfo 0x1449fc5f0, BundleName +264) loads Terisa's Vengeance's asteroid field;
+        // its other references, and a LevelArt reference in another map's root, are left alone
+        auto swref = [](const char* bundle) {
+            uint8_t* o = fake_alloc(0x120); *(uint64_t*)(o + 8) = 0x1449fc5f0; *(const char**)(o + 264) = bundle; return o; };
+        auto rootPart = [](const char* name, std::initializer_list<uint8_t*> objs) {
+            uint8_t* r = fake_alloc(0x80); *(uint64_t*)(r + 8) = 0x14497c370; *(const char**)(r + 0x18) = name;
+            uint8_t** in = (uint8_t**)fake_alloc(8 * (objs.size() + 1)); in[0] = r; int k = 1; for (uint8_t* o : objs) in[k++] = o;
+            uint8_t* p = fake_alloc(0x40); *(uint8_t***)(p + 0x20) = in; *(uint16_t*)(p + 0x28) = (uint16_t)(objs.size() + 1); return p; };
+        uint8_t* yArt = swref("Game/Levels/PvP/PVP_Yavin/LevelArt"); uint8_t* yPvp = swref("Game/Levels/PvP/PVP_Yavin/PvP");
+        uint8_t* eArt = swref("Game/Levels/PvP/PvP_Esseles/LevelArt");
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)rootPart("Game/Levels/PvP/PVP_Yavin/PVP_Yavin", { yPvp, yArt }), 0);
+        ((partnew_t)0x140273060)((uint64_t)domain, 0, (uint64_t)rootPart("Game/Levels/PvP/PvP_Esseles/PvP_Esseles", { eArt }), 0);
+        const char* yArtNow = *(const char**)(yArt + 264);
+        bool mapArt = !strcmp(yArtNow, "Game/Levels/SP/C4_M10Dockyards/C4_M10Dockyards2") &&
+                      !strcmp(*(const char**)(yPvp + 264), "Game/Levels/PvP/PVP_Yavin/PvP") &&
+                      !strcmp(*(const char**)(eArt + 264), "Game/Levels/PvP/PvP_Esseles/LevelArt");
+        printf("      (map art: Yavin's LevelArt reference now '%s')\n", yArtNow);
+        check(mapArt, "map_art_prototype: Yavin's scenery reference loads Terisa's Vengeance's asteroid field; its other parts and other maps untouched");
     }
     uint8_t* creepSquadForMode = nullptr;   // the creep squadron below, for the bomb-raid mode check after the ticks
     uint8_t* creepList = nullptr; uint8_t* creepCtrlData = nullptr;   // and its shared list and controller, for the per-ship-type check

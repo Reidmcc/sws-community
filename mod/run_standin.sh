@@ -115,6 +115,10 @@ if [ -n "$LOG" ] && grep -q "players: their hits (and the vs-AI bots') do 40% da
    && grep -q "players: their hits (and the vs-AI bots') do no damage to capital ship shields" "$LOG"; then
     echo "PASS  the profile summary names players' damage to capital hulls (40%) and shields (off)"
 else echo "FAIL  the players-against-capital-ships summary lines are missing"; STATUS=1; fi
+# map_art_prototype: the repoint is logged
+if [ -n "$LOG" ] && grep -q "maps: Yavin's scenery reference now loads Game/Levels/SP/C4_M10Dockyards/C4_M10Dockyards2" "$LOG"; then
+    echo "PASS  map_art_prototype logged Yavin's scenery reference repointed"
+else echo "FAIL  the map_art_prototype log line is missing"; STATUS=1; fi
 # fire_log: the bomber's node on the capital ship was read back twice, valid both times
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
     echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"
