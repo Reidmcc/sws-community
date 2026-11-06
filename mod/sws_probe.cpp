@@ -3801,8 +3801,8 @@ static void __fastcall h_smsg(uint64_t self, uint64_t msg) {
 // Static research (Steam addresses; findings kept in notes/online-guard.md):
 // - The custom-match router FUN_14174d540(self) reads BasicSettings.GameMode ([[self+8]+0x18]+0x18): 0 Dogfight, 1 Fleet
 //   Battles, 2 PvB Co-op ask EA to create the game (a PresenceGameRequestMessage, request id kept at self+0x26c); 3 PvB Solo
-//   starts the local match (FUN_14174d7e0). h_cmroute turns 0-2 into 3, so a host who forgot "Solo vs AI" still gets the
-//   local match, and match_mode then sets the real mode.
+//   starts the local match (FUN_14174d7e0); any other value posts a create too. h_cmroute turns every mode but 3 into 3, so
+//   a host who forgot "Solo vs AI" still gets the local match, and match_mode then sets the real mode.
 // - Every matchmaking start (quick play, party matchmaking) goes through FUN_141baad30(matchmaker, params). h_mmstart answers
 //   as its own "backend not ready" branch does: a PresenceMatchmakerMessage with reason 3 (OnlineErrorReasonMatchmaking_
 //   Offline in FUN_1412d43d0), posted to the presence message manager [[0x1441c2910]+8] (FUN_140234bd0(mm, msg, 0.0f)).
@@ -3833,18 +3833,26 @@ static bool guard_post(uint64_t msg) {
 typedef void(__fastcall* cmroute_t)(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4);
 static cmroute_t o_cmroute;
 static void __fastcall h_cmroute(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
-    if (g_onlineGuard) __try {
-        uint64_t bs = rd<uint64_t>(rd<uint64_t>(self, 8), 0x18);
-        int mode = bs ? rd<int>(bs, 0x18) : -1;
-        if (rd<int>(self, 0x26c) == 0 && bs && rd<uint64_t>(bs, 8) == G(0x144a38f00) && mode >= 0 && mode <= 2) {
+    // Every mode but 3 posts an EA create (a template of its own, or an empty one past 2), so every other mode becomes 3.
+    // No type check: a missed check would let the create out, and the tripwire only logs createGameTemplate (the party
+    // group's create uses it too). If the settings can't be read, the original doesn't run either: it would read them.
+    if (g_onlineGuard) {
+        bool ok = false; int mode = -1;
+        __try {
+            uint64_t bs = rd<uint64_t>(rd<uint64_t>(self, 8), 0x18);
+            if (bs) {
+                mode = *(volatile int*)(bs + 0x18);
+                if (mode != 3) *(volatile int*)(bs + 0x18) = 3;
+                ok = true;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+        if (!ok) { status("guard: BLOCKED a custom match start whose settings couldn't be read"); return; }
+        if (mode != 3) {
             static const char* const names[] = { "Dogfight", "Fleet Battles", "PvB Co-op" };
-            *(int*)(bs + 0x18) = 3;
             status("guard: a custom match set to %s would be created on EA's servers; it starts as the local Solo vs AI match "
-                   "instead (match_mode sets the mode the match is played in)", names[mode]);
-        } else if (mode >= 0 && mode <= 2)
-            status("guard: custom match mode %d not rerouted (pending request %d, settings type %llx): the tripwire stands behind it",
-                   mode, rd<int>(self, 0x26c), bs ? rd<uint64_t>(bs, 8) : 0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                   "instead (match_mode sets the mode the match is played in)", mode >= 0 && mode <= 2 ? names[mode] : "an unknown mode");
+        }
+    }
     o_cmroute(self, a2, a3, a4);
 }
 
@@ -3856,7 +3864,7 @@ static void __fastcall h_mmstart(uint64_t mmObj, uint64_t params, uint64_t a3, u
     bool posted = false;
     __try { posted = guard_post(((mmmsg_t)G(0x141baac60))(3, 0)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (guard_log_ok())
-        status("guard: BLOCKED matchmaking (quick play) on EA's servers; the menu was told the game is offline (%s)", posted ? "sent" : "NOT sent");
+        status("guard: BLOCKED matchmaking (quick play, or a party's) on EA's servers; the menu was told the game is offline (%s)", posted ? "sent" : "NOT sent");
 }
 
 typedef uint64_t(__fastcall* greject_t)(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t gameId, uint32_t err);
@@ -3901,7 +3909,13 @@ static uint32_t* __fastcall h_sendreq(uint64_t mgr, uint32_t* out, uint16_t comp
     if (comp == 4) {
         const char* n = gm_command(cmd);
         if (g_onlineGuard && !t_guardAllow && gm_makes_game(cmd)) {
-            if (guard_log_ok()) status("guard: BLOCKED an EA game-server request (GameManager %s, 0x%02x) that no other guard caught", n ? n : "?", cmd);
+            if (guard_log_ok()) {   // with the callers, so the route that got this far can be found and given its own guard
+                void* fr[5] = {}; USHORT k = CaptureStackBackTrace(1, 5, fr, nullptr);
+                char cs[160] = "";   // five of " 0x" + 16 digits fit with room to spare (sprintf_s aborts on overflow) for (USHORT i = 0; i < k; i++) sprintf_s(cs + strlen(cs), sizeof cs - strlen(cs), " 0x%llx", (uint64_t)fr[i]);
+                // the direct caller always; the walk only gets through code with unwind data
+                status("guard: BLOCKED an EA game-server request (GameManager %s, 0x%02x) that no other guard caught; caller 0x%llx; stack%s",
+                       n ? n : "?", cmd, (uint64_t)_ReturnAddress(), k ? cs : " (no walk)");
+            }
             if (out) *out = 0;
             return out;
         }

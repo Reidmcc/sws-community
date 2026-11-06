@@ -118,14 +118,17 @@ else echo "FAIL  the players-against-capital-ships summary lines are missing"; S
 # online guard (on by default): it says so at startup, and each block is logged, the backstops included
 if [ -n "$LOG" ] && grep -q "server: online_guard=1: joining or creating a game on EA's servers is blocked" "$LOG" \
    && grep -q "guard: a custom match set to Fleet Battles would be created on EA's servers; it starts as the local Solo vs AI match" "$LOG" \
-   && grep -q "guard: BLOCKED matchmaking (quick play) on EA's servers; the menu was told the game is offline (sent)" "$LOG" \
+   && grep -q "guard: BLOCKED matchmaking (quick play, or a party.s) on EA's servers; the menu was told the game is offline (sent)" "$LOG" \
    && grep -q "guard: BLOCKED joining game abcdef on EA's servers" "$LOG" \
    && grep -q "guard: BLOCKED joining a player's game on EA's servers" "$LOG" \
    && grep -q "guard: BLOCKED an EA game-server request (GameManager joinGame, 0x09)" "$LOG" \
    && grep -q "guard: EA GameManager request createGameTemplate (0x0a)" "$LOG" \
    && grep -q "guard: BLOCKED a join to an EA game server that got past the other guards" "$LOG" \
-   && grep -q "guard: BLOCKED a connect to '203.0.113.5:25200' (not this PC, not the join address)" "$LOG"; then
-    echo "PASS  online guard: every block logged, the backstops' included"
+   && grep -q "guard: BLOCKED a connect to '203.0.113.5:25200' (not this PC, not the join address)" "$LOG" \
+   && grep -q "guard: EA GameManager request joinGame (0x09), the party group's own" "$LOG" \
+   && grep -q "no other guard caught; caller 0x[0-9a-f]" "$LOG" \
+   && ! grep -q "guard: BLOCKED a connect to '127.0.0.1" "$LOG"; then
+    echo "PASS  online guard: every block logged with the tripwire's callers, the party's own join let through, a local connect left alone"
 else echo "FAIL  online guard log lines missing"; STATUS=1; fi
 # fire_log: the bomber's node on the capital ship was read back twice, valid both times
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then

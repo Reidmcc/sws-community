@@ -6,7 +6,11 @@ start's reject branch is as described. What was built differs from the recommend
 
 - join by player is blocked outright (Pseudo's call: the mod's matches never use it);
 - the backend chooser is left alone: the tripwire refuses the createGame a Peer-hosted game would need;
-- h_connect also refuses any connect that is neither this PC nor the join address.
+- h_connect also refuses any connect that is neither this PC nor the join address;
+- the custom-match reroute turns every mode but 3 into 3, with no type check (the second reader showed a missed check
+  would let a createGameTemplate out, which the tripwire only logs).
+
+Correction from the second reader: sendRequest takes 8 arguments (the 8th a dword), not the 9 written below.
 
 Steam addresses throughout; the EA ones are in mod/build_ea.h (three mapped by hand, see tools/gen_build_ea.py).
 
