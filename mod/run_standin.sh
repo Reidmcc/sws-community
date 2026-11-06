@@ -118,7 +118,7 @@ else echo "FAIL  the players-against-capital-ships summary lines are missing"; S
 # online guard (on by default): it says so at startup, and each block is logged, the backstops included
 if [ -n "$LOG" ] && grep -q "server: online_guard=1: joining or creating a game on EA's servers is blocked" "$LOG" \
    && grep -q "guard: a custom match set to Fleet Battles would be created on EA's servers; it starts as the local Solo vs AI match" "$LOG" \
-   && grep -q "guard: BLOCKED matchmaking (quick play, or a party.s) on EA's servers; the menu was told the game is offline (sent)" "$LOG" \
+   && grep -q "guard: BLOCKED matchmaking (quick play, or a party.s) on EA's servers; the menu was told it failed (reason 6, Matchmaking_QueryError; sent)" "$LOG" \
    && grep -q "guard: BLOCKED joining game abcdef on EA's servers" "$LOG" \
    && grep -q "guard: BLOCKED joining a player's game on EA's servers" "$LOG" \
    && grep -q "guard: BLOCKED an EA game-server request (GameManager joinGame, 0x09)" "$LOG" \

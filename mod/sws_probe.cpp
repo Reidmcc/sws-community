@@ -760,6 +760,7 @@ static bool g_materialLog = false;      // [server] material_log: 1 = log the ma
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what reaches capital ships' hulls and shields, and from whom
 static bool g_onlineGuard = true;  // [server] online_guard: 1 = a modded game never joins or creates a game on EA's servers (h_cmroute ...)
+static int g_guardMmReason = 6;    // [server] guard_mm_reason: the matchmaking failure reason the guard answers with (0-6; 3 = offline)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -819,6 +820,8 @@ static void read_server_ini() {
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
       g_suppressBackendLost = GetPrivateProfileIntW(L"server", L"suppress_backend_lost", 1, ini) != 0;
       g_onlineGuard = GetPrivateProfileIntW(L"server", L"online_guard", 1, ini) != 0;
+      g_guardMmReason = GetPrivateProfileIntW(L"server", L"guard_mm_reason", 6, ini);
+      if (g_guardMmReason < 0 || g_guardMmReason > 6) g_guardMmReason = 6;
       status(g_onlineGuard ? "server: online_guard=1: joining or creating a game on EA's servers is blocked (custom matches start locally)"
                            : "server: online_guard=0: WARNING, nothing stops this game joining EA's servers without EasyAntiCheat");
       if (g_allUnlocked) {   // unlock_ids.txt beside this DLL: one decimal id per line, the rest of the line is a comment
@@ -3804,8 +3807,9 @@ static void __fastcall h_smsg(uint64_t self, uint64_t msg) {
 //   starts the local match (FUN_14174d7e0); any other value posts a create too. h_cmroute turns every mode but 3 into 3, so
 //   a host who forgot "Solo vs AI" still gets the local match, and match_mode then sets the real mode.
 // - Every matchmaking start (quick play, party matchmaking) goes through FUN_141baad30(matchmaker, params). h_mmstart answers
-//   as its own "backend not ready" branch does: a PresenceMatchmakerMessage with reason 3 (OnlineErrorReasonMatchmaking_
-//   Offline in FUN_1412d43d0), posted to the presence message manager [[0x1441c2910]+8] (FUN_140234bd0(mm, msg, 0.0f)).
+//   as its own failure branches do: a PresenceMatchmakerMessage with a reason (FUN_1412d43d0 maps 0-6 to
+//   OnlineErrorReasonMatchmaking_None/Failure/Timeout/Offline/Qos/AlreadyInSession/QueryError), posted to the presence
+//   message manager [[0x1441c2910]+8] (FUN_140234bd0(mm, msg, 0.0f)). The reason is guard_mm_reason, default 6.
 // - Joins by game id (the server browser, invites, join in progress, following a party into a game) go through
 //   FUN_141ba15f0(backend, reqId, params); joins by player through FUN_141ba1a30. Both have native reject branches:
 //   FUN_141ba4f90(backend, reqId, params, gameId, error) posted the same way (15f0 uses error 3 for "no game id", 1a30 error
@@ -3862,9 +3866,13 @@ static void __fastcall h_mmstart(uint64_t mmObj, uint64_t params, uint64_t a3, u
     if (!g_onlineGuard) { o_mmstart(mmObj, params, a3, a4); return; }
     typedef uint64_t(__fastcall* mmmsg_t)(uint32_t reason, uint64_t zero);
     bool posted = false;
-    __try { posted = guard_post(((mmmsg_t)G(0x141baac60))(3, 0)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    // Reason 3 ("offline") also told the menus online play was gone: Multiplayer & Training stopped opening (Pseudo,
+    // 11-06). 6 (a failed query) is what this function itself answers when its start request fails.
+    static const char* const why[] = { "None", "Failure", "Timeout", "Offline", "Qos", "AlreadyInSession", "QueryError" };
+    __try { posted = guard_post(((mmmsg_t)G(0x141baac60))((uint32_t)g_guardMmReason, 0)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (guard_log_ok())
-        status("guard: BLOCKED matchmaking (quick play, or a party's) on EA's servers; the menu was told the game is offline (%s)", posted ? "sent" : "NOT sent");
+        status("guard: BLOCKED matchmaking (quick play, or a party's) on EA's servers; the menu was told it failed (reason %d, Matchmaking_%s; %s)",
+               g_guardMmReason, why[g_guardMmReason], posted ? "sent" : "NOT sent");
 }
 
 typedef uint64_t(__fastcall* greject_t)(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t gameId, uint32_t err);

@@ -1345,8 +1345,8 @@ int main() {
               "online guard: a custom match meant for EA's servers starts as the local Solo match instead, whatever its settings' type or mode");
         // matchmaking: never runs; the menu is told "offline" (reason 3), through the presence message manager
         g_posted = 0; g_postedMm = 0; ((f4_t)0x141baad30)(0x1234, 0x5678, 0, 0);
-        check(!g_mmRan && g_posted == 0x81630003 && g_postedMm == 0x5151,
-              "online guard: matchmaking is refused with the game's own 'offline' answer, posted to the presence message manager");
+        check(!g_mmRan && g_posted == 0x81630006 && g_postedMm == 0x5151,
+              "online guard: matchmaking is refused with the game's own failure answer (reason 6, not 3 'offline'), posted to the presence message manager");
         // joins: by game id refused with error 3, by player with 0x19, each for the caller's request and params with game id
         // 0 (as the native rejects); the party group's own join (returning to 0x141ba579a) runs, and its Blaze joinGame
         // gets past the tripwire
