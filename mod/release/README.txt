@@ -20,10 +20,15 @@ Before you start (please read)
   think levelling the account up fixes it (single player counts): a high-level account shows the list, though we
   haven't watched one account cross over. The loadouts themselves work, all five slots included; a loadout's edit
   screen shows its parts.
-- The game runs without EasyAntiCheat (started directly, not through EA's launcher), so EA's official online modes are
-  not available in that session. The launcher refuses to start if EasyAntiCheat is running.
+- The game runs without EasyAntiCheat (started directly, not through EA's launcher). The launcher refuses to start if
+  EasyAntiCheat is running.
+- The mod keeps the game off EA's game servers. The menus still show EA's online play, but joining an EA game, invites,
+  matchmaking (quick play) and custom matches on EA's servers are blocked before anything is sent. A custom match created
+  as Dogfight, Fleet Battles or PvB Co-op starts as the mod's own local match instead, so forgetting to pick "Solo vs AI"
+  still works.
 - The game still signs in to EA's account services. Loading a mod into it carries some risk to your EA account. We think
-  it is low (anti-cheat isn't running, and nothing touches matchmaking or official servers), but nobody can promise it
+  it is low (anti-cheat isn't running, and the mod keeps the game off matchmaking and EA's game servers), but nobody can
+  promise it
   is zero. It's your call.
 - Nothing in your game folder is changed. A Steam copy needs a steam_appid.txt you add yourself (below), which you can
   delete any time; the EA app's copy needs nothing there.

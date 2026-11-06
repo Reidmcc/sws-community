@@ -115,6 +115,18 @@ if [ -n "$LOG" ] && grep -q "players: their hits (and the vs-AI bots') do 40% da
    && grep -q "players: their hits (and the vs-AI bots') do no damage to capital ship shields" "$LOG"; then
     echo "PASS  the profile summary names players' damage to capital hulls (40%) and shields (off)"
 else echo "FAIL  the players-against-capital-ships summary lines are missing"; STATUS=1; fi
+# online guard (on by default): it says so at startup, and each block is logged, the backstops included
+if [ -n "$LOG" ] && grep -q "server: online_guard=1: joining or creating a game on EA's servers is blocked" "$LOG" \
+   && grep -q "guard: a custom match set to Fleet Battles would be created on EA's servers; it starts as the local Solo vs AI match" "$LOG" \
+   && grep -q "guard: BLOCKED matchmaking (quick play) on EA's servers; the menu was told the game is offline (sent)" "$LOG" \
+   && grep -q "guard: BLOCKED joining game abcdef on EA's servers" "$LOG" \
+   && grep -q "guard: BLOCKED joining a player's game on EA's servers" "$LOG" \
+   && grep -q "guard: BLOCKED an EA game-server request (GameManager joinGame, 0x09)" "$LOG" \
+   && grep -q "guard: EA GameManager request createGameTemplate (0x0a)" "$LOG" \
+   && grep -q "guard: BLOCKED a join to an EA game server that got past the other guards" "$LOG" \
+   && grep -q "guard: BLOCKED a connect to '203.0.113.5:25200' (not this PC, not the join address)" "$LOG"; then
+    echo "PASS  online guard: every block logged, the backstops' included"
+else echo "FAIL  online guard log lines missing"; STATUS=1; fi
 # fire_log: the bomber's node on the capital ship was read back twice, valid both times
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
     echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"

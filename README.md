@@ -62,12 +62,18 @@ seconds in. The launcher gives it the environment the EA app would, and the runn
   We think levelling the account up fixes it (single player counts): a high-level account shows the list, though we
   haven't watched one account cross over. The loadouts themselves work, all five slots included; a loadout's edit
   screen shows its parts.
-- **The game runs without EasyAntiCheat** (launched directly, not through EA's launcher), so EA's official online modes
-  are unavailable in that session. The launcher refuses to start if an EasyAntiCheat service or process is running, and
-  the DLL must never be loaded into an EasyAntiCheat session.
+- **The game runs without EasyAntiCheat** (launched directly, not through EA's launcher). The launcher refuses to start
+  if an EasyAntiCheat service or process is running, and the DLL must never be loaded into an EasyAntiCheat session.
+- **The mod keeps the game off EA's game servers.** Its menus still show EA's online play (the server browser even lists
+  live games), but the mod blocks every way onto them before anything is sent: joining from the browser, invites,
+  joining a player, matchmaking (quick play) and creating a custom match on EA's servers. A custom match created as
+  Dogfight, Fleet Battles or PvB Co-op starts as the mod's own local match instead, so forgetting to pick "Solo vs AI"
+  still works; the profile's `match_mode` sets the mode it's played in. Joins and matchmaking fail with the game's own
+  "couldn't join" or "offline" message. The log names every block (`guard:` lines). `online_guard=0` under `[server]`
+  in `server.ini` turns this off; don't.
 - **Account risk:** the game still signs in to EA's account services in this mode. Loading a DLL into it carries some
-  risk to your EA account. We think it is low (anti-cheat isn't running, and nothing touches matchmaking or official
-  servers), but nobody can promise it is zero. It's your call.
+  risk to your EA account. We think it is low (anti-cheat isn't running, and the mod keeps the game off matchmaking and
+  EA's game servers), but nobody can promise it is zero. It's your call.
 - **Nothing in the game folder is changed.** A Steam copy needs a `steam_appid.txt` you add yourself (one line:
   `1222730`) for a direct launch; delete it any time. The EA app's copy needs nothing there. With both copies installed,
   choose one under Game copy in the settings app's Play page; the launcher on its own uses Steam's unless `launch.ini`

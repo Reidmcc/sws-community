@@ -45,6 +45,10 @@ struct FakeAttr { uint8_t pad[24]; uint64_t idObj; float value; float pad2; };
 static uint8_t* fake_alloc(size_t n) { return (uint8_t*)VirtualAlloc(nullptr, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
 static uint32_t g_resolveSeen;   // the id the stand-in's loadout resolver was handed for its first slot
 static uint64_t g_whitelist;     // what the stand-in's FUN_14170c300 (the mission customization whitelist) returns
+// the online guard's stand-ins: whether each guarded function ran (the router keeps the mode it saw), and the last message
+// the guard posted in the game's place
+static volatile uint32_t g_cmsgRan, g_routerMode, g_mmRan, g_joinIdRan, g_joinPlayerRan;
+static volatile uint64_t g_posted;
 static uint8_t* fake_class(uint16_t id) { uint8_t* c = fake_alloc(0x100); *(uint16_t*)(c + 0x48) = id; return c; }
 static uint8_t* fake_idobj(uint32_t ident) { uint8_t* o = fake_alloc(0x40); *(uint32_t*)(o + 32) = ident; return o; }
 static FakeAttr* fake_attr(uint32_t ident, float v) { FakeAttr* a = (FakeAttr*)fake_alloc(sizeof(FakeAttr)); a->idObj = (uint64_t)fake_idobj(ident); a->value = v; return a; }
@@ -268,11 +272,46 @@ int main() {
     if (map(0x140ba0000, 0x10000) != (void*)0x140ba0000 || map(0x140210000, 0x10000) != (void*)0x140210000) { printf("FAIL  could not map the join-diagnostic regions\n"); return 1; }
     const uint8_t cset[] = {0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x48,0x83,0x79,0x38,0x00, 0xcc};
     const uint8_t cstate[] = {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x30,0x83,0xb9,0xe8,0x02,0x00,0x00,0x00, 0xcc};
-    const uint8_t cmsg[] = {0x48,0x8b,0xc4,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0x90,0x00,0x00,0x00, 0xcc};
+    // the client message handler: its real prologue, then it notes it ran (g_cmsgRan = 1; the online guard's backstop must
+    // keep a join to an EA server from reaching it) and the epilogue
+    uint8_t cmsg[64] = {0x48,0x8b,0xc4,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0x90,0x00,0x00,0x00, 0xb8,0x01,0x00,0x00,0x00, 0xa3};
+    { uint64_t a = (uint64_t)&g_cmsgRan; memcpy(cmsg + 21, &a, 8);
+      const uint8_t tail[] = {0x48,0x81,0xc4,0x90,0x00,0x00,0x00, 0x41,0x5f,0x41,0x5e,0x5f,0xc3}; memcpy(cmsg + 29, tail, sizeof tail); }
     const uint8_t smsg[] = {0x48,0x89,0x5c,0x24,0x18,0x57,0x48,0x83,0xec,0x20,0x8b,0x42,0x0c,0x48,0x8b,0xda, 0xcc};
     const uint8_t bqueue[] = {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0x50,0xff,0xff,0xff, 0xcc};
     put(0x140cb0080, cset, sizeof cset); put(0x140a30230, cstate, sizeof cstate); put(0x140a338d0, cmsg, sizeof cmsg);
     put(0x140ba0340, smsg, sizeof smsg); put(0x14021b2b0, bqueue, sizeof bqueue);
+    // the online guard's five sites (2026-11-06), each its real prologue and then a body that notes it ran; and the
+    // functions the guard calls to answer for the game: the message post FUN_140234bd0 (keeps the message in g_posted),
+    // the matchmaker-result builder FUN_141baac60 (returns 0x81630000 | reason) and the join-reject builder FUN_141ba4f90
+    // (returns 0x4f900000 | its fifth argument, the error code). The party group's own join is planted like the grid's
+    // call site: entered at 0x141ba5791, it calls from 0x141ba5795, so the join returns to 0x141ba579a.
+    if (map(0x140230000, 0x10000) != (void*)0x140230000 || map(0x141740000, 0x10000) != (void*)0x141740000 ||
+        map(0x141ba0000, 0x10000) != (void*)0x141ba0000 || map(0x142260000, 0x10000) != (void*)0x142260000) { printf("FAIL  could not map the online-guard regions\n"); return 1; }
+    auto note = [](uint8_t* code, size_t at, volatile uint32_t* flag, uint32_t v) {   // mov eax, v; mov [flag], eax
+        code[at] = 0xb8; memcpy(code + at + 1, &v, 4); code[at + 5] = 0xa3; uint64_t a = (uint64_t)flag; memcpy(code + at + 6, &a, 8); return at + 14; };
+    { uint8_t c[64] = {0x48,0x8b,0xc4,0x55,0x57,0x41,0x56,0x48,0x8d,0xa8,0xd8,0xf6,0xff,0xff,   // the custom-match router
+                       0x48,0x8b,0x41,0x08, 0x48,0x8b,0x40,0x18, 0x8b,0x40,0x18, 0xa3};             // it keeps the mode it sees
+      uint64_t a = (uint64_t)&g_routerMode; memcpy(c + 26, &a, 8);
+      const uint8_t t[] = {0x41,0x5e, 0x5f, 0x5d, 0xc3}; memcpy(c + 34, t, sizeof t); put(0x14174d540, c, 34 + sizeof t); }
+    { uint8_t c[64] = {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x8b,0xfa};   // matchmaking start
+      size_t at = note(c, 16, &g_mmRan, 1);
+      const uint8_t t[] = {0x48,0x83,0xc4,0x20, 0x5f, 0x48,0x8b,0x5c,0x24,0x08, 0xc3}; memcpy(c + at, t, sizeof t); put(0x141baad30, c, at + sizeof t); }
+    { const uint8_t t[] = {0x41,0x5e, 0x5f, 0x5e, 0x5b, 0x5d, 0xc3};
+      uint8_t c[64] = {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0xac,0x24,0xa0,0xfd,0xff,0xff};          // join by id
+      size_t at = note(c, 15, &g_joinIdRan, 1); memcpy(c + at, t, sizeof t); put(0x141ba15f0, c, at + sizeof t);
+      uint8_t d[64] = {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0xac,0x24,0x40,0xfe,0xff,0xff};          // join by player
+      at = note(d, 15, &g_joinPlayerRan, 1); memcpy(d + at, t, sizeof t); put(0x141ba1a30, d, at + sizeof t); }
+    { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
+      *(int32_t*)(site + 5) = (int32_t)(0x141ba15f0ll - 0x141ba579all);
+      put(0x141ba5791, site, sizeof site); }
+    { const uint8_t c[] = {0x40,0x53,0x48,0x83,0xec,0x50,0x4c,0x8b,0x59,0x38,0x48,0x8b,0xda,0x4c,0x8b,0x51,0x40,   // Blaze sendRequest:
+                           0xc7,0x03,0x77,0x00,0x00,0x00, 0x48,0x89,0xd8, 0x48,0x83,0xc4,0x50, 0x5b, 0xc3};       // *out = 0x77
+      put(0x1422676a0, c, sizeof c); }
+    { uint8_t c[16] = {0x48,0x89,0xd0, 0x48,0xa3}; uint64_t a = (uint64_t)&g_posted; memcpy(c + 5, &a, 8); c[13] = 0xc3;
+      put(0x140234bd0, c, 14); }
+    { const uint8_t mm[] = {0x89,0xc8, 0x0d,0x00,0x00,0x63,0x81, 0xc3}; put(0x141baac60, mm, sizeof mm);
+      const uint8_t rj[] = {0x8b,0x44,0x24,0x28, 0x0d,0x00,0x00,0x90,0x4f, 0xc3}; put(0x141ba4f90, rj, sizeof rj); }
     // observation (issue #11): the four client component constructors' real prologues, each followed by its epilogue
     if (map(0x141690000, 0x10000) != (void*)0x141690000 || map(0x141680000, 0x10000) != (void*)0x141680000 ||
         map(0x141720000, 0x10000) != (void*)0x141720000 || map(0x1415f0000, 0x10000) != (void*)0x1415f0000) { printf("FAIL  could not map the observation regions\n"); return 1; }
@@ -1269,6 +1308,55 @@ int main() {
         printf("      (inventory setter saw %d items)\n", n);
         check(*(uint8_t*)0x14123a310 == 0xFF && n > 1000, "inventory setter hooked and all ids appended");
         check(ranks[0] == 5 && !ranks[1] && !ranks[2] && !ranks[3] && !ranks[4] && !ranks[5], "all_unlocked: every loadout preset slot needs rank 0");
+    }
+    {   // online guard (on by default): no route from the menus reaches EA's game servers
+        static uint8_t mmOwner[0x20] = {}; *(uint64_t*)(mmOwner + 8) = 0x5151;   // [[0x1441c2910]+8]: the message manager
+        *(uint64_t*)0x1441c2910 = (uint64_t)mmOwner;
+        typedef void(__fastcall* f4_t)(uint64_t, uint64_t, uint64_t, uint64_t);
+        // a custom match set to Fleet Battles (BasicSettings ClassInfo 0x144a38f00, GameMode +0x18 = 1) becomes Solo (3);
+        // one with a creation already pending (+0x26c) is left alone
+        uint8_t* cm = fake_alloc(0x300); uint8_t* data = fake_alloc(0x40); uint8_t* bs = fake_alloc(0x60);
+        *(uint8_t**)(cm + 8) = data; *(uint8_t**)(data + 0x18) = bs; *(uint64_t*)(bs + 8) = 0x144a38f00; *(int32_t*)(bs + 0x18) = 1;
+        ((f4_t)0x14174d540)((uint64_t)cm, 0, 0, 0);
+        bool route1 = g_routerMode == 3;
+        *(int32_t*)(bs + 0x18) = 1; *(int32_t*)(cm + 0x26c) = 7; ((f4_t)0x14174d540)((uint64_t)cm, 0, 0, 0);
+        check(*(uint8_t*)0x14174d540 == 0xFF && route1 && g_routerMode == 1,
+              "online guard: a custom match meant for EA's servers starts as the local Solo match instead");
+        // matchmaking: never runs; the menu is told "offline" (reason 3)
+        g_posted = 0; ((f4_t)0x141baad30)(0x1234, 0x5678, 0, 0);
+        check(!g_mmRan && g_posted == 0x81630003, "online guard: matchmaking is refused with the game's own 'offline' answer");
+        // joins: by game id refused with error 3, by player with 0x19; the party group's own join (returning to
+        // 0x141ba579a) still runs
+        uint8_t* jp = fake_alloc(0x80); *(uint64_t*)(jp + 0x30) = 0xabcdef;
+        g_posted = 0; ((f4_t)0x141ba15f0)(0x1111, 42, (uint64_t)jp, 0);
+        bool byId = !g_joinIdRan && g_posted == 0x4f900003;
+        typedef void(__fastcall* f3_t)(uint64_t, uint64_t, uint64_t);
+        ((f3_t)0x141ba5791)(0x1111, 43, (uint64_t)jp);
+        bool party = g_joinIdRan == 1;
+        g_posted = 0; ((f4_t)0x141ba1a30)(0x1111, 44, (uint64_t)jp, 0);
+        check(byId && party && !g_joinPlayerRan && g_posted == 0x4f900019,
+              "online guard: joins to EA games are refused with the game's own answers; the party group's own join goes through");
+        // the tripwire on Blaze's sendRequest: GameManager joinGame (4, 0x09) and createGame (4, 0x01) refused (*out = 0);
+        // createGameTemplate (the party group's) and other components sent
+        typedef uint32_t*(__fastcall* sr_t)(uint64_t, uint32_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+        uint8_t* mgr = fake_alloc(0x80); uint32_t o1 = 5, o2 = 5, o3 = 5, o4 = 5;
+        ((sr_t)0x1422676a0)((uint64_t)mgr, &o1, 4, 0x09, 0, 0, 0, 0);
+        ((sr_t)0x1422676a0)((uint64_t)mgr, &o2, 4, 0x01, 0, 0, 0, 0);
+        ((sr_t)0x1422676a0)((uint64_t)mgr, &o3, 4, 0x0a, 0, 0, 0, 0);
+        ((sr_t)0x1422676a0)((uint64_t)mgr, &o4, 0x80c, 0x01, 0, 0, 0, 0);
+        check(o1 == 0 && o2 == 0 && o3 == 0x77 && o4 == 0x77,
+              "online guard: the tripwire refuses EA game-server requests and lets the party group's and other services' through");
+        // backstops: a join message carrying an EA server's address never reaches the client; a connect to an address
+        // that is neither this PC nor the join address goes to 127.0.0.1:9 (run_standin.sh reads both log lines)
+        uint8_t* jm = fake_alloc(0x100); *(uint32_t*)(jm + 0xc) = 0x4551edba;
+        ((f4_t)0x140a338d0)(0, (uint64_t)jm, 0, 0);
+        bool dropped = !g_cmsgRan;
+        uint8_t* other = fake_alloc(0x100); *(uint32_t*)(other + 0xc) = 0x12345678;
+        ((f4_t)0x140a338d0)(0, (uint64_t)other, 0, 0);
+        check(dropped && g_cmsgRan == 1, "online guard: a join to an EA server is dropped before the client acts on it; other messages pass");
+        typedef uint64_t(__fastcall* conn_t)(uint64_t, const char*, uint64_t, uint64_t);
+        uint8_t* cobj = fake_alloc(0x1000);
+        ((conn_t)0x140cb0500)((uint64_t)cobj, "203.0.113.5:25200", 0, 0);
     }
     {   // ruleset: the hook mixes the rules.ini ruleset id into the protocol version
         typedef uint32_t(__fastcall* tinit_fn)(uint64_t, uint64_t, uint32_t, uint32_t);
