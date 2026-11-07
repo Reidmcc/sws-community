@@ -132,7 +132,7 @@ if [ -n "$LOG" ] && grep -q "server: online_guard=1: joining or creating a game 
 else echo "FAIL  online guard log lines missing"; STATUS=1; fi
 # auto-start: announced at startup, one start on Sissubo after the main menu, the lobby noticed, and no second start
 if [ -n "$LOG" ] && grep -q "server: autostart=1: once the main menu is ready, the game goes straight into the local custom match (Sissubo)" "$LOG" \
-   && grep -q "autostart: starting the local custom match (start 1; Sissubo; [0-9.]* s after the main menu, EA's loadouts in)" "$LOG" \
+   && grep -q "autostart: starting the local custom match (start 1; Sissubo; [0-9.]* s after the main menu was up, EA's loadouts in)" "$LOG" \
    && grep -q "autostart: in the custom match's lobby" "$LOG" \
    && ! grep -q "autostart: starting the local custom match (start 2" "$LOG"; then
     echo "PASS  auto-start: one start, logged with its map, and the lobby noticed"

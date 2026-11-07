@@ -137,9 +137,10 @@ With `autostart=1` under `[server]` (the settings app's "Go straight into the ma
 once the main menu has loaded and EA's loadouts have arrived (about 15 seconds after the menu appears), it makes the
 same two calls the menus make for a solo custom match vs AI, so the game goes straight into the match's lobby. A host's
 map is `autostart_map` (`random`, which never picks Abyss, or `esseles`, `fostar`, `moon`, `nadiri`, `sissubo`,
-`yavin`, `abyss`). It happens once per launch, and not at all if you start something from the menus first. A joiner
-whose host isn't up yet comes back to the main menu and tries again, three starts in all, 10 seconds apart. Nothing on
-this route goes to EA's servers. Research record: `notes/autostart.md`.
+`yavin`, `abyss`). It happens once per launch, and not at all if you start something from the menus first. Leave the
+menus alone until it starts: it doesn't wait for you, and anything set meanwhile in the custom match screen isn't used.
+A joiner whose host isn't up yet comes back to the main menu and tries again, three starts in all, 10 seconds apart.
+Nothing on this route goes to EA's servers. Research record: `notes/autostart.md`.
 
 **Profiles** hold the rules and fixes, and changed game values. Name one in
 `server.ini` with `profile=<name>`; the mod reads `profiles\<name>.ini` beside the DLL (see

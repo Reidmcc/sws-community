@@ -277,7 +277,8 @@ int main() {
     // join diagnostics and remote join (2026-10-20 evening): real prologues, never called by this test
     if (map(0x140ba0000, 0x10000) != (void*)0x140ba0000 || map(0x140210000, 0x10000) != (void*)0x140210000) { printf("FAIL  could not map the join-diagnostic regions\n"); return 1; }
     const uint8_t cset[] = {0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x48,0x83,0x79,0x38,0x00, 0xcc};
-    const uint8_t cstate[] = {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x30,0x83,0xb9,0xe8,0x02,0x00,0x00,0x00, 0xcc};
+    const uint8_t cstate[] = {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x30,0x83,0xb9,0xe8,0x02,0x00,0x00,0x00,
+                              0x48,0x83,0xc4,0x30, 0x5f, 0x48,0x8b,0x5c,0x24,0x08, 0xc3};
     // the client message handler: its real prologue, then it notes it ran (g_cmsgRan = 1; the online guard's backstop must
     // keep a join to an EA server from reaching it) and the epilogue
     uint8_t cmsg[64] = {0x48,0x8b,0xc4,0x57,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0x90,0x00,0x00,0x00, 0xb8,0x01,0x00,0x00,0x00, 0xa3};
@@ -327,7 +328,12 @@ int main() {
         d[at++] = 0x48; d[at++] = 0xa3; { uint64_t a = (uint64_t)&g_asStartSawMgr; memcpy(d + at, &a, 8); at += 8; }
         d[at++] = 0x48; d[at++] = 0xb8; { uint64_t a = (uint64_t)&g_asStarted; memcpy(d + at, &a, 8); at += 8; }
         const uint8_t t2[] = {0xff,0x00, 0x41,0x5c,0x5f,0x5d,0xc3}; memcpy(d + at, t2, sizeof t2);
-        put(0x14174d7e0, d, at + sizeof t2); }
+        put(0x14174d7e0, d, at + sizeof t2);
+        // EA's inventory reply calls the presets setter from 0x1418fddf8 (returning to 0x1418fddfd): the auto-start's
+        // "EA's loadouts are in"
+        uint8_t site[13] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28 };
+        *(int32_t*)(site + 5) = (int32_t)(0x1418f58f0ll - 0x1418fddfdll);
+        uint8_t s2[14]; memcpy(s2, site, 13); s2[13] = 0xc3; put(0x1418fddf4, s2, sizeof s2); }
     { uint8_t site[14] = { 0x48, 0x83, 0xec, 0x28, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3 };
       *(int32_t*)(site + 5) = (int32_t)(0x141ba15f0ll - 0x141ba579all);
       put(0x141ba5791, site, sizeof site); }
@@ -1417,18 +1423,24 @@ int main() {
             uint8_t* m = fake_alloc(0x100); *(uint32_t*)(m + 0xc) = id;
             *(const char**)(m + 0x38) = level; *(const char**)(m + 0x50) = lobby; *(const char**)(m + 0x60) = "";
             ((f4_t)0x140a338d0)((uint64_t)client, (uint64_t)m, 0, 0); };
+        typedef uint64_t(__fastcall* cst_t)(uint64_t, int, uint64_t, uint64_t);
         tick(300);
         bool notBefore = g_asStarted == 0;
-        start(0x107569eb, "Game/Levels/Menu/Frontend/Frontend", "");
+        start(0x107569eb, "Game/Levels/Menu/Frontend/Frontend", "");   // the main menu's level starts...
+        ((void(__fastcall*)(uint64_t, uint64_t, uint32_t, uint32_t))0x1418fddf4)((uint64_t)fake_alloc(0x40), (uint64_t)fake_alloc(0x100), 1, 0);   // EA's loadouts
+        tick(2400);
+        bool notBeforeUp = g_asStarted == 0;                              // ...but isn't up until the client's state 12
+        ((cst_t)0x140a30230)((uint64_t)client, 12, 0, 0);
         tick(2400);
         bool started = g_asStarted == 1 && g_asSetMgr == (uint64_t)mgr && g_asStartSawMgr == (uint64_t)mgr &&
                        *(int32_t*)(basic + 0x18) == 3 && *(int32_t*)(basic + 0x28) == 5;
         start(0xbf585a6d, "Game/Levels/RootLevel/RootLevel", "LiveService/Levels/PvP/CustomGames/CustomMatchWaitingRoom/CustomMatchWaitingRoom");
         start(0x107569eb, "Game/Levels/Menu/Frontend/Frontend", "");   // back from the match
+        ((cst_t)0x140a30230)((uint64_t)client, 12, 0, 0);
         tick(2400);
-        printf("      (auto-start: none before the main menu %d, started %d (%u starts, mode %d, map %d))\n", notBefore, started,
-               g_asStarted, *(int32_t*)(basic + 0x18), *(int32_t*)(basic + 0x28));
-        check(notBefore && started && g_asStarted == 1,
+        printf("      (auto-start: none before the main menu %d, none before it's up %d, started %d (%u starts, mode %d, map %d))\n",
+               notBefore, notBeforeUp, started, g_asStarted, *(int32_t*)(basic + 0x18), *(int32_t*)(basic + 0x28));
+        check(notBefore && notBeforeUp && started && g_asStarted == 1,
               "auto-start: once the main menu and EA's loadouts are in, the local custom match starts (Solo route, the host's map), once");
     }
     {   // ruleset: the hook mixes the rules.ini ruleset id into the protocol version

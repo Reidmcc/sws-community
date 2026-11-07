@@ -75,6 +75,10 @@ HAND = {
                                "the same shift as the verified join pair (-0x27650)"),
     0x141baac60: (0x141b83610, "same code (strict check, 3 of 4 targets agree, none disagree); the matchmaker-result "
                                "message builder the matchmaking start (above) calls at +0x74 in both"),
+    0x1418fddfd: (0x1419015ce, "return address of EA's inventory reply's call to the verified presets setter "
+                               "0x1418f58f0/0x1418f90c0: the setter's only call in 0x1418fd3d0 (+0xa28) / 0x141900bb0 "
+                               "(+0xa19), rebuilt functions (0xc53 / 0xc97 bytes) whose outside targets agree 63, "
+                               "disagree 0 (eqtargets.py); the setter's three callers sit in the same order in both"),
 }
 
 # Slots of the game's own import table (the protection wrappers fill it at start, so the PE import directory doesn't

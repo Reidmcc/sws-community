@@ -768,6 +768,8 @@ static const char* const kAutostartMapNames[8] = { "random", "Esseles", "Fostar 
                                                   "Yavin", "Abyss" };
 // the auto-start's view of the game, kept by h_cmsg and h_presetset, used by autostart_tick (GetTickCount64 times; 0 = not yet)
 static volatile ULONGLONG g_asMenuTick;    // the main menu's level started (the latest time), 0 once anything else starts
+static volatile ULONGLONG g_asReadyTick;   // the client reached state 12 since that start: the main menu is up (0 = not yet)
+static volatile bool g_asSawLevel;         // a level started since the auto-start's last start
 static volatile ULONGLONG g_asEaTick;      // EA's loadouts arrived (the first set that isn't the game's own save)
 static volatile ULONGLONG g_asFiredTick;   // the auto-start's last start went out
 static volatile bool g_asDone;             // started (or given up, or the player started something first): never again this launch
@@ -3759,6 +3761,7 @@ static volatile LONG g_diagClient, g_diagBundle;
 static const char* client_type_name(int t) {
     switch (t) { case 0: return "SinglePlayer"; case 1: return "Hosted"; case 2: return "SoloPvB"; case 3: return "Joined"; default: return "?"; }
 }
+static void autostart_saw_state(int state, int type);
 // FUN_140a30230(client, state): the client's state request; +0x380 = current state, +0x4ac = game type.
 typedef uint64_t(__fastcall* cstate_t)(uint64_t client, int state, uint64_t a3, uint64_t a4);
 static cstate_t o_cstate;
@@ -3766,6 +3769,7 @@ static uint64_t __fastcall h_cstate(uint64_t client, int state, uint64_t a3, uin
     int old = rd<int>(client, 0x380), type = rd<int>(client, 0x4ac);
     if (InterlockedIncrement(&g_diagClient) <= 2000)
         status("client: state %d -> %d requested (game type %d %s, connection %llx)", old, state, type, client_type_name(type), rd<uint64_t>(client, 0x4e0));
+    autostart_saw_state(state, type);
     return o_cstate(client, state, a3, a4);
 }
 static void autostart_saw_start(uint32_t id, uint64_t level, uint64_t lobby);
@@ -4177,15 +4181,20 @@ static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: ev
 // the waiting room. Nothing on this route goes to EA (GameMode 3 skips the online privilege check and the Blaze game the
 // other modes create). match_mode then sets the mode as for any custom match; a joiner's start is redirected to the host
 // by the join hooks, as when the player starts it from the menus. Research record: notes/autostart.md.
-// - ready: the main menu's level has started (client message 107569eb, Frontend) and EA's loadouts have arrived (the first
-//   presets set that isn't the game's own save), plus 1.5 s; or 30 s after the main menu with no loadouts from EA. Earlier,
-//   the match would likely miss EA's loadouts: EA's connection drops a few seconds into every modded match.
+// - ready: the main menu is up (client state 12 after the Frontend level's start, client message 107569eb) and EA's
+//   loadouts have arrived (EA's inventory reply sets the presets), plus 1.5 s; or 30 s after the main menu is up with no
+//   loadouts from EA. Earlier, the match would likely miss EA's loadouts: EA's connection drops a few seconds into every
+//   modded match.
 // - the manager is [[0x1441c5f00]+0x3df8] (vtable 0x1436217f0), its settings +8, basic settings +0x18 (ClassInfo
 //   0x144a38f00; GameMode +0x18, MapIndex +0x28); +0x268/+0x26c set mean a custom match is already being set up; the call
 //   needs the client's connection [[[0x14419b5a8]+0x60]+0x48]. Each is checked; both functions' first bytes too.
-// - once per launch: done when the lobby arrives (client message bf585a6d naming the waiting room), or when the player
-//   starts anything else first. A joiner whose start comes back to the main menu (the host not up yet) tries again 10 s
-//   later, three starts in all; a host doesn't, since a host's start doesn't depend on anyone.
+// - once per launch, and the player first: it never starts once the player has started a level from the main menu.
+// - done when it got there: a host when the lobby arrives (client message bf585a6d naming the waiting room); a joiner when
+//   its client reaches state 12 as a joined client (game type 3), or 45 s after the start with no return to the main menu.
+//   A joiner's own in-process server sends the waiting room's bf585a6d too, before the connection goes to the host
+//   (probe_logs/server_20261020_193343, the second reader's find), so that message can't mean a joiner got there.
+// - a joiner back at the main menu (the host not up yet: the connection drops ~7 s in) tries again 10 s after the menu
+//   is up again, three starts in all; a host doesn't, since a host's start doesn't depend on anyone.
 // MapIndex: 0 random of the first six (never Abyss), 1 Esseles, 2 Fostar Haven, 3 Destroyed Moon, 4 Nadiri Dockyards,
 // 5 Sissubo, 6 Yavin, 7 Abyss (battlemapselection's select order). A joiner's map is the host's; the joiner's isn't written.
 static volatile LONG g_asStarts;
@@ -4193,18 +4202,27 @@ static bool g_asLateNoted;
 static void autostart_saw_start(uint32_t id, uint64_t level, uint64_t lobby) {
     if (!g_autostart || g_asDone) return;
     const char* lv = safe_str(level);
-    if (id == 0x107569eb && strstr(lv, "Menu/Frontend")) { g_asMenuTick = GetTickCount64(); return; }
+    if (id == 0x107569eb && strstr(lv, "Menu/Frontend")) { g_asReadyTick = 0; g_asMenuTick = GetTickCount64(); return; }
     bool fromMenu = g_asMenuTick != 0;
-    g_asMenuTick = 0;
+    g_asMenuTick = 0; g_asReadyTick = 0;
     if (!g_asFiredTick) {   // the player got there first (a start from the main menu; anything earlier is the game's boot)
         if (!fromMenu) return;
         g_asDone = true;
         status("autostart: a level started before the auto-start did ('%s'); not starting a match this launch", lv);
         return;
     }
-    if (id == 0xbf585a6d && strstr(safe_str(lobby), "CustomMatchWaitingRoom")) {
+    g_asSawLevel = true;
+    if (!g_joinAddr[0] && id == 0xbf585a6d && strstr(safe_str(lobby), "CustomMatchWaitingRoom")) {
         g_asDone = true;
         status("autostart: in the custom match's lobby, %.1f s after the start", (GetTickCount64() - g_asFiredTick) / 1000.0);
+    }
+}
+static void autostart_saw_state(int state, int type) {
+    if (!g_autostart || g_asDone || state != 12) return;
+    if (g_asMenuTick && !g_asReadyTick) g_asReadyTick = GetTickCount64();
+    if (g_asFiredTick && g_joinAddr[0] && type == 3) {
+        g_asDone = true;
+        status("autostart: joined the host's match, %.1f s after the start", (GetTickCount64() - g_asFiredTick) / 1000.0);
     }
 }
 static const char* autostart_blocker(uint64_t& mgr, uint64_t& basic) {
@@ -4231,22 +4249,29 @@ static void autostart_tick() {
 #ifndef PROBE_TEST
     if (g_dedicated) return;   // the stand-in runs dedicated
 #endif
-    if (!g_autostart || g_asDone || !g_asMenuTick) return;
-    ULONGLONG now = GetTickCount64(), menu = g_asMenuTick, ea = g_asEaTick;
+    if (!g_autostart || g_asDone) return;
+    ULONGLONG now = GetTickCount64(), ready = g_asReadyTick, ea = g_asEaTick;
     if (g_asFiredTick) {
-        if (menu <= g_asFiredTick) {   // the start went out and nothing came of it: no level started
-            if (now - g_asFiredTick > 20000) { g_asDone = true; status("autostart: no level started within 20 s of the start; not trying again (start it from the menus)"); }
+        ULONGLONG fired = g_asFiredTick;
+        if (g_asMenuTick <= fired) {   // not back at the main menu since the start
+            if (!g_asSawLevel) {
+                if (now - fired > 20000) { g_asDone = true; status("autostart: no level started within 20 s of the start; not trying again (start it from the menus)"); }
+            } else if (g_joinAddr[0] && now - fired > 45000) {
+                g_asDone = true;
+                status("autostart: still in the match 45 s after the start, so the join held");
+            }
             return;
         }
         // back at the main menu since the start: a joiner whose host wasn't up yet
         if (!g_joinAddr[0] || g_asStarts >= 3) {
             g_asDone = true;
-            status("autostart: back at the main menu without reaching the lobby; not trying again (start it from the menus)");
+            status("autostart: back at the main menu without reaching the match; not trying again (start it from the menus)");
             return;
         }
-        if (now - menu < 10000) return;
+        if (!ready || now - ready < 10000) return;
     } else {
-        bool eaIn = ea && now - (ea > menu ? ea : menu) >= 1500, late = now - menu >= 30000;
+        if (!ready) return;
+        bool eaIn = ea && now - (ea > ready ? ea : ready) >= 1500, late = now - ready >= 30000;
         if (!eaIn && !late) return;
         if (!eaIn && !g_asLateNoted) { g_asLateNoted = true; status("autostart: no loadouts from EA 30 s after the main menu; starting anyway"); }
     }
@@ -4254,26 +4279,28 @@ static void autostart_tick() {
     if (const char* why = autostart_blocker(mgr, basic)) {
         static const char* said;
         if (why != said) { said = why; status("autostart: waiting: %s", why); }
-        if (now - menu > 60000) { g_asDone = true; status("autostart: gave up 60 s after the main menu (%s); start it from the menus", why); }
+        if (now - ready > 60000) { g_asDone = true; status("autostart: gave up 60 s after the main menu (%s); start it from the menus", why); }
         return;
     }
     LONG n = InterlockedIncrement(&g_asStarts);
     if (!g_joinAddr[0]) *(volatile int32_t*)(basic + 0x28) = g_autostartMap;
     *(volatile int32_t*)(basic + 0x18) = 3;
-    status("autostart: starting the local custom match (start %ld; %s; %.1f s after the main menu, %s)", n,
-           g_joinAddr[0] ? "joining the host" : kAutostartMapNames[g_autostartMap], (now - menu) / 1000.0,
+    status("autostart: starting the local custom match (start %ld; %s; %.1f s after the main menu was up, %s)", n,
+           g_joinAddr[0] ? "joining the host" : kAutostartMapNames[g_autostartMap], (now - ready) / 1000.0,
            ea ? "EA's loadouts in" : "no loadouts from EA");
+    g_asSawLevel = false;
     g_asFiredTick = now;
     ((void(__fastcall*)(uint64_t))G(0x14174c240))(mgr);
     ((void(__fastcall*)())G(0x14174d7e0))();
 }
 #define kLdSaveSetRet G(0x141900234)    // the save's own call to the presets setter returns here
+#define kLdEaSetRet G(0x1418fddfd)      // EA's inventory reply's call to it returns here (every logged EA set, 205 of 205)
 #define kLdSaveSendRet G(0x14190319a)   // the save's call to the EA sender returns here
 typedef void(__fastcall* presetset_t)(uint64_t store, uint64_t presets, uint32_t state, uint32_t st);
 static presetset_t o_presetset;
 static void __fastcall h_presetset(uint64_t store, uint64_t presets, uint32_t state, uint32_t st) {
     uint64_t ret = (uint64_t)_ReturnAddress();
-    if (ret != kLdSaveSetRet && !g_asEaTick) g_asEaTick = GetTickCount64();   // the auto-start waits for this
+    if (ret == kLdEaSetRet && !g_asEaTick) g_asEaTick = GetTickCount64();   // the auto-start waits for this
     if (g_localLoadouts && ret != kLdSaveSetRet && presets) {   // loadouts from EA: the saved records go on top
         AcquireSRWLockShared(&g_ldLock);
         int seen = 0, laid = 0, changed = 0, odd = 0; bool hit[512] = {};

@@ -4,13 +4,22 @@ Static research for `[server] autostart` (sws_probe.cpp, "auto-start"), done by 
 calls and their order were checked in the disassembly. What was built follows its recommended implementation, with
 these differences:
 
-- "At the main menu" is the client's start message for the Frontend level (107569eb), not the client's state 12: the
-  stand-in can drive the message, and EA's loadouts arrive 10-12 s after either.
-- "EA's loadouts arrived" is the first presets set that isn't the game's own save (local_loadouts' own test), not the
-  return address 0x1418fddfd, so no new address is needed.
+- "The main menu is up" is client state 12 after the Frontend level's start message (107569eb); the windows (1.5 s after
+  EA's loadouts, the 30 s fallback, the 60 s give-up) count from it. EA's loadouts are the presets set whose caller
+  returns to 0x1418fddfd (EA: 0x1419015ce, mapped by hand in tools/gen_build_ea.py).
 - No `autostart=always`: once per launch, and not at all if the player starts a level from the main menu first.
-- The host doesn't retry. A joiner that comes back to the main menu tries again 10 s later, three starts in all.
+- Done when it got there: a host when the waiting room's bf585a6d arrives. A joiner's own in-process server sends that
+  message too, before the join hooks redirect the connection (probe_logs/server_20261020_193343: bf585a6d at 46.469, the
+  connect rewritten at 46.872, the connection dropped at 53.886, the Frontend again at 53.903), so a joiner is done when
+  its client reaches state 12 as a joined client (game type 3; inferred, no successful joiner log yet), or 45 s after
+  the start with no return to the main menu. A joiner back at the main menu tries again 10 s after it's up again, three
+  starts in all; a host doesn't retry.
 - Every read is checked, and both functions' first bytes are compared before calling them.
+- Not handled: the player busy in the menus when it fires (the custom match screen's edits aren't copied, since
+  FUN_14174b700 is skipped); the docs say to leave the menus alone. A player's own start in the ~1 s before its lobby
+  message could meet a second start from the mod; closing that needs a hook on FUN_1417544b0.
+
+Found by the second reader (review on the PR): the joiner case above, the timing from state 12, the EA-reply caller.
 
 Not flown yet.
 

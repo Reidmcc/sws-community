@@ -1083,7 +1083,7 @@ namespace SwsSettings
             autostartCheck.CheckedChanged += (s, e) => { if (server.Exists && server.Autostart != autostartCheck.Checked) server.Autostart = autostartCheck.Checked; ShowPlayHints(); };
             col.Controls.Add(autostartCheck);
             var asNote = Theme.Label("The game skips the menus: once the main menu has loaded and your loadouts have arrived from EA (about 15 seconds after " +
-                "it appears), it goes into the match's lobby by itself, yours when hosting or the host's when joining.", Theme.Small, Theme.Muted);
+                "it appears), it goes into the match's lobby by itself, yours when hosting or the host's when joining. Leave the menus alone until it does.", Theme.Small, Theme.Muted);
             asNote.MaximumSize = new Size(900, 0); col.Controls.Add(asNote);
 
             var prof = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent, Margin = new Padding(0, 18, 0, 0) };
