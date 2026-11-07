@@ -759,6 +759,8 @@ static bool g_spawnLog = false;         // [server] spawn_log: 1 = log every sta
 static bool g_materialLog = false;      // [server] material_log: 1 = log the material pairs the grid is asked about (diagnostic)
 static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on a starfighter in the ship's own frame (#20)
 static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what reaches capital ships' hulls and shields, and from whom
+static bool g_onlineGuard = true;  // [server] online_guard: 1 = a modded game never joins or creates a game on EA's servers (h_cmroute ...)
+static int g_guardMmReason = 6;    // [server] guard_mm_reason: the matchmaking failure reason the guard answers with (0-6; 3 = offline)
 static bool g_valuesOn = true;           // [server] values: 0 = the runtime value engine (issue #3) does nothing            // [server] match_mode (host): "" = as started | solo | coop | fleet | dogfight
 static bool g_allUnlocked = false;       // [server] all_unlocked: add every id in unlock_ids.txt to the inventory
 static bool g_suppressBackendLost = true; // [server] suppress_backend_lost: in listen/join mode, drop the online "backend lost" event
@@ -817,6 +819,11 @@ static void read_server_ini() {
         WideCharToMultiByte(CP_UTF8, 0, mw, -1, g_matchMode, sizeof g_matchMode, nullptr, nullptr); }
       g_allUnlocked = GetPrivateProfileIntW(L"server", L"all_unlocked", 0, ini) != 0;
       g_suppressBackendLost = GetPrivateProfileIntW(L"server", L"suppress_backend_lost", 1, ini) != 0;
+      g_onlineGuard = GetPrivateProfileIntW(L"server", L"online_guard", 1, ini) != 0;
+      g_guardMmReason = GetPrivateProfileIntW(L"server", L"guard_mm_reason", 6, ini);
+      if (g_guardMmReason < 0 || g_guardMmReason > 6) g_guardMmReason = 6;
+      status(g_onlineGuard ? "server: online_guard=1: joining or creating a game on EA's servers is blocked (custom matches start locally)"
+                           : "server: online_guard=0: WARNING, nothing stops this game joining EA's servers without EasyAntiCheat");
       if (g_allUnlocked) {   // unlock_ids.txt beside this DLL: one decimal id per line, the rest of the line is a comment
           wchar_t idf[MAX_PATH]; wcscpy_s(idf, ini); wchar_t* sl2 = wcsrchr(idf, L'\\');
           if (sl2) wcscpy_s(sl2 + 1, MAX_PATH - (sl2 + 1 - idf), L"unlock_ids.txt");
@@ -3763,6 +3770,10 @@ typedef void(__fastcall* cmsg_t)(uint64_t client, uint64_t msg, uint64_t a3, uin
 static cmsg_t o_cmsg;
 static void __fastcall h_cmsg(uint64_t client, uint64_t msg, uint64_t a3, uint64_t a4) {
     uint32_t id = rd<uint32_t>(msg, 0xc);
+    if (id == 0x4551edba && g_onlineGuard) {   // online guard's backstop: an EA game server's address after a Blaze join
+        status("guard: BLOCKED a join to an EA game server that got past the other guards (client message 4551edba dropped)");
+        return;
+    }
     if (id == 0x107569eb || id == 0xbf585a6d) apply_match_mode(msg + 0x30, "client start");
     const char* n = client_msg_name(id);
     if (n && InterlockedIncrement(&g_diagClient) <= 2000) {
@@ -3786,6 +3797,139 @@ static void __fastcall h_smsg(uint64_t self, uint64_t msg) {
             status("  level '%s', lobby '%s', map '%s'", safe_copy(rd<uint64_t>(msg, 0x38), a, sizeof a), safe_copy(rd<uint64_t>(msg, 0x50), b, sizeof b), safe_copy(rd<uint64_t>(msg, 0x60), c, sizeof c)); }
     }
     o_smsg(self, msg);
+}
+
+// Online guard (2026-11-06, [server] online_guard, default on). The modded game runs without EasyAntiCheat but stays
+// signed in to EA's services, and its menus still offer EA's online play. These hooks keep it off EA's game servers.
+// Static research (Steam addresses; findings kept in notes/online-guard.md):
+// - The custom-match router FUN_14174d540(self) reads BasicSettings.GameMode ([[self+8]+0x18]+0x18): 0 Dogfight, 1 Fleet
+//   Battles, 2 PvB Co-op ask EA to create the game (a PresenceGameRequestMessage, request id kept at self+0x26c); 3 PvB Solo
+//   starts the local match (FUN_14174d7e0); any other value posts a create too. h_cmroute turns every mode but 3 into 3, so
+//   a host who forgot "Solo vs AI" still gets the local match, and match_mode then sets the real mode.
+// - Every matchmaking start (quick play, party matchmaking) goes through FUN_141baad30(matchmaker, params). h_mmstart answers
+//   as its own failure branches do: a PresenceMatchmakerMessage with a reason (FUN_1412d43d0 maps 0-6 to
+//   OnlineErrorReasonMatchmaking_None/Failure/Timeout/Offline/Qos/AlreadyInSession/QueryError), posted to the presence
+//   message manager [[0x1441c2910]+8] (FUN_140234bd0(mm, msg, 0.0f)). The reason is guard_mm_reason, default 6.
+// - Joins by game id (the server browser, invites, join in progress, following a party into a game) go through
+//   FUN_141ba15f0(backend, reqId, params); joins by player through FUN_141ba1a30. Both have native reject branches:
+//   FUN_141ba4f90(backend, reqId, params, gameId, error) posted the same way (15f0 uses error 3 for "no game id", 1a30 error
+//   0x19). The one join to keep is the party group's own (no game server; a type-4 PresenceGameRequestMessage), whose
+//   call returns to 0x141ba579a.
+// - A tripwire on Blaze's ComponentManager::sendRequest (0x1422676a0; component in r8w, command in r9w, 8 arguments): it
+//   logs GameManager (component 4) requests by name and refuses the game-making ones (create, join, matchmaking) that none of
+//   the hooks above let through, the way sendRequest itself answers when no sender exists (*out = 0, return out). The
+//   party group's own create (createGameTemplate, 0x0a) is only logged.
+// - Backstops: h_cmsg drops ClientJoinMultiplayerMessage (0x4551edba, an EA server's address after a Blaze join; never
+//   seen in this mod's own flows, 221 logged sessions), and h_connect sends any connect to an address that is neither this
+//   PC nor the configured join address to 127.0.0.1:9, where nothing answers.
+static __declspec(thread) int t_guardAllow;   // set while the party group's own join runs (for the tripwire)
+static volatile LONG g_guardLogs, g_gmLogs;
+static bool guard_log_ok() { return InterlockedIncrement(&g_guardLogs) <= 500; }   // blocks: their own budget, never used up by the request log
+static uint64_t guard_mm() { uint64_t o = rd<uint64_t>(G(0x1441c2910), 0); return o ? rd<uint64_t>(o, 8) : 0; }
+typedef void(__fastcall* gpost_t)(uint64_t mm, uint64_t msg, float delay);
+static bool guard_post(uint64_t msg) {
+    uint64_t mm = guard_mm();
+    if (!mm || !msg) return false;
+    ((gpost_t)G(0x140234bd0))(mm, msg, 0.0f);
+    return true;
+}
+
+typedef void(__fastcall* cmroute_t)(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4);
+static cmroute_t o_cmroute;
+static void __fastcall h_cmroute(uint64_t self, uint64_t a2, uint64_t a3, uint64_t a4) {
+    // Every mode but 3 posts an EA create (a template of its own, or an empty one past 2), so every other mode becomes 3.
+    // No type check: a missed check would let the create out, and the tripwire only logs createGameTemplate (the party
+    // group's create uses it too). If the settings can't be read, the original doesn't run either: it would read them.
+    if (g_onlineGuard) {
+        bool ok = false; int mode = -1;
+        __try {
+            uint64_t bs = rd<uint64_t>(rd<uint64_t>(self, 8), 0x18);
+            if (bs) {
+                mode = *(volatile int*)(bs + 0x18);
+                if (mode != 3) *(volatile int*)(bs + 0x18) = 3;
+                ok = true;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+        if (!ok) { status("guard: BLOCKED a custom match start whose settings couldn't be read"); return; }
+        if (mode != 3) {
+            static const char* const names[] = { "Dogfight", "Fleet Battles", "PvB Co-op" };
+            status("guard: a custom match set to %s would be created on EA's servers; it starts as the local Solo vs AI match "
+                   "instead (match_mode sets the mode the match is played in)", mode >= 0 && mode <= 2 ? names[mode] : "an unknown mode");
+        }
+    }
+    o_cmroute(self, a2, a3, a4);
+}
+
+typedef void(__fastcall* mmstart_t)(uint64_t mmObj, uint64_t params, uint64_t a3, uint64_t a4);
+static mmstart_t o_mmstart;
+static void __fastcall h_mmstart(uint64_t mmObj, uint64_t params, uint64_t a3, uint64_t a4) {
+    if (!g_onlineGuard) { o_mmstart(mmObj, params, a3, a4); return; }
+    typedef uint64_t(__fastcall* mmmsg_t)(uint32_t reason, uint64_t zero);
+    bool posted = false;
+    // Reason 3 ("offline") also told the menus online play was gone: Multiplayer & Training stopped opening (Pseudo,
+    // 11-06). 6 (a failed query) is what this function itself answers when its start request fails.
+    static const char* const why[] = { "None", "Failure", "Timeout", "Offline", "Qos", "AlreadyInSession", "QueryError" };
+    __try { posted = guard_post(((mmmsg_t)G(0x141baac60))((uint32_t)g_guardMmReason, 0)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (guard_log_ok())
+        status("guard: BLOCKED matchmaking (quick play, or a party's) on EA's servers; the menu was told it failed (reason %d, Matchmaking_%s; %s)",
+               g_guardMmReason, why[g_guardMmReason], posted ? "sent" : "NOT sent");
+}
+
+typedef uint64_t(__fastcall* greject_t)(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t gameId, uint32_t err);
+static bool guard_reject(uint64_t backend, uint32_t reqId, uint64_t params, uint32_t err) {
+    bool posted = false;
+    __try { posted = guard_post(((greject_t)G(0x141ba4f90))(backend, reqId, params, 0, err)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return posted;
+}
+typedef void(__fastcall* gjoin_t)(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t a4);
+static gjoin_t o_joinid, o_joinplayer;
+static void __fastcall h_joinid(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t a4) {
+    uint64_t ret = (uint64_t)_ReturnAddress();
+    if (!g_onlineGuard || ret == G(0x141ba579a)) {   // the party group's own join: no game server behind it
+        t_guardAllow++; o_joinid(backend, reqId, params, a4); t_guardAllow--;
+        return;
+    }
+    bool posted = guard_reject(backend, reqId, params, 3);
+    if (guard_log_ok())
+        status("guard: BLOCKED joining game %llx on EA's servers (called from %llx); the menu was told the join failed (%s)",
+               rd<uint64_t>(params, 0x30), ret, posted ? "sent" : "NOT sent");
+}
+static void __fastcall h_joinplayer(uint64_t backend, uint32_t reqId, uint64_t params, uint64_t a4) {
+    if (!g_onlineGuard) { o_joinplayer(backend, reqId, params, a4); return; }
+    bool posted = guard_reject(backend, reqId, params, 0x19);
+    if (guard_log_ok())
+        status("guard: BLOCKED joining a player's game on EA's servers (called from %llx); the menu was told the join failed (%s)",
+               (uint64_t)_ReturnAddress(), posted ? "sent" : "NOT sent");
+}
+
+static const char* gm_command(uint16_t c) {
+    switch (c) {
+    case 0x01: return "createGame"; case 0x09: return "joinGame"; case 0x0a: return "createGameTemplate";
+    case 0x10: return "startMatchmakingScenario"; case 0x11: return "cancelMatchmakingScenario"; case 0x1e: return "joinGameByUserList";
+    case 0x2d: return "createOrJoinGame"; case 0x5a: return "createTournamentGame"; case 0x64: return "getGameListSnapshot";
+    case 0x65: return "getGameListSubscription"; case 0xab: return "reportTelemetry"; default: return nullptr;
+    }
+}
+static bool gm_makes_game(uint16_t c) { return c == 0x01 || c == 0x09 || c == 0x10 || c == 0x1e || c == 0x2d || c == 0x5a; }
+typedef uint32_t*(__fastcall* sendreq_t)(uint64_t mgr, uint32_t* out, uint16_t comp, uint16_t cmd, uint64_t a5, uint64_t a6, uint64_t a7, uint32_t a8);
+static sendreq_t o_sendreq;
+static uint32_t* __fastcall h_sendreq(uint64_t mgr, uint32_t* out, uint16_t comp, uint16_t cmd, uint64_t a5, uint64_t a6, uint64_t a7, uint32_t a8) {
+    if (comp == 4) {
+        const char* n = gm_command(cmd);
+        if (g_onlineGuard && !t_guardAllow && gm_makes_game(cmd)) {
+            if (guard_log_ok()) {   // with the callers, so the route that got this far can be found and given its own guard
+                void* fr[5] = {}; USHORT k = CaptureStackBackTrace(1, 5, fr, nullptr);
+                char cs[160] = "";   // five of " 0x" + 16 digits fit with room to spare (sprintf_s aborts on overflow) for (USHORT i = 0; i < k; i++) sprintf_s(cs + strlen(cs), sizeof cs - strlen(cs), " 0x%llx", (uint64_t)fr[i]);
+                // the direct caller always; the walk only gets through code with unwind data
+                status("guard: BLOCKED an EA game-server request (GameManager %s, 0x%02x) that no other guard caught; caller 0x%llx; stack%s",
+                       n ? n : "?", cmd, (uint64_t)_ReturnAddress(), k ? cs : " (no walk)");
+            }
+            if (out) *out = 0;
+            return out;
+        }
+        if (InterlockedIncrement(&g_gmLogs) <= 300) status("guard: EA GameManager request %s (0x%02x)%s", n ? n : "?", cmd, t_guardAllow ? ", the party group's own" : "");
+    }
+    return o_sendreq(mgr, out, comp, cmd, a5, a6, a7, a8);
 }
 // FUN_14021b2b0: the job scheduler's bundle queue (9 arguments; see queue_bundle). Logs the requested bundle names.
 typedef void(__fastcall* bqueue_t)(uint32_t* h, uint64_t sched, uint64_t zero, const char** names, uint32_t count,
@@ -4150,6 +4294,15 @@ static uint64_t __fastcall h_connect(uint64_t obj, const char* addr, uint64_t pw
         status("join: connect rewritten from '%s' to '%s'", safe_str((uint64_t)addr), joinBuf);
         addr = joinBuf;
     }
+    // online guard's last backstop: the client only ever connects to this PC or to the configured join address
+    // (every connect in 221 logged sessions was one of those); anything else goes to 127.0.0.1:9, where nothing answers
+    static char guardBuf[] = "127.0.0.1:9";
+    if (g_onlineGuard && addr && addr != joinBuf) {
+        char a[96]; safe_copy((uint64_t)addr, a, sizeof a);
+        bool local = !strncmp(a, "127.0.0.1:", 10) || !_strnicmp(a, "localhost:", 10);
+        bool join = g_joinAddr[0] && !_stricmp(a, g_joinAddr);
+        if (!local && !join) { status("guard: BLOCKED a connect to '%s' (not this PC, not the join address)", a); addr = guardBuf; }
+    }
     status("capture: client connect(obj %llx, '%s')", obj, safe_str((uint64_t)addr));
     dump_vtable("connect obj", obj);
     dump_members("connect obj", obj, 0x400);
@@ -4500,6 +4653,21 @@ static Site g_sites[] = {
     {"server-level-message 0x140ba0340", 0x140ba0340, 16,
      {0x48,0x89,0x5c,0x24,0x18,0x57,0x48,0x83,0xec,0x20,0x8b,0x42,0x0c,0x48,0x8b,0xda},
      (void*)h_smsg, (void**)&o_smsg},
+    {"custom-match-route 0x14174d540", 0x14174d540, 14,
+     {0x48,0x8b,0xc4,0x55,0x57,0x41,0x56,0x48,0x8d,0xa8,0xd8,0xf6,0xff,0xff},
+     (void*)h_cmroute, (void**)&o_cmroute},
+    {"matchmaking-start 0x141baad30", 0x141baad30, 16,
+     {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x8b,0xfa},
+     (void*)h_mmstart, (void**)&o_mmstart},
+    {"join-by-id 0x141ba15f0", 0x141ba15f0, 15,
+     {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0xac,0x24,0xa0,0xfd,0xff,0xff},
+     (void*)h_joinid, (void**)&o_joinid},
+    {"join-by-player 0x141ba1a30", 0x141ba1a30, 15,
+     {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x48,0x8d,0xac,0x24,0x40,0xfe,0xff,0xff},
+     (void*)h_joinplayer, (void**)&o_joinplayer},
+    {"blaze-send 0x1422676a0", 0x1422676a0, 17,
+     {0x40,0x53,0x48,0x83,0xec,0x50,0x4c,0x8b,0x59,0x38,0x48,0x8b,0xda,0x4c,0x8b,0x51,0x40},
+     (void*)h_sendreq, (void**)&o_sendreq},
     {"bundle-queue 0x14021b2b0", 0x14021b2b0, 20,
      {0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0x50,0xff,0xff,0xff},
      (void*)h_bqueue, (void**)&o_bqueue},

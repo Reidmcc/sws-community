@@ -66,6 +66,15 @@ HAND = {
                                "its only caller is a verified pair, both calling it at +0x1beb"),
     0x14170c300: (0x14170e470, "same code (strict check, 15 of 16 targets agree, none disagree); the mission whitelist "
                                "lookup the loadout resolver (a verified pair) calls at +0x55, +0x220 and +0x391 in both"),
+    0x141ba579a: (0x141b7e14a, "return address of the party group's join (+0x12a) in the presence request handler "
+                               "0x141ba5670 / 0x141b7e020: same 0x3bc bytes but for rel32 fields and its switch table (so "
+                               "the strict check refuses it); it calls the verified join pair 0x141ba15f0/0x141b79fa0 from "
+                               "+0x125, +0x19f and +0x2dc in both"),
+    0x141baad30: (0x141b836e0, "same code (strict check, 9 of 13 targets agree, none disagree); the matchmaking start, "
+                               "reached by a jmp from the verified 0x141ba9ea0 and called from two more sites in each build; "
+                               "the same shift as the verified join pair (-0x27650)"),
+    0x141baac60: (0x141b83610, "same code (strict check, 3 of 4 targets agree, none disagree); the matchmaker-result "
+                               "message builder the matchmaking start (above) calls at +0x74 in both"),
 }
 
 # Slots of the game's own import table (the protection wrappers fill it at start, so the PE import directory doesn't
