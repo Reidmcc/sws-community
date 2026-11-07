@@ -14,6 +14,24 @@ Correction from the second reader: sendRequest takes 8 arguments (the 8th a dwor
 
 Steam addresses throughout; the EA ones are in mod/build_ea.h (three mapped by hand, see tools/gen_build_ea.py).
 
+## Flown (2026-11-06, Steam, Pseudo)
+
+Logs server_20261106_155849, 160109, 160300, 181859, 183101, 183215 and later ones.
+
+- **Custom match as Fleet Battles** (181859): rerouted at 18:20:08 ("a custom match set to Fleet Battles ..."); the
+  waiting room loaded locally, played as Frontline by match_mode. No EA create request in the log.
+- **Browser join** (183215): `BLOCKED joining game 212b51702ad on EA's servers (called from 141750386)`; the menu shows
+  the game's "connection lost" error (join reason 3). Nothing reached the tripwire or the connect backstop.
+- **Quick Match**: blocked at h_mmstart in every flight. Whatever the reason, Multiplayer & Training stops opening for
+  the rest of the session: 3 (Offline), 6 (QueryError), 1 (Failure) and 2 (Timeout) were all tried. Default stays 6.
+  Pseudo's call: acceptable, since the guard does its job and a restart clears it.
+- **Not from the guard:** after any custom-match lobby, Solo vs AI included (183101), the multiplayer menu says
+  "This mode is disabled while you are not the group leader." Every pre-guard session shows the same EA drop at match
+  start (one suppressed backend-lost, eight error-327 events), so this is the mod's local custom match in general.
+  Filed as its own issue.
+- Tripwire log: other GameManager commands seen at startup and in the menus, all allowed: 0x71, 0x41, 0x0f, 0x03,
+  0x08, 0x07 (right before the matchmaking start), 0x64 and 0x0a (the party group).
+
 ---
 
 ## 0. The layers, bottom-up

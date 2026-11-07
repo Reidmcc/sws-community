@@ -70,8 +70,9 @@ seconds in. The launcher gives it the environment the EA app would, and the runn
   other request to create or join an EA game is refused, and a connect to anywhere but your own PC or the host you're
   joining goes nowhere. A custom match created as Dogfight, Fleet Battles or PvB Co-op starts as the mod's own local
   match instead, so forgetting to pick "Solo vs AI" still works; the profile's `match_mode` sets the mode it's played
-  in. A blocked join or matchmaking is answered the way the game answers its own failures (we haven't yet seen what the
-  menu shows for each). The log names every block (`guard:` lines). `online_guard=0` under `[server]` in `server.ini`
+  in. A blocked join or matchmaking is answered the way the game answers its own failures: a join shows the game's
+  "connection lost" error, and quick play fails. After a blocked quick play, Multiplayer & Training stays closed until
+  you restart the game. The log names every block (`guard:` lines). `online_guard=0` under `[server]` in `server.ini`
   turns this off; don't.
 - **Account risk:** the game still signs in to EA's account services in this mode. Loading a DLL into it carries some
   risk to your EA account. We think it is low (anti-cheat isn't running, and the mod keeps the game off matchmaking and
