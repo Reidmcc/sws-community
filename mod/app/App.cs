@@ -202,6 +202,12 @@ namespace SwsSettings
         readonly Label playProfile = Theme.Label("", Theme.Body), playWarn = Theme.Label("", Theme.Small, Theme.Warn);
         static readonly string[] Modes = { "fleet", "coop", "solo", "dogfight" };
         static readonly string[] ModeNames = { "Fleet Battles (PvP)", "Co-op vs AI", "Solo vs AI", "Dogfight" };
+        // the auto-start: the DLL's autostart_map keys, in the custom match's MapIndex order (0 = random of the first six)
+        readonly CheckBox autostartCheck = Theme.Check("Go straight into the match");
+        readonly ComboBox mapBox = Theme.Combo();
+        readonly Label hostHint = Theme.Label("", Theme.Small, Theme.Muted), joinHint = Theme.Label("", Theme.Small, Theme.Muted);
+        static readonly string[] MapKeys = { "random", "esseles", "fostar", "moon", "nadiri", "sissubo", "yavin", "abyss" };
+        static readonly string[] MapNames = { "Random (not Abyss)", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo", "Yavin", "Abyss" };
 
         public MainForm()
         {
@@ -1041,7 +1047,13 @@ namespace SwsSettings
             hostCol.Controls.Add(Theme.Label("Match type", Theme.Bold));
             modeBox.Width = 260; foreach (var m in ModeNames) modeBox.Items.Add(m);
             hostCol.Controls.Add(modeBox);
-            hostCol.Controls.Add(Theme.Label("In the game, create a custom match with the mode set to solo vs AI: the mod makes it the selected type, and your friends join it.", Theme.Small, Theme.Muted));
+            hostCol.Controls.Add(hostHint);
+            var mapTitle = Theme.Label("Map", Theme.Bold); mapTitle.Margin = new Padding(0, 14, 8, 0);
+            hostCol.Controls.Add(mapTitle);
+            mapBox.Width = 260; foreach (var m in MapNames) mapBox.Items.Add(m);
+            mapBox.SelectionChangeCommitted += (s, e) => { int i = mapBox.SelectedIndex; if (server.Exists && i >= 0) server.AutostartMap = MapKeys[i]; };
+            hostCol.Controls.Add(mapBox);
+            hostCol.Controls.Add(Theme.Label("Used when the game goes straight into the match.", Theme.Small, Theme.Muted));
             var tsTitle = Theme.Label("Your Tailscale address: give it to the players joining you", Theme.Bold); tsTitle.Margin = new Padding(0, 18, 8, 0);
             hostCol.Controls.Add(tsTitle);
             var tsRow = Theme.Row(); tsAddress.Margin = new Padding(0, 4, 12, 0);
@@ -1063,9 +1075,16 @@ namespace SwsSettings
             addrRow.Controls.Add(Theme.Button("Save as favorite...", (s, e) => SaveFavorite()));
             joinCol.Controls.Add(addrRow);
             joinCol.Controls.Add(Theme.Label("For example the host's Tailscale address (100.x.y.z). The port is added for you.", Theme.Small, Theme.Muted));
-            joinCol.Controls.Add(Theme.Label("In the game, start a solo custom match vs AI: your game joins the host's match instead.", Theme.Small, Theme.Muted));
+            joinCol.Controls.Add(joinHint);
             joinPanel.Controls.Add(joinCol); joinPanel.Margin = new Padding(0, 14, 0, 0);
             col.Controls.Add(joinPanel);
+
+            autostartCheck.Margin = new Padding(0, 18, 0, 0);
+            autostartCheck.CheckedChanged += (s, e) => { if (server.Exists && server.Autostart != autostartCheck.Checked) server.Autostart = autostartCheck.Checked; ShowPlayHints(); };
+            col.Controls.Add(autostartCheck);
+            var asNote = Theme.Label("The game skips the menus: once the main menu has loaded and your loadouts have arrived from EA (about 15 seconds after " +
+                "it appears), it goes into the match's lobby by itself, yours when hosting or the host's when joining.", Theme.Small, Theme.Muted);
+            asNote.MaximumSize = new Size(900, 0); col.Controls.Add(asNote);
 
             var prof = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent, Margin = new Padding(0, 18, 0, 0) };
             prof.Controls.Add(playProfile);
@@ -1100,6 +1119,9 @@ namespace SwsSettings
             addressBox.Text = join;
             RefreshServers(join);
             recordCheck.Checked = server.Record;
+            autostartCheck.Checked = server.Autostart;
+            int map = Array.IndexOf(MapKeys, server.AutostartMap.ToLowerInvariant()); mapBox.SelectedIndex = map >= 0 ? map : 0;
+            ShowPlayHints();
             string ts = TailscaleAddress();
             tsAddress.Text = ts ?? ""; tsCopy.Visible = ts != null;
             tsNote.Text = ts != null ? "Port 25200 is added for them. Everyone needs Tailscale, with this PC shared to them in Tailscale's admin page."
@@ -1174,6 +1196,16 @@ namespace SwsSettings
         {
             var c = ChosenCopy();
             return "--yes" + (c.HasValue ? " --target \"" + c.Value.Value + "\"" : "");
+        }
+        // what to do in the game, which the auto-start does for you
+        void ShowPlayHints()
+        {
+            bool auto = autostartCheck.Checked;
+            mapBox.Enabled = auto;
+            hostHint.Text = auto ? "The game goes straight into your match's lobby; the mod makes it the selected type, and your friends join it."
+                : "In the game, create a custom match with the mode set to solo vs AI: the mod makes it the selected type, and your friends join it.";
+            joinHint.Text = auto ? "The game goes straight into the host's lobby. If the host's lobby isn't up yet, it tries twice more."
+                : "In the game, start a solo custom match vs AI: your game joins the host's match instead.";
         }
         void SetJoining(bool join)
         {
