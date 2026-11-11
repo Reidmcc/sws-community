@@ -137,8 +137,8 @@ Then, with Steam running (or the EA app, for its copy) and the game closed, ever
 seconds after the menu appears), the mod makes the same two calls the menus make for a solo custom match vs AI. On the
 host that becomes the real match (per `match_mode`); on a joiner it connects to the host instead. Joiners should launch
 once the host's match lobby is up.
-- A host's map is `autostart_map` under `[server]`: `random` (which never picks Abyss, as in the game's own custom
-  matches), or `esseles`, `fostar`, `moon`, `nadiri`, `sissubo`, `yavin`, `abyss`.
+- A host's map is `autostart_map` under `[server]`: `random` (the custom match's own "random map" setting; the game
+  makes the pick), or `esseles`, `fostar`, `moon`, `nadiri`, `sissubo`, `yavin`, `abyss`.
 - It happens once per launch, and not at all if you start something from the menus first.
 - Leave the menus alone until it starts: it doesn't wait for you, and anything set meanwhile in the custom match screen
   isn't used.

@@ -206,7 +206,7 @@ namespace SwsSettings
         readonly ComboBox mapBox = Theme.Combo();
         readonly Label hostHint = Theme.Label("", Theme.Small, Theme.Muted), joinHint = Theme.Label("", Theme.Small, Theme.Muted);
         static readonly string[] MapKeys = { "random", "esseles", "fostar", "moon", "nadiri", "sissubo", "yavin", "abyss" };
-        static readonly string[] MapNames = { "Random (not Abyss)", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo", "Yavin", "Abyss" };
+        static readonly string[] MapNames = { "Random", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo", "Yavin", "Abyss" };
 
         public MainForm()
         {

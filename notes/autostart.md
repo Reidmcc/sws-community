@@ -43,9 +43,12 @@ Found by the second reader (review on the PR): the joiner case above, the timing
 - **Random and Abyss, checked in code the same day** (Pseudo asked why the list said "not Abyss"): RandomIntEntity's
   output function (0x14117a1b0) returns `Start + rand % Count` (`cdq` / `idiv r12d` with r12d = Count, then
   `add edx,[Start]`), and battlemapselection's RandomIntEntityData has Start 0, Count 6 over seven names with Abyss
-  seventh. So MapIndex 0 picks one of the first six, never Abyss, in the game's own custom matches too. The names
-  are in alphabetical order with Abyss as "Zavian Abyss"; a guess, not checked: the count stayed 6 when Fostar Haven
-  was added.
+  seventh. Read that way, MapIndex 0 picks one of the first six and never Abyss. **Pseudo, who has played it for
+  years, is sure a custom match set to a random map can and does pick Abyss.** The two don't agree and it isn't
+  settled: the code reading may be missing something (that function looks for a property override of Count before
+  using the data's value, and a custom match's pick may not go through this prefab alone). Nothing in the mod
+  depends on it: the auto-start writes MapIndex 0 and the game picks. The app and the docs say "Random" and make no
+  claim about Abyss. A way to settle it later: log the map level that actually loads, over some random starts.
 
 ---
 
@@ -142,7 +145,7 @@ The research agent's helper scripts and dumps aren't in the repo.
 
   | MapIndex | name | DSub level |
   |---|---|---|
-  | 0 | random of the first six (never Abyss) | - |
+  | 0 | random: the game picks (whether Abyss is included: see Flown, not settled) | - |
   | 1 | Esseles | Game/Levels/PvP/PvP_Esseles/PVP_Esseles |
   | 2 | Fostar Haven | LiveService/Levels/PvP/PVP_FostarHaven/PVP_FostarHaven |
   | 3 | Destroyed Moon (Galitan) | Game/Levels/PvP/PVP_DestroyedMoon/PVP_DestroyedMoon |

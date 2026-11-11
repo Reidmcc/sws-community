@@ -762,7 +762,7 @@ static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what 
 static bool g_onlineGuard = true;  // [server] online_guard: 1 = a modded game never joins or creates a game on EA's servers (h_cmroute ...)
 static int g_guardMmReason = 6;    // [server] guard_mm_reason: the matchmaking failure reason the guard answers with (0-6; 3 = offline)
 static bool g_autostart = true;    // [server] autostart: once the main menu is ready, go straight into the local custom match; 0 = don't
-static int g_autostartMap = 0;     // [server] autostart_map: the host's map, as the custom match's MapIndex (0 = random of the first six)
+static int g_autostartMap = 0;     // [server] autostart_map: the host's map, as the custom match's MapIndex (0 = random: the game picks)
 static const wchar_t* const kAutostartMapKeys[8] = { L"random", L"esseles", L"fostar", L"moon", L"nadiri", L"sissubo", L"yavin", L"abyss" };
 static const char* const kAutostartMapNames[8] = { "random", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo",
                                                   "Yavin", "Abyss" };
@@ -4200,7 +4200,7 @@ static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: ev
 //   (probe_logs/server_20261020_193343, the second reader's find), so that message can't mean a joiner got there.
 // - a joiner back at the main menu (the host not up yet: the connection drops ~7 s in) tries again 10 s after the menu
 //   is up again, three starts in all; a host doesn't, since a host's start doesn't depend on anyone.
-// MapIndex: 0 random of the first six (never Abyss), 1 Esseles, 2 Fostar Haven, 3 Destroyed Moon, 4 Nadiri Dockyards,
+// MapIndex: 0 random (the game's own pick; the mod only passes the 0 on), 1 Esseles, 2 Fostar Haven, 3 Destroyed Moon, 4 Nadiri Dockyards,
 // 5 Sissubo, 6 Yavin, 7 Abyss (battlemapselection's select order). A joiner's map is the host's; the joiner's isn't written.
 static volatile LONG g_asStarts;
 static bool g_asLateNoted;
