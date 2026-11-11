@@ -42,3 +42,9 @@ shipscale_ywing.scale=0.77
 
 Everyone in a match needs the same sizes: they're part of the profile's fingerprint, so mismatched players are
 refused at connect.
+
+## Diagnostics
+
+- `lock_log=1` under `[server]` in `server.ini`: every 5 seconds, for each lock-on weapon whose cone test ran, how many
+  tests ran and passed, the length of the forward axis the test read (1 on a stock ship), and the last test's numbers.
+  It's for checking lock-ons on a resized ship (issue #50); the research is in `notes/ship-scale-lock.md`.

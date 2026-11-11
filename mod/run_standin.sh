@@ -141,6 +141,12 @@ else echo "FAIL  auto-start log lines missing or wrong"; STATUS=1; fi
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
     echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"
 else echo "FAIL  fire_log line missing or wrong"; STATUS=1; fi
+# lock-ons on a resized ship (#50): the four lock components were given unit axes, and lock_log tallied the two cone
+# tests with the forward axis's length and the dot it gives
+if [ -n "$LOG" ] && grep -q "ship scale: ywing_ai: 4 weapon, targeting and radar components keep unit axes" "$LOG" \
+   && grep -q "lock: weapon [0-9a-f]* (+1a0 0, component vtable 0): 2 cone tests, 2 passed; forward axis length 0.500; last: cone 8.0 to 8.0 deg, target 100 m off, dot 0.500; capital-ship shortcut off" "$LOG"; then
+    echo "PASS  ship scale logged the lock components it fixed, and lock_log the cone test's forward axis and dot"
+else echo "FAIL  ship-scale lock components or lock_log line missing or wrong"; STATUS=1; fi
 # creep hull by ship type: the profile's Y-wing value wins over the creep default; the A-wing pack keeps the default
 if [ -n "$LOG" ] && grep -q "creep: ywing creep: hull 900 (the profile's), shields 600 (the creep default)" "$LOG" && grep -q "creep: awing creep: hull 125 (the creep default)" "$LOG"; then
     echo "PASS  creep hull and shields: a profile value wins over the creep default, by ship type"

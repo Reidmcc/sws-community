@@ -242,6 +242,14 @@ int main() {
     { const uint8_t fire[] = {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff,
                               0x41,0x5f,0x41,0x5e,0x41,0x5d,0x41,0x5c,0x5d,0xc3};
       put(0x14182a310, fire, sizeof fire); }
+    // the target-lock cone test FUN_1418856a0 (lock_log's hook): its real prologue, then "passed" and the matching
+    // epilogue; beside it, a target's position getter (its vtable +0x80): the position sits at target+0x40
+    if (map(0x141880000, 0x10000) != (void*)0x141880000) { printf("FAIL  could not map the lock-test region\n"); return 1; }
+    { const uint8_t lock[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x70,
+                              0xb0,0x01, 0x48,0x83,0xc4,0x70, 0x5f, 0xc3};
+      put(0x1418856a0, lock, sizeof lock);
+      const uint8_t pos[] = {0x48,0x8d,0x41,0x40, 0xc3};   // lea rax,[rcx+0x40]; ret
+      put(0x141885f00, pos, sizeof pos); }
     // the loadout resolver FUN_14170d9e0(presetValue, kitAsset, outVec): its real prologue (16 bytes, the DLL's hook takes
     // them), then it records the id of the preset's first slot entry ({type, idx, id} vector at +0x10) and returns true
     if (map(0x141700000, 0x10000) != (void*)0x141700000) { printf("FAIL  could not map the loadout-resolver region\n"); return 1; }
@@ -863,8 +871,22 @@ int main() {
         uint8_t* rootPart = comp(0x1449fa760, 1.0f, -7.2f);
         uint8_t* cockpit = comp(0x144a4e5c0, 1.0f, 0.0f); ((float*)(cockpit + 0x30))[13] = 0.0f;   // at the root part's origin
         uint8_t* other = comp(0x144999000, 1.0f, 2.0f);   // another child of the root part: inherits the scale, untouched
-        uint8_t* karr = fake_alloc(16 + 2 * 8); *(uint32_t*)(karr + 12) = 2;
-        ((uint8_t**)(karr + 16))[0] = other; ((uint8_t**)(karr + 16))[1] = cockpit; *(uint64_t*)(rootPart + 0x70) = (uint64_t)(karr + 16);
+        // the parts the lock-on tests read (#50), under an entry component as in the game's ships: a weapon with a fire
+        // point; a targeting computer holding the radar target, a mesh and (as in the TIEs) a second weapon with a fire
+        // point of its own
+        auto kids = [](uint8_t* parent, std::initializer_list<uint8_t*> cs) {
+            uint8_t* a = fake_alloc(16 + cs.size() * 8); *(uint32_t*)(a + 12) = (uint32_t)cs.size();
+            size_t i = 0; for (uint8_t* c : cs) ((uint8_t**)(a + 16))[i++] = c;
+            *(uint64_t*)(parent + 0x70) = (uint64_t)(a + 16); };
+        uint8_t* entry = comp(0x144999000, 1.0f, 7.2f);
+        uint8_t* weapon = comp(0x144a079c0, 1.0f, 0.0f); uint8_t* firePoint = comp(0x144999000, 1.0f, -12.0f);
+        uint8_t* computer = comp(0x144a4d940, 1.0f, 0.0f); uint8_t* radar = comp(0x144a05710, 1.0f, -7.3f);
+        uint8_t* holo = comp(0x144a035c0, 2.0f, 3.0f);
+        uint8_t* weapon2 = comp(0x144a079c0, 1.0f, -1.0f); uint8_t* firePoint2 = comp(0x144999000, 1.0f, 4.0f);
+        kids(weapon, { firePoint }); kids(weapon2, { firePoint2 }); kids(computer, { radar, holo, weapon2 }); kids(entry, { weapon, computer });
+        uint8_t* karr = fake_alloc(16 + 3 * 8); *(uint32_t*)(karr + 12) = 3;
+        ((uint8_t**)(karr + 16))[0] = other; ((uint8_t**)(karr + 16))[1] = cockpit; ((uint8_t**)(karr + 16))[2] = entry;
+        *(uint64_t*)(rootPart + 0x70) = (uint64_t)(karr + 16);
         uint8_t* glow = comp(0x144a035c0, 140.0f, -13.0f);
         uint8_t* phys = comp(0x144999000, 1.0f, 0.0f);   // some other component type: must stay as it is
         uint8_t* carr = fake_alloc(16 + 3 * 8); *(uint32_t*)(carr + 12) = 3;
@@ -886,6 +908,22 @@ int main() {
         check(approx(r[0] * k[0], 1.0f) && approx(r[5] * k[5], 1.0f) && approx(r[10] * k[10], 1.0f) && fabsf(wy + 0.78f) < 1e-5f && fabsf(wz + 7.2f) < 1e-5f &&
               o[0] == 1.0f && o[14] == 2.0f,
               "ship scale: the cockpit keeps its original size and place under the scaled root part; the part's other children untouched");
+        // lock-ons (#50): each lock component's world axes are back to 1 (root 0.5 x its own 2, or x the computer's 2 x 1),
+        // at its scaled place; what hangs under them took the 0.5 instead, so its world size and place are unchanged
+        auto ax = [](const uint8_t* c) { return ((const float*)(c + 0x30))[0]; };
+        auto ty = [](const uint8_t* c) { return ((const float*)(c + 0x30))[13]; };
+        auto tz = [](const uint8_t* c) { return ((const float*)(c + 0x30))[14]; };
+        auto uniform = [](const uint8_t* c) { const float* m = (const float*)(c + 0x30); return m[0] == m[5] && m[5] == m[10] && m[1] == 0 && m[4] == 0; };
+        printf("      (lock components: weapon %.2f, computer %.2f, radar %.2f at z %.2f, second weapon %.2f at z %.2f; fire points %.2f at z %.2f, %.2f at z %.2f; mesh %.2f)\n",
+               ax(weapon), ax(computer), ax(radar), tz(radar), ax(weapon2), tz(weapon2), ax(firePoint), tz(firePoint), ax(firePoint2), tz(firePoint2), ax(holo));
+        check(approx(ax(weapon), 2.0f) && approx(tz(weapon), 0.0f) && approx(ty(weapon), -0.78f) && uniform(weapon) &&
+              approx(ax(computer), 2.0f) && approx(tz(computer), 0.0f) &&
+              approx(ax(radar), 1.0f) && approx(tz(radar), -3.65f) && approx(ty(radar), -0.39f) &&
+              approx(ax(weapon2), 1.0f) && approx(tz(weapon2), -0.5f) &&
+              approx(ax(firePoint), 0.5f) && approx(tz(firePoint), -6.0f) && approx(ax(firePoint2), 0.5f) && approx(tz(firePoint2), 2.0f) &&
+              approx(ax(holo), 1.0f) && approx(tz(holo), 1.5f) && uniform(holo) &&
+              ax(entry) == 1.0f && tz(entry) == 7.2f,
+              "ship scale: the weapons, the targeting computer and the radar target get unit world axes back at their scaled places; what hangs under them keeps its scaled size and place");
     }
     {   // loadout_log: a save with two pilot loadouts and one in the third set (the ship set empty). The runner checks the
         // log names the save, the set call with the counts, and both pilot nodes (the first with its text field).
@@ -1211,8 +1249,20 @@ int main() {
         *(uint8_t**)(node + 0x10) = hdr; *(uint8_t**)(node + 0x30) = shipRef; *(uint8_t**)(node + 0x38) = tRef;
         *(uint32_t*)(node + 0x50) = 2; node[0x58] = 1;
         typedef uint64_t(__fastcall* fire_t)(uint64_t);
+        // lock_log=1: a weapon whose component has no transform slot of its own (0xff), so the test reads the entity's
+        // matrix, here with a forward axis 0.5 long (a ship at half size, unfixed); the target is 100 m dead ahead, so the
+        // dot is 0.5. Two tests 5 s apart give one log line (run_standin.sh reads it).
+        uint8_t* lfiring = fake_alloc(0x400); uint8_t* lcomp = fake_alloc(0x40); uint8_t* lbase = fake_alloc(0x200);
+        *(uint8_t**)(lfiring + 0x190) = lcomp; *(uint8_t**)(lcomp + 8) = lbase; lcomp[0x18] = 0; lbase[0x14] = 0xff;
+        ((float*)(lbase + 0x10 + 0x20))[2] = 0.5f;   // M = base+0x10: forward (0, 0, 0.5), translation 0
+        uint8_t* ltarget = fake_alloc(0x80); uint8_t* lvt = fake_alloc(0x100);
+        *(uint8_t**)ltarget = lvt; *(uint64_t*)(lvt + 0x80) = 0x141885f00; ((float*)(ltarget + 0x40))[2] = 100.0f;
+        typedef bool(__fastcall* lockcone_t)(uint64_t, float, float, bool, uint64_t);
+        bool lock1 = ((lockcone_t)0x1418856a0)((uint64_t)lfiring, 8.0f, 8.0f, true, (uint64_t)ltarget);
         ((fire_t)0x14182a310)((uint64_t)fself); Sleep(5100); ((fire_t)0x14182a310)((uint64_t)fself);
         check(*(uint8_t*)0x14182a310 == 0xFF && node[0x58] == 1, "fire_log: the AI fire check is hooked, runs, and its map is read back");
+        bool lock2 = ((lockcone_t)0x1418856a0)((uint64_t)lfiring, 8.0f, 8.0f, true, (uint64_t)ltarget);
+        check(*(uint8_t*)0x1418856a0 == 0xFF && lock1 && lock2, "lock_log: the target-lock cone test is hooked and its result passes through");
     }
     check(torpFiring && *(uint32_t*)(torpFiring + 228) == 2 && *(int32_t*)(torpFiring + 224) == 2,
           "creep torpedoes: bombers that put capital ships first lock their AI torpedoes only onto capital ships (TargetTags 2), with no vs-AI bots loaded");

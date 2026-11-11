@@ -242,6 +242,7 @@ struct CreepPhase { uint64_t squad, ctrl, shared, sharedF; uint64_t arr[3], arrF
 static CreepPhase g_creepPh[2];
 static bool g_creepLog;   // [server] creep_log: log the creep squadrons' target-score lookups (diagnostic)
 static bool g_fireLog;    // [server] fire_log: log, per bomber creep, how often the AI let it fire at its target and why not (h_fire)
+static bool g_lockLog;    // [server] lock_log: log what the target-lock cone test reads, per weapon (h_lockcone; issue #50)
 static bool g_trackLog;   // [server] track_log: record each bomber creep's position and its target's, twice a second (creep_track)
 // 0 offense, 1 face-off (and transition, overtime), 2 defense, for a faction (0 Rebel, 1 Imperial) in a FrontlineIndex
 // phase: 0/1 the Rebel zones (Imperial offense), 3/4 the Imperial zones (Rebel offense)
@@ -818,6 +819,7 @@ static void read_server_ini() {
       g_spawnLog = GetPrivateProfileIntW(L"server", L"spawn_log", 0, ini) != 0;
       g_trackLog = GetPrivateProfileIntW(L"server", L"track_log", 0, ini) != 0;
       g_fireLog = GetPrivateProfileIntW(L"server", L"fire_log", 0, ini) != 0;
+      g_lockLog = GetPrivateProfileIntW(L"server", L"lock_log", 0, ini) != 0;
       g_loadoutLog = GetPrivateProfileIntW(L"server", L"loadout_log", 0, ini) != 0;
       g_localLoadouts = GetPrivateProfileIntW(L"server", L"local_loadouts", 1, ini) != 0;
       { wcscpy_s(g_ldPath, ini); wchar_t* s3 = wcsrchr(g_ldPath, L'\\'); if (s3) wcscpy_s(s3 + 1, MAX_PATH - (s3 + 1 - g_ldPath), L"loadouts.txt");
@@ -1872,6 +1874,54 @@ static void map_fix_partition(uint64_t part) {
 // axes are the identity), a child at local (axes A, translation u) keeps its old world placement with axes A/s and
 // translation (u + t)/s - t. ClassInfos (runtime type info -> .rdata): StarshipBlueprint 0x144ade220, StarshipEntityData
 // 0x1449fad80, PartComponentData 0x1449fa760, MeshComponentData 0x144a035c0.
+// Lock-ons on a resized ship (issue #50). Everything under the scaled root part has world axes of length s, and the game's
+// lock tests use a component's forward axis as if it were a unit vector: the target-lock cone test FUN_1418856a0 takes
+// unit(target - M.trans) . M.forward with no normalize (0x1418857c1..0x14188580c; M from FUN_141885850, the world
+// transform of the component at [firing+0x190]) and wants it >= cos(cone), so at 0.77 nothing is ever inside a cone.
+// The multi-lock's radar query (FUN_1416d7400) does the same with the shooter's radar target's matrix. So the components
+// those tests read get unit world axes back: the weapons, the targeting computer and the radar target (ClassInfos
+// 0x144a079c0, 0x144a4d940, 0x144a05710; in every starfighter they sit under the root part's StarshipEntryComponent, the
+// weapons under the targeting computer in some ships). The scale is pushed through each one: its own axes / s (its
+// translation stays, so it is still at its scaled place), and each child's axes and translation x s, which leaves
+// every descendant's world placement exactly as it was (the fire points, the computer's meshes). Walked top-down, so
+// a weapon under a targeting computer first takes the computer's scale, then passes it on. The cockpit's subtree is
+// skipped: it has its own inverse. That the firing's component is the weapon is inferred; lock_log=1 shows what the
+// test reads. Research: notes/ship-scale-lock.md.
+static bool comp_axes_sane(uint64_t c) {   // a component's transform, before it is scaled: finite, and not degenerate
+    for (int a = 0; a < 3; a++) {
+        float x = rd<float>(c, 0x30 + a * 16), y = rd<float>(c, 0x34 + a * 16), z = rd<float>(c, 0x38 + a * 16);
+        float l2 = x * x + y * y + z * z;
+        if (!(l2 > 1e-8f && l2 < 1e8f)) return false;
+    }
+    for (int f = 0; f < 3; f++) { float t = rd<float>(c, 0x60 + f * 4); if (!(t > -1e6f && t < 1e6f)) return false; }
+    return true;
+}
+static void comp_scale(uint64_t c, float f, int floats) {   // 9 = the axes, 12 = the axes and the translation
+    for (int i = 0; i < floats; i++) {
+        uint64_t at = c + 0x30 + (uint64_t)(i / 3) * 16 + (uint64_t)(i % 3) * 4;
+        leaf_write(at, false, rd<float>(at, 0) * f);
+    }
+}
+static void lock_axes_walk(uint64_t c, float s, int depth, int& fixed, int& odd) {
+    uint64_t kids = rd<uint64_t>(c, 0x70); uint32_t nk = kids ? rd<uint32_t>(kids - 4, 0) : 0;
+    for (uint32_t j = 0; j < nk && j < 512; j++) {
+        uint64_t k = rd<uint64_t>(kids, j * 8); if (!k) continue;
+        uint64_t ci = rd<uint64_t>(k, 8);
+        if (ci == G(0x144a4e5c0)) continue;   // the cockpit
+        if (ci == G(0x144a079c0) || ci == G(0x144a4d940) || ci == G(0x144a05710)) {
+            if (!comp_axes_sane(k)) { odd++; continue; }
+            comp_scale(k, 1.0f / s, 9);
+            uint64_t gk = rd<uint64_t>(k, 0x70); uint32_t ng = gk ? rd<uint32_t>(gk - 4, 0) : 0;
+            for (uint32_t g = 0; g < ng && g < 512; g++) {
+                uint64_t ch = rd<uint64_t>(gk, g * 8); if (!ch) continue;
+                if (!comp_axes_sane(ch)) { odd++; continue; }
+                comp_scale(ch, s, 12);
+            }
+            fixed++;
+        }
+        if (depth < 16) lock_axes_walk(k, s, depth + 1, fixed, odd);
+    }
+}
 static double ship_scale_for(const char* ship) {   // "ywing" or "ywing_ai": the player ship's value, for both
     char key[96]; int k = sprintf_s(key, "shipscale_");
     for (const char* c = ship; *c && *c != '_' && k < 80; c++) key[k++] = *c;
@@ -1931,6 +1981,10 @@ static void model_scale_partition(uint64_t part) {
                 status("ship scale: %s cockpit kept at its original size and place (local translation now %.2f %.2f %.2f)", ship,
                        rd<float>(k, 0x60), rd<float>(k, 0x64), rd<float>(k, 0x68));
             }
+            int fixed = 0, odd = 0;
+            lock_axes_walk(c, s, 0, fixed, odd);
+            status("ship scale: %s: %d weapon, targeting and radar components keep unit axes, so lock-on cones work on the resized ship%s",
+                   ship, fixed, odd ? "; some transforms didn't look right and were left as they were" : "");
         }
     }
     if (!scaled) status("ship scale: %s blueprint loaded, but no part or mesh component found under its entity", ship);
@@ -4729,6 +4783,67 @@ static uint64_t __fastcall h_fire(uint64_t self) {
     if (g_fireLog && self) __try { fire_walk(self); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     return r;
 }
+// lock_log=1 (issue #50, lock-ons on a resized ship): what the target-lock cone test reads. FUN_1418856a0(firing, near
+// angle, far angle, also test the max distance, target) passes when unit(target - M.trans) . M.forward >= cos(the angle,
+// blended from near to far over distance / max), M being the world transform FUN_141885850 returns: the component at
+// [firing+0x190]'s own slot (byte at [[comp+8] + [comp+0x18]*0x20 + 0x14]; 0xff = none, the entity's matrix instead).
+// Before the cone, a shortcut passes a capital-ship target the nose ray hits: [firing+0x326] set and the distance at
+// +0x328 within the lock distances. Every 5 s, per weapon tested: the tests and passes, the forward axis's length (1 on
+// a stock ship; the ship's scale if the fix in model_scale_partition missed the component), and the last test's numbers.
+// [firing+0x1a0] tells the two copies of the test apart (nonzero is taken to be the server's; inferred).
+struct LockStat { uint64_t firing, compVt; int calls, passed; float fwd, dist, dot, nearDeg, farDeg, capDist; uint8_t cap; uint32_t realm; };
+static LockStat g_lockStats[16];
+static ULONGLONG g_lockSince;
+static SRWLOCK g_lockLk = SRWLOCK_INIT;
+static void lock_note(uint64_t firing, float nearDeg, float farDeg, uint64_t target, bool passed) {
+    uint64_t comp = rd<uint64_t>(firing, 0x190), base = comp ? rd<uint64_t>(comp, 8) : 0;
+    if (!base) return;
+    uint8_t idx = rd<uint8_t>(comp, 0x18), slot = rd<uint8_t>(base + (uint64_t)idx * 0x20, 0x14), c9 = rd<uint8_t>(base, 9), ca = rd<uint8_t>(base, 0xa);
+    uint64_t M = slot != 0xff ? base + 0x50 + ((uint64_t)c9 + ((uint64_t)ca + slot) * 2) * 0x20
+                              : base + 0x10 + ((uint64_t)c9 + (uint64_t)ca * 2) * 0x20;
+    float f[3] = { rd<float>(M, 0x20), rd<float>(M, 0x24), rd<float>(M, 0x28) };
+    float fwd = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]), dist = -1, dot = 0;
+    uint64_t vt = rd<uint64_t>(target, 0), posFn = vt ? rd<uint64_t>(vt, 0x80) : 0;   // the target's position, as the test asks for it
+    if (posFn) {
+        uint64_t p = ((uint64_t(__fastcall*)(uint64_t))posFn)(target);
+        if (p) {
+            float d[3] = { rd<float>(p, 0) - rd<float>(M, 0x30), rd<float>(p, 4) - rd<float>(M, 0x34), rd<float>(p, 8) - rd<float>(M, 0x38) };
+            dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (dist > 1e-3f) dot = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / dist;
+        }
+    }
+    ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_lockLk);
+    LockStat* s = nullptr;
+    for (auto& e : g_lockStats) if (e.firing == firing) { s = &e; break; }
+    if (!s) for (auto& e : g_lockStats) if (!e.firing) { s = &e; s->firing = firing; break; }
+    if (s) {
+        s->calls++; if (passed) s->passed++;
+        s->fwd = fwd; s->dist = dist; s->dot = dot; s->nearDeg = nearDeg; s->farDeg = farDeg;
+        s->cap = rd<uint8_t>(firing, 0x326); s->capDist = rd<float>(firing, 0x328); s->realm = rd<uint32_t>(firing, 0x1a0);
+        s->compVt = rd<uint64_t>(comp, 0);
+    }
+    if (!g_lockSince) g_lockSince = now;
+    if (now - g_lockSince >= 5000) {
+        for (auto& e : g_lockStats) {
+            if (!e.calls) continue;
+            status("lock: weapon %llx (+1a0 %u, component vtable %llx): %d cone tests, %d passed; forward axis length %.3f; last: cone %.1f to %.1f deg, "
+                   "target %.0f m off, dot %.3f; capital-ship shortcut %s (%.0f m)", (unsigned long long)e.firing, e.realm,
+                   (unsigned long long)e.compVt, e.calls, e.passed, (double)e.fwd, (double)e.nearDeg, (double)e.farDeg, (double)e.dist,
+                   (double)e.dot, e.cap ? "set" : "off", (double)e.capDist);
+            e = {};
+        }
+        g_lockSince = now;
+    }
+    ReleaseSRWLockExclusive(&g_lockLk);
+}
+typedef bool(__fastcall* lockcone_t)(uint64_t firing, float nearDeg, float farDeg, bool testMax, uint64_t target);
+static lockcone_t o_lockcone;
+static bool __fastcall h_lockcone(uint64_t firing, float nearDeg, float farDeg, bool testMax, uint64_t target) {
+    bool r = o_lockcone(firing, nearDeg, farDeg, testMax, target);
+    if (g_lockLog && firing && target) __try { lock_note(firing, nearDeg, farDeg, target, r); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return r;
+}
 #endif
 
 struct Site {
@@ -4877,6 +4992,9 @@ static Site g_sites[] = {
     {"creep-fire-check 0x14182a310", 0x14182a310, 19,
      {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0xa8,0x28,0xfe,0xff,0xff},
      (void*)h_fire, (void**)&o_fire},
+    {"lock-cone 0x1418856a0", 0x1418856a0, 15,
+     {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x70},
+     (void*)h_lockcone, (void**)&o_lockcone},
     {"controller-field 0x1416feaf0", 0x1416feaf0, 15,
      {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x10,0x8b,0x02,0x48,0x8b,0xfa},
      (void*)h_ctrlfield, (void**)&o_ctrlfield},
