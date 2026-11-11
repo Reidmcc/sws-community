@@ -130,6 +130,13 @@ if [ -n "$LOG" ] && grep -q "server: online_guard=1: joining or creating a game 
    && ! grep -q "guard: BLOCKED a connect to '127.0.0.1" "$LOG"; then
     echo "PASS  online guard: every block logged with the tripwire's callers, the party's own join let through, a local connect left alone"
 else echo "FAIL  online guard log lines missing"; STATUS=1; fi
+# auto-start: announced at startup, one start on Sissubo after the main menu, the lobby noticed, and no second start
+if [ -n "$LOG" ] && grep -q "server: auto-start: once the main menu is ready, the game goes straight into the local custom match (Sissubo)" "$LOG" \
+   && grep -q "autostart: starting the local custom match (start 1; Sissubo; [0-9.]* s after the main menu was up, EA's loadouts in)" "$LOG" \
+   && grep -q "autostart: in the custom match's lobby" "$LOG" \
+   && ! grep -q "autostart: starting the local custom match (start 2" "$LOG"; then
+    echo "PASS  auto-start: one start, logged with its map, and the lobby noticed"
+else echo "FAIL  auto-start log lines missing or wrong"; STATUS=1; fi
 # fire_log: the bomber's node on the capital ship was read back twice, valid both times
 if [ -n "$LOG" ] && grep -q "fire: bomber [0-9a-f]* on [0-9a-f]* (tags 2): 2 checks, 2 valid; failed tags 0, range 0" "$LOG"; then
     echo "PASS  fire_log read the AI fire check's map back and tallied the bomber's checks"

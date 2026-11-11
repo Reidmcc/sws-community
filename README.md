@@ -131,9 +131,25 @@ all_unlocked=1
 suppress_backend_lost=1
 ```
 
-Then, with Steam running (or the EA app, for its copy) and the game closed, everyone runs `sws_launch.exe` and types `YES`. In the game, everyone
-starts a **solo custom match vs AI**: on the host that becomes the real match (per `match_mode`); on a joiner it
-connects to the host instead. Joiners should start once the host's match lobby is up.
+Then, with Steam running (or the EA app, for its copy) and the game closed, everyone runs `sws_launch.exe` and types `YES`.
+
+**The game goes straight into the match.** After its loading screens it lands in the match's lobby, usually without
+showing the main menu. On the host that's the real match (per `match_mode`); a joiner connects to the host instead.
+Joiners should launch once the host's match lobby is up.
+- How: once the main menu's level has loaded and EA's loadouts have arrived, the mod makes the same two calls the
+  menus make for a solo custom match vs AI. In the flights so far that came before the menu was shown. If EA's
+  loadouts don't arrive, it starts anyway 30 seconds after the menu's level is up, so the menu can show first.
+- A host's map is `autostart_map` under `[server]`: `random` (the custom match's own "random map" setting; the game
+  makes the pick), or `esseles`, `fostar`, `moon`, `nadiri`, `sissubo`, `yavin`, `abyss`.
+- It happens once per launch, and not at all if you start something from the menus first.
+- If the main menu does show, leave it alone until the match starts: the start doesn't wait for you, and anything set
+  meanwhile in the custom match screen isn't used.
+- A joiner whose host isn't up yet comes back to the main menu and tries again, three starts in all, 10 seconds apart.
+- Nothing on this route goes to EA's servers. Research record: `notes/autostart.md`.
+
+To start it from the menus yourself, set `autostart=0` under `[server]`, then start a **solo custom match vs AI** in the
+game, on the host and on every joiner. That's also the fallback if the auto-start ever gives up (the log's `autostart:`
+lines say why).
 
 **Profiles** hold the rules and fixes, and changed game values. Name one in
 `server.ini` with `profile=<name>`; the mod reads `profiles\<name>.ini` beside the DLL (see
