@@ -4185,9 +4185,13 @@ static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: ev
 //   loadouts have arrived (EA's inventory reply sets the presets), plus 1.5 s; or 30 s after the main menu is up with no
 //   loadouts from EA. Earlier, the match would likely miss EA's loadouts: EA's connection drops a few seconds into every
 //   modded match.
-// - the manager is [[0x1441c5f00]+0x3df8] (vtable 0x1436217f0), its settings +8, basic settings +0x18 (ClassInfo
-//   0x144a38f00; GameMode +0x18, MapIndex +0x28); +0x268/+0x26c set mean a custom match is already being set up; the call
-//   needs the client's connection [[[0x14419b5a8]+0x60]+0x48]. Each is checked; both functions' first bytes too.
+// - the manager is [0x1441c5ef8]+0x148 (vtable 0x1436217f0): its owner's constructor builds it there (0x1412675ef) and
+//   stores the owner in that global (0x141267630), and the menus' setup entity takes the same address
+//   (0x14175181a: entity+0xc0 = [0x1441c5ef8]+0x148). Its settings +8, basic settings +0x18 (ClassInfo 0x144a38f00;
+//   GameMode +0x18, MapIndex +0x28); +0x268/+0x26c set mean a custom match is already being set up; the call needs the
+//   client's connection [[[0x14419b5a8]+0x60]+0x48]. Each is checked; both functions' first bytes too.
+//   NOT [0x1441c5f00]+0x3df8: that is the server side's copy of the settings (same +8 layout, not the manager), which the
+//   first build took for the manager; its first flight (probe_logs/server_20261111_164727) refused on the vtable check.
 // - once per launch, and the player first: it never starts once the player has started a level from the main menu.
 // - done when it got there: a host when the lobby arrives (client message bf585a6d naming the waiting room); a joiner when
 //   its client reaches state 12 as a joined client (game type 3), or 45 s after the start with no return to the main menu.
@@ -4225,6 +4229,7 @@ static void autostart_saw_state(int state, int type) {
         status("autostart: joined the host's match, %.1f s after the start", (GetTickCount64() - g_asFiredTick) / 1000.0);
     }
 }
+static uint64_t g_asOdd;   // what was at the manager's address instead of its vtable, for the log
 static const char* autostart_blocker(uint64_t& mgr, uint64_t& basic) {
     static const uint8_t kSettingsPrologue[12] = {0x48,0x8b,0xc4,0x55,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57};
     static const uint8_t kStartPrologue[11] = {0x48,0x8b,0xc4,0x48,0x89,0x48,0x08,0x55,0x57,0x41,0x54};
@@ -4232,10 +4237,10 @@ static const char* autostart_blocker(uint64_t& mgr, uint64_t& basic) {
         if (memcmp((void*)G(0x14174c240), expect_bytes(0x14174c240, kSettingsPrologue, 12), 12) != 0 ||
             memcmp((void*)G(0x14174d7e0), expect_bytes(0x14174d7e0, kStartPrologue, 11), 11) != 0)
             return "the game's custom-match start functions aren't the ones the mod knows";
-        uint64_t game = rd<uint64_t>(G(0x1441c5f00), 0);
-        if (!game) return "the game's settings object isn't there yet";
-        mgr = game + 0x3df8;
-        if (rd<uint64_t>(mgr, 0) != G(0x1436217f0)) return "the custom-match manager isn't where the mod expects it";
+        uint64_t owner = rd<uint64_t>(G(0x1441c5ef8), 0);
+        if (!owner) return "the object that holds the custom-match manager isn't there yet";
+        mgr = owner + 0x148;
+        if (rd<uint64_t>(mgr, 0) != G(0x1436217f0)) { g_asOdd = rd<uint64_t>(mgr, 0); return "the custom-match manager isn't where the mod expects it"; }
         uint64_t settings = rd<uint64_t>(mgr, 8);
         basic = settings ? rd<uint64_t>(settings, 0x18) : 0;
         if (!basic || rd<uint64_t>(basic, 8) != G(0x144a38f00)) return "the custom match's settings aren't laid out as expected";
@@ -4278,7 +4283,11 @@ static void autostart_tick() {
     uint64_t mgr = 0, basic = 0;
     if (const char* why = autostart_blocker(mgr, basic)) {
         static const char* said;
-        if (why != said) { said = why; status("autostart: waiting: %s", why); }
+        if (why != said) {
+            said = why;
+            if (g_asOdd) status("autostart: waiting: %s (%llx there holds %llx)", why, (unsigned long long)mgr, (unsigned long long)g_asOdd);
+            else status("autostart: waiting: %s", why);
+        }
         if (now - ready > 60000) { g_asDone = true; status("autostart: gave up 60 s after the main menu (%s); start it from the menus", why); }
         return;
     }

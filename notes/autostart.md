@@ -21,7 +21,21 @@ these differences:
 
 Found by the second reader (review on the PR): the joiner case above, the timing from state 12, the EA-reply caller.
 
-Not flown yet.
+## Flown
+
+- **2026-11-11, first flight (probe_logs/server_20261111_164727), no start.** The timing held: state 12 at 16:47:51.9,
+  EA's loadouts at 16:48:04.1, the attempt at 16:48:05.6. The attempt refused: "the custom-match manager isn't where the
+  mod expects it", and gave up 60 s after the menu. The research below took `[0x1441c5f00]+0x3df8` for the manager,
+  marked [I, strong]; it is the server side's copy of the settings, not the manager. The vtable check did its job. The
+  stand-in had passed because its fake put a manager where the code looked: a test built from the same assumption as
+  the code can't catch that assumption.
+- **The manager is `[0x1441c5ef8]+0x148`**, read from the code: its owner's constructor builds it there
+  (`lea rcx,[r14+0x148]` / `call 0x14174af30` at 0x1412675ef) and stores the owner in the global
+  (`mov [0x1441c5ef8], r14` at 0x141267630). The menus' setup entity takes the same address in its constructor
+  (0x14175181a: `mov rax,[0x1441c5ef8]` / `add rax,0x148` / `mov [rdi+0xc0],rax`), and FUN_1417544b0 passes
+  `[entity+0xc0]` to both calls. EA: 0x144262478 (46 references from verified code, all agreeing). The stand-in now
+  keeps the old spot as a decoy that must stay untouched.
+- Not flown since that fix.
 
 ---
 
@@ -74,7 +88,9 @@ The research agent's helper scripts and dumps aren't in the repo.
   - ctor FUN_14174af30 (vtable `0x1436217f0` at +0; listener vtable 0x1436217f8 at +0x1b0), reset FUN_14174d200
     which allocates fresh `CustomMatchSettings` at **mgr+8** (Basic at settings+0x18, Restrictions +0x20,
     Modifications +0x28), and sets +0x268/+0x26c to 0.
-  - **Found as `mgr = *(uint64_t*)0x1441c5f00 + 0x3df8`**: ServerCustomMatchDataEntity's ctor (0x1415e8430) stores
+  - **WRONG, corrected 2026-11-11 (see Flown at the top): the manager is `[0x1441c5ef8]+0x148`.** What this bullet
+    found is the server side's copy of the settings. As written then:
+    **Found as `mgr = *(uint64_t*)0x1441c5f00 + 0x3df8`**: ServerCustomMatchDataEntity's ctor (0x1415e8430) stores
     `[0x1441c5f00]+0x3df8` and binds `[0x1441c5f00]+0x3e00` as a `CustomMatchSettings` (type 0x144a05890) [V];
     FUN_1415ea1d0(`[0x1441c5f00]+0x3df8`, i) reads `+8 -> +0x20 -> ban bytes` [V]; 0x141731956 reads
     `[0x1441c5f00]+0x3e00 -> +0x20` [V]. That `+8 = settings` layout is the manager's. That it is *the same* object the

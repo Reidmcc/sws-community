@@ -1408,12 +1408,19 @@ int main() {
         // are in (the presets set above), the next ticks set the custom match to Solo (3) on Sissubo (5) and make the menus'
         // two calls, the settings first; once only, and never before the main menu
         if (map(0x144190000, 0x10000) != (void*)0x144190000) { printf("FAIL  could not map the client-context region\n"); return 1; }
-        static uint8_t asGame[0x4000] = {};
+        // the manager sits in its owner, [0x1441c5ef8]+0x148. The server side's copy of the settings, at
+        // [0x1441c5f00]+0x3df8, has the same +8 layout but isn't the manager (the first build took it for one): it's here
+        // as a decoy that must stay untouched
+        static uint8_t asGame[0x4000] = {}, asOwner[0x400] = {};
         *(uint64_t*)(asGame + 0xf8) = *(uint64_t*)(*(uint64_t*)0x1441c5f00 + 0xf8);   // the rank data stays where it was
         *(uint64_t*)0x1441c5f00 = (uint64_t)asGame;
-        uint8_t* mgr = asGame + 0x3df8; uint8_t* sets = fake_alloc(0x40); uint8_t* basic = fake_alloc(0x60);
+        *(uint64_t*)0x1441c5ef8 = (uint64_t)asOwner;
+        uint8_t* mgr = asOwner + 0x148; uint8_t* sets = fake_alloc(0x40); uint8_t* basic = fake_alloc(0x60);
         *(uint64_t*)mgr = 0x1436217f0; *(uint8_t**)(mgr + 8) = sets; *(uint8_t**)(sets + 0x18) = basic;
         *(uint64_t*)(basic + 8) = 0x144a38f00; *(int32_t*)(basic + 0x18) = 1; *(int32_t*)(basic + 0x28) = 0;
+        uint8_t* decoy = asGame + 0x3df8; uint8_t* dsets = fake_alloc(0x40); uint8_t* dbasic = fake_alloc(0x60);
+        *(uint64_t*)decoy = 0x143600000; *(uint8_t**)(decoy + 8) = dsets; *(uint8_t**)(dsets + 0x18) = dbasic;
+        *(uint64_t*)(dbasic + 8) = 0x144a38f00; *(int32_t*)(dbasic + 0x18) = 1; *(int32_t*)(dbasic + 0x28) = 0;
         uint8_t* cgc = fake_alloc(0x80); uint8_t* c60 = fake_alloc(0x80);
         *(uint64_t*)0x14419b5a8 = (uint64_t)cgc; *(uint8_t**)(cgc + 0x60) = c60; *(uint64_t*)(c60 + 0x48) = 1;
         typedef void(__fastcall* f4_t)(uint64_t, uint64_t, uint64_t, uint64_t);
@@ -1433,7 +1440,8 @@ int main() {
         ((cst_t)0x140a30230)((uint64_t)client, 12, 0, 0);
         tick(2400);
         bool started = g_asStarted == 1 && g_asSetMgr == (uint64_t)mgr && g_asStartSawMgr == (uint64_t)mgr &&
-                       *(int32_t*)(basic + 0x18) == 3 && *(int32_t*)(basic + 0x28) == 5;
+                       *(int32_t*)(basic + 0x18) == 3 && *(int32_t*)(basic + 0x28) == 5 &&
+                       *(int32_t*)(dbasic + 0x18) == 1 && *(int32_t*)(dbasic + 0x28) == 0;
         start(0xbf585a6d, "Game/Levels/RootLevel/RootLevel", "LiveService/Levels/PvP/CustomGames/CustomMatchWaitingRoom/CustomMatchWaitingRoom");
         start(0x107569eb, "Game/Levels/Menu/Frontend/Frontend", "");   // back from the match
         ((cst_t)0x140a30230)((uint64_t)client, 12, 0, 0);
@@ -1441,7 +1449,7 @@ int main() {
         printf("      (auto-start: none before the main menu %d, none before it's up %d, started %d (%u starts, mode %d, map %d))\n",
                notBefore, notBeforeUp, started, g_asStarted, *(int32_t*)(basic + 0x18), *(int32_t*)(basic + 0x28));
         check(notBefore && notBeforeUp && started && g_asStarted == 1,
-              "auto-start: once the main menu and EA's loadouts are in, the local custom match starts (Solo route, the host's map), once");
+              "auto-start: once the main menu and EA's loadouts are in, the local custom match starts on the menus' own manager (Solo route, the host's map), once");
     }
     {   // ruleset: the hook mixes the rules.ini ruleset id into the protocol version
         typedef uint32_t(__fastcall* tinit_fn)(uint64_t, uint64_t, uint32_t, uint32_t);
