@@ -97,11 +97,12 @@ Playing
 1. Steam running (for the EA app's copy: the EA app running and signed in), Squadrons closed.
 2. Click Launch in sws_settings.exe and confirm in the window it opens. The game starts.
    (Or double-click sws_launch.exe, read what it says, type YES and press Enter.)
-3. In the game, start a SOLO CUSTOM MATCH VS AI, on the host and on every joiner. The host's becomes the real match
-   (per match_mode); a joiner's connects to the host instead. Joiners: start once the host's lobby is up.
-   Or tick "Go straight into the match" in sws_settings.exe: the game then does this by itself once the main menu has
-   loaded and your loadouts have arrived from EA (about 15 seconds). Leave the menus alone until it starts. A joiner
-   whose host isn't up yet tries twice more.
+3. Wait at the main menu and leave the menus alone. About 15 seconds after it appears, once your loadouts have arrived
+   from EA, the game goes into the match's lobby by itself: the host's own match (per match_mode, on the map chosen
+   in sws_settings.exe), and for a joiner the host's. Joiners: launch once the host's lobby is up; a joiner whose
+   host isn't up yet tries twice more.
+   If it doesn't start, or you've turned it off (autostart=0 in server.ini): in the game, start a SOLO CUSTOM MATCH
+   VS AI, on the host and on every joiner. It works the same way.
 4. Every ship component and cosmetic is unlocked, and EA's error 327 shouldn't appear.
 5. Loadouts you save, in the hangar or in a match's briefing room, are kept in loadouts.txt beside this file and
    aren't sent to EA. When you update the mod, keep loadouts.txt along with server.ini and your profiles.

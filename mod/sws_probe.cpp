@@ -761,7 +761,7 @@ static bool g_hitLog = false;   // [server] hit_log: 1 = log every direct hit on
 static bool g_capDmgLog = false;   // [server] capital_damage_log: 1 = log what reaches capital ships' hulls and shields, and from whom
 static bool g_onlineGuard = true;  // [server] online_guard: 1 = a modded game never joins or creates a game on EA's servers (h_cmroute ...)
 static int g_guardMmReason = 6;    // [server] guard_mm_reason: the matchmaking failure reason the guard answers with (0-6; 3 = offline)
-static bool g_autostart = false;   // [server] autostart: 1 = once the main menu is ready, go straight into the local custom match
+static bool g_autostart = true;    // [server] autostart: once the main menu is ready, go straight into the local custom match; 0 = don't
 static int g_autostartMap = 0;     // [server] autostart_map: the host's map, as the custom match's MapIndex (0 = random of the first six)
 static const wchar_t* const kAutostartMapKeys[8] = { L"random", L"esseles", L"fostar", L"moon", L"nadiri", L"sissubo", L"yavin", L"abyss" };
 static const char* const kAutostartMapNames[8] = { "random", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo",
@@ -834,15 +834,16 @@ static void read_server_ini() {
       g_onlineGuard = GetPrivateProfileIntW(L"server", L"online_guard", 1, ini) != 0;
       g_guardMmReason = GetPrivateProfileIntW(L"server", L"guard_mm_reason", 6, ini);
       if (g_guardMmReason < 0 || g_guardMmReason > 6) g_guardMmReason = 6;
-      g_autostart = GetPrivateProfileIntW(L"server", L"autostart", 0, ini) != 0;
+      g_autostart = GetPrivateProfileIntW(L"server", L"autostart", 1, ini) != 0;
       { wchar_t am[24]; GetPrivateProfileStringW(L"server", L"autostart_map", L"random", am, 24, ini);
         g_autostartMap = -1; for (int i = 0; i < 8; i++) if (!_wcsicmp(am, kAutostartMapKeys[i])) g_autostartMap = i;
         if (g_autostartMap < 0) {
             status("server: autostart_map '%ls' isn't one of random, esseles, fostar, moon, nadiri, sissubo, yavin, abyss; random instead", am);
             g_autostartMap = 0;
         } }
-      if (g_autostart) status("server: autostart=1: once the main menu is ready, the game goes straight into the local custom match (%s)",
+      if (g_autostart) status("server: auto-start: once the main menu is ready, the game goes straight into the local custom match (%s)",
                               g_joinAddr[0] ? "joining the host" : kAutostartMapNames[g_autostartMap]);
+      else status("server: autostart=0: the game waits at the main menu; start a solo custom match vs AI from the menus");
       status(g_onlineGuard ? "server: online_guard=1: joining or creating a game on EA's servers is blocked (custom matches start locally)"
                            : "server: online_guard=0: WARNING, nothing stops this game joining EA's servers without EasyAntiCheat");
       if (g_allUnlocked) {   // unlock_ids.txt beside this DLL: one decimal id per line, the rest of the line is a comment
@@ -4174,7 +4175,7 @@ static void ld_dump(const char* what, uint64_t presets) {   // loadout_log=1: ev
         status("%s", line);
     });
 }
-// ---------------------------------------------------------------- auto-start ([server] autostart)
+// ---------------------------------------------------------------- auto-start (on unless [server] autostart=0)
 // Once the main menu is ready, the game goes straight into the local custom match, the same way the menus start a Solo vs AI
 // custom match (FUN_1417544b0's solo branch): the custom-match manager's basic settings get GameMode 3 (PvB Solo) and the
 // host's map (MapIndex), FUN_14174c240(manager) sends the settings to the in-process server, and FUN_14174d7e0() asks it for

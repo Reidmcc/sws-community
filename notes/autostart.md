@@ -8,6 +8,8 @@ these differences:
   EA's loadouts, the 30 s fallback, the 60 s give-up) count from it. EA's loadouts are the presets set whose caller
   returns to 0x1418fddfd (EA: 0x1419015ce, mapped by hand in tools/gen_build_ea.py).
 - No `autostart=always`: once per launch, and not at all if the player starts a level from the main menu first.
+- On by default since 2026-11-11 (Pseudo's call after the first working flight: no scenario where starting by hand is
+  better). `autostart=0` in `server.ini` turns it off; the settings app has no switch for it.
 - Done when it got there: a host when the waiting room's bf585a6d arrives. A joiner's own in-process server sends that
   message too, before the join hooks redirect the connection (probe_logs/server_20261020_193343: bf585a6d at 46.469, the
   connect rewritten at 46.872, the connection dropped at 53.886, the Frontend again at 53.903), so a joiner is done when
@@ -35,7 +37,15 @@ Found by the second reader (review on the PR): the joiner case above, the timing
   (0x14175181a: `mov rax,[0x1441c5ef8]` / `add rax,0x148` / `mov [rdi+0xc0],rax`), and FUN_1417544b0 passes
   `[entity+0xc0]` to both calls. EA: 0x144262478 (46 references from verified code, all agreeing). The stand-in now
   keeps the old spot as a decoy that must stay untouched.
-- Not flown since that fix.
+- **2026-11-11, second flight, with that fix: it worked** (Pseudo: "worked beautifully, with the maps set correctly").
+  So the two calls from the game-sim tick land in the lobby, and the MapIndex table below holds for the maps tried.
+  Not flown yet: a joiner's auto-start, the EA copy.
+- **Random and Abyss, checked in code the same day** (Pseudo asked why the list said "not Abyss"): RandomIntEntity's
+  output function (0x14117a1b0) returns `Start + rand % Count` (`cdq` / `idiv r12d` with r12d = Count, then
+  `add edx,[Start]`), and battlemapselection's RandomIntEntityData has Start 0, Count 6 over seven names with Abyss
+  seventh. So MapIndex 0 picks one of the first six, never Abyss, in the game's own custom matches too. The names
+  are in alphabetical order with Abyss as "Zavian Abyss"; a guess, not checked: the count stayed 6 when Fostar Haven
+  was added.
 
 ---
 

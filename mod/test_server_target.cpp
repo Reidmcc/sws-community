@@ -1404,7 +1404,7 @@ int main() {
         ((conn_t)0x140cb0500)((uint64_t)cobj, "203.0.113.5:25200", 0, 0);
         ((conn_t)0x140cb0500)((uint64_t)fake_alloc(0x1000), "127.0.0.1:25200", 0, 0);   // this PC: left alone
     }
-    {   // auto-start (server_standin.ini: autostart=1, autostart_map=sissubo): once the main menu has started and EA's loadouts
+    {   // auto-start (on by default; server_standin.ini: autostart_map=sissubo): once the main menu has started and EA's loadouts
         // are in (the presets set above), the next ticks set the custom match to Solo (3) on Sissubo (5) and make the menus'
         // two calls, the settings first; once only, and never before the main menu
         if (map(0x144190000, 0x10000) != (void*)0x144190000) { printf("FAIL  could not map the client-context region\n"); return 1; }

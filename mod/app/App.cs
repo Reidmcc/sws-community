@@ -203,9 +203,7 @@ namespace SwsSettings
         static readonly string[] Modes = { "fleet", "coop", "solo", "dogfight" };
         static readonly string[] ModeNames = { "Fleet Battles (PvP)", "Co-op vs AI", "Solo vs AI", "Dogfight" };
         // the auto-start: the DLL's autostart_map keys, in the custom match's MapIndex order (0 = random of the first six)
-        readonly CheckBox autostartCheck = Theme.Check("Go straight into the match");
         readonly ComboBox mapBox = Theme.Combo();
-        FlowLayoutPanel mapRow;
         readonly Label hostHint = Theme.Label("", Theme.Small, Theme.Muted), joinHint = Theme.Label("", Theme.Small, Theme.Muted);
         static readonly string[] MapKeys = { "random", "esseles", "fostar", "moon", "nadiri", "sissubo", "yavin", "abyss" };
         static readonly string[] MapNames = { "Random (not Abyss)", "Esseles", "Fostar Haven", "Destroyed Moon", "Nadiri Dockyards", "Sissubo", "Yavin", "Abyss" };
@@ -1048,6 +1046,12 @@ namespace SwsSettings
             hostCol.Controls.Add(Theme.Label("Match type", Theme.Bold));
             modeBox.Width = 260; foreach (var m in ModeNames) modeBox.Items.Add(m);
             hostCol.Controls.Add(modeBox);
+            var mapTitle = Theme.Label("Map", Theme.Bold); mapTitle.Margin = new Padding(0, 14, 8, 0);
+            hostCol.Controls.Add(mapTitle);
+            mapBox.Width = 260; foreach (var m in MapNames) mapBox.Items.Add(m);
+            mapBox.SelectionChangeCommitted += (s, e) => { int i = mapBox.SelectedIndex; if (server.Exists && i >= 0) server.AutostartMap = MapKeys[i]; };
+            hostCol.Controls.Add(mapBox);
+            hostHint.MaximumSize = joinHint.MaximumSize = new Size(760, 0); hostHint.Margin = joinHint.Margin = new Padding(0, 10, 0, 0);
             hostCol.Controls.Add(hostHint);
             var tsTitle = Theme.Label("Your Tailscale address: give it to the players joining you", Theme.Bold); tsTitle.Margin = new Padding(0, 18, 8, 0);
             hostCol.Controls.Add(tsTitle);
@@ -1073,21 +1077,6 @@ namespace SwsSettings
             joinCol.Controls.Add(joinHint);
             joinPanel.Controls.Add(joinCol); joinPanel.Margin = new Padding(0, 14, 0, 0);
             col.Controls.Add(joinPanel);
-
-            autostartCheck.Margin = new Padding(0, 18, 0, 0);
-            autostartCheck.CheckedChanged += (s, e) => { if (server.Exists && server.Autostart != autostartCheck.Checked) server.Autostart = autostartCheck.Checked; ShowPlayHints(); };
-            col.Controls.Add(autostartCheck);
-            var asNote = Theme.Label("The game skips the menus: once the main menu has loaded and your loadouts have arrived from EA (about 15 seconds after " +
-                "it appears), it goes into the match's lobby by itself, yours when hosting or the host's when joining. Leave the menus alone until it does.", Theme.Small, Theme.Muted);
-            asNote.MaximumSize = new Size(900, 0); col.Controls.Add(asNote);
-            // the map belongs to the auto-start (the menus pick it otherwise), and to the host: a joiner gets the host's
-            mapRow = Theme.Row(); mapRow.Margin = new Padding(20, 8, 0, 0);
-            var mapTitle = Theme.Label("Map", Theme.Bold); mapTitle.Margin = new Padding(0, 6, 10, 0);
-            mapRow.Controls.Add(mapTitle);
-            mapBox.Width = 260; foreach (var m in MapNames) mapBox.Items.Add(m);
-            mapBox.SelectionChangeCommitted += (s, e) => { int i = mapBox.SelectedIndex; if (server.Exists && i >= 0) server.AutostartMap = MapKeys[i]; };
-            mapRow.Controls.Add(mapBox);
-            col.Controls.Add(mapRow);
 
             var prof = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent, Margin = new Padding(0, 18, 0, 0) };
             prof.Controls.Add(playProfile);
@@ -1122,7 +1111,6 @@ namespace SwsSettings
             addressBox.Text = join;
             RefreshServers(join);
             recordCheck.Checked = server.Record;
-            autostartCheck.Checked = server.Autostart;
             int map = Array.IndexOf(MapKeys, server.AutostartMap.ToLowerInvariant()); mapBox.SelectedIndex = map >= 0 ? map : 0;
             ShowPlayHints();
             string ts = TailscaleAddress();
@@ -1200,22 +1188,23 @@ namespace SwsSettings
             var c = ChosenCopy();
             return "--yes" + (c.HasValue ? " --target \"" + c.Value.Value + "\"" : "");
         }
-        // what to do in the game, which the auto-start does for you
+        // what happens in the game: the mod starts the match itself, unless server.ini turns that off by hand (autostart=0)
         void ShowPlayHints()
         {
-            bool auto = autostartCheck.Checked;
+            bool auto = !server.Exists || server.Autostart;
             mapBox.Enabled = auto;
-            if (mapRow != null) foreach (Control c in mapRow.Controls) if (c is Label) c.ForeColor = auto ? Theme.Text : Theme.Muted;
-            hostHint.Text = auto ? "The game goes straight into your match's lobby; the mod makes it the selected type, and your friends join it."
-                : "In the game, create a custom match with the mode set to solo vs AI: the mod makes it the selected type, and your friends join it.";
-            joinHint.Text = auto ? "The game goes straight into the host's lobby. If the host's lobby isn't up yet, it tries twice more."
-                : "In the game, start a solo custom match vs AI: your game joins the host's match instead.";
+            hostHint.Text = auto ? "The game goes into your match's lobby by itself, about 15 seconds after the main menu appears: the selected type, on the selected map. " +
+                    "Leave the menus alone until it does. Your friends join it."
+                : "The auto-start is turned off in server.ini (autostart=0). In the game, create a custom match with the mode set to solo vs AI: " +
+                    "the mod makes it the selected type, and your friends join it. You pick the map there.";
+            joinHint.Text = auto ? "The game goes into the host's lobby by itself, about 15 seconds after the main menu appears. Leave the menus alone until it does. " +
+                    "If the host's lobby isn't up yet, it tries twice more."
+                : "The auto-start is turned off in server.ini (autostart=0). In the game, start a solo custom match vs AI: your game joins the host's match instead.";
         }
         void SetJoining(bool join)
         {
             joining = join;
             hostPanel.Visible = !join; joinPanel.Visible = join;
-            if (mapRow != null) mapRow.Visible = !join;
             Theme.SetActive(hostToggle, !join); Theme.SetActive(joinToggle, join);
         }
         string AppIni { get { return Path.Combine(dir, "sws_settings.ini"); } }
