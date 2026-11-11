@@ -86,6 +86,8 @@ seconds in. The launcher gives it the environment the EA app would, and the runn
 
 Everyone needs the same build of the mod, the same profile, and a network path between them. The tested setup is
 [Tailscale](https://tailscale.com): every player installs it, and the host shares their PC with the others.
+[Networking and Tailscale](docs/networking.md) explains why, what sharing gives the people you share with, and a rule
+that limits them to the game.
 
 **The settings app, `sws_settings.exe`** (beside the launcher), does all of this without editing files:
 - **Play:** host (pick the match type) or join (the host's address, with favorites), then Launch, which runs
@@ -186,6 +188,8 @@ the AI "creep" ships are left alone.
 - [Match rules](docs/match-rules.md): morale, timers and scores for Fleet Battles and Dogfight.
 - [Limits](docs/limits.md): the range each value may take, and what happens outside it.
 - [Profiles and the fingerprint](docs/profiles.md): why everyone needs the same profile, and the ones a release ships.
+- [Networking and Tailscale](docs/networking.md): why the players need a network path, what sharing your PC gives
+  others, and a Tailscale access rule that limits them to the game.
 - [Unlocks and loadouts](docs/unlocks-and-loadouts.md): everything unlocked, and loadouts kept on your PC.
 
 ## Building

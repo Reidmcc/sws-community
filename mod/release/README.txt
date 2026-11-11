@@ -52,6 +52,8 @@ One-time setup
 2. Put this folder anywhere outside the game folder, for example on your Desktop.
 3. A network path between the players. The tested way is Tailscale (tailscale.com, free): everyone installs it, and the
    host shares their PC with the others in Tailscale's admin page. The host's address is their Tailscale IP (100.x.y.z).
+   docs/networking.md on the project page explains what sharing gives the others, and has a Tailscale access rule
+   that lets them reach only the game on your PC.
 
 
 Settings: sws_settings.exe
