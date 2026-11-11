@@ -1193,12 +1193,10 @@ namespace SwsSettings
         {
             bool auto = !server.Exists || server.Autostart;
             mapBox.Enabled = auto;
-            hostHint.Text = auto ? "The game goes into your match's lobby by itself, about 15 seconds after the main menu appears: the selected type, on the selected map. " +
-                    "Leave the menus alone until it does. Your friends join it."
+            hostHint.Text = auto ? "The game goes straight into your match's lobby: the selected type, on the selected map. Your friends join it."
                 : "The auto-start is turned off in server.ini (autostart=0). In the game, create a custom match with the mode set to solo vs AI: " +
                     "the mod makes it the selected type, and your friends join it. You pick the map there.";
-            joinHint.Text = auto ? "The game goes into the host's lobby by itself, about 15 seconds after the main menu appears. Leave the menus alone until it does. " +
-                    "If the host's lobby isn't up yet, it tries twice more."
+            joinHint.Text = auto ? "The game goes straight into the host's lobby. If the host's lobby isn't up yet, it tries twice more."
                 : "The auto-start is turned off in server.ini (autostart=0). In the game, start a solo custom match vs AI: your game joins the host's match instead.";
         }
         void SetJoining(bool join)
